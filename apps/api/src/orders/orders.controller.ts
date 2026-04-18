@@ -17,6 +17,11 @@ export class OrdersController {
     return this.ordersService.findAll();
   }
 
+  @Get('event/:eventId')
+  findByEvent(@Param('eventId') eventId: string) {
+    return this.ordersService.findByEvent(eventId);
+  }
+
   @Get(':id')
   findById(@Param('id') id: string) {
     return this.ordersService.findById(id);

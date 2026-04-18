@@ -34,6 +34,7 @@ model Event {
 
   organizer   Organizer    @relation(fields: [organizerId], references: [id])
   ticketTypes TicketType[]
+  orders      Order[]
 }
 
 model TicketType {
@@ -53,6 +54,7 @@ model TicketType {
 
 model Order {
   id            String   @id @default(uuid())
+  eventId       String
   customerName  String
   customerEmail String
   status        String   @default("PENDING")
@@ -60,6 +62,7 @@ model Order {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  event    Event       @relation(fields: [eventId], references: [id])
   items    OrderItem[]
   payments Payment[]
 }
@@ -118,12 +121,12 @@ model Payment {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  name          String
-  email         String   @unique
-  passwordHash  String
-  role          String   @default("ADMIN")
-  status        String   @default("ACTIVE")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("ADMIN")
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

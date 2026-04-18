@@ -20,6 +20,9 @@ class CreateOrderItemDto {
 
 export class CreateOrderDto {
   @IsString()
+  eventId: string;
+
+  @IsString()
   customerName: string;
 
   @IsEmail()

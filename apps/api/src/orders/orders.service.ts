@@ -14,6 +14,14 @@ export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(data: CreateOrderDto) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: data.eventId },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Evento não encontrado');
+    }
+
     let totalAmount = new Prisma.Decimal(0);
 
     const itemsData: {
@@ -31,6 +39,12 @@ export class OrdersService {
       if (!ticketType) {
         throw new NotFoundException(
           `Tipo de ingresso não encontrado: ${item.ticketTypeId}`,
+        );
+      }
+
+      if (ticketType.eventId !== data.eventId) {
+        throw new BadRequestException(
+          `O ingresso ${ticketType.name} não pertence ao evento selecionado`,
         );
       }
 
@@ -62,6 +76,7 @@ export class OrdersService {
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
+          eventId: data.eventId,
           customerName: data.customerName,
           customerEmail: data.customerEmail,
           totalAmount,
@@ -82,6 +97,7 @@ export class OrdersService {
           },
         },
         include: {
+          event: true,
           items: {
             include: {
               ticketType: true,
@@ -110,6 +126,7 @@ export class OrdersService {
   async findAll() {
     return this.prisma.order.findMany({
       include: {
+        event: true,
         items: {
           include: {
             ticketType: true,
@@ -128,6 +145,7 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
+        event: true,
         items: {
           include: {
             ticketType: true,
@@ -145,10 +163,38 @@ export class OrdersService {
     return order;
   }
 
+  async findByEvent(eventId: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Evento não encontrado');
+    }
+
+    return this.prisma.order.findMany({
+      where: { eventId },
+      include: {
+        event: true,
+        items: {
+          include: {
+            ticketType: true,
+            tickets: true,
+          },
+        },
+        payments: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
   async cancel(orderId: string, _data?: CancelOrderDto) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
+        event: true,
         items: {
           include: {
             tickets: true,
@@ -204,6 +250,7 @@ export class OrdersService {
           status: 'CANCELED',
         },
         include: {
+          event: true,
           items: {
             include: {
               ticketType: true,
