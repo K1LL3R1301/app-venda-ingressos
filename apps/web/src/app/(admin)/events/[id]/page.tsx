@@ -28,21 +28,22 @@ type TicketTypeItem = {
 
 type OrderItem = {
   id: string;
+  eventId?: string;
   customerName?: string;
   customerEmail?: string;
   status?: string;
   totalAmount?: string | number;
   createdAt?: string;
+  event?: {
+    id: string;
+    name?: string;
+  };
   items?: Array<{
     id: string;
     quantity?: number;
     ticketType?: {
       id: string;
       name?: string;
-      event?: {
-        id: string;
-        name?: string;
-      };
     };
     tickets?: Array<{
       id: string;
@@ -91,7 +92,7 @@ export default function EventDetailsPage() {
               Authorization: `Bearer ${token}`,
             },
           }),
-          fetch("http://localhost:3001/v1/orders", {
+          fetch(`http://localhost:3001/v1/orders/event/${eventId}`, {
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
@@ -136,13 +137,7 @@ export default function EventDetailsPage() {
           ? ticketTypesResult.filter((item) => item.eventId === eventId)
           : [];
 
-        const eventOrders = Array.isArray(ordersResult)
-          ? ordersResult.filter((order) =>
-              order.items?.some(
-                (item) => item.ticketType?.event?.id === eventId,
-              ),
-            )
-          : [];
+        const eventOrders = Array.isArray(ordersResult) ? ordersResult : [];
 
         setTicketTypes(eventTicketTypes);
         setOrders(eventOrders);

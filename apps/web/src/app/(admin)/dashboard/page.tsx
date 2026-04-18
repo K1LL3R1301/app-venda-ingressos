@@ -153,40 +153,6 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-2xl shadow p-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold">Dashboard 🎟️</h1>
-            <p className="text-gray-600 mt-1">
-              Escolha um evento e opere tudo a partir dele
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/events"
-              className="bg-white border px-4 py-2 rounded"
-            >
-              Ver todos os eventos
-            </Link>
-
-            <Link
-              href="/orders"
-              className="bg-white border px-4 py-2 rounded"
-            >
-              Ver pedidos
-            </Link>
-
-            <Link
-              href="/checkin"
-              className="bg-white border px-4 py-2 rounded"
-            >
-              Check-in manual
-            </Link>
-          </div>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         {cards.map((card) => (
           <div key={card.label} className="bg-white rounded-2xl shadow p-6">
@@ -199,29 +165,39 @@ export default function DashboardPage() {
       <div className="bg-white rounded-2xl shadow p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">Eventos</h2>
-          <Link
-            href="/events/new"
-            className="bg-black text-white px-4 py-2 rounded"
-          >
-            Novo evento
-          </Link>
+          <div className="flex gap-3">
+            <Link
+              href="/organizers/new"
+              className="bg-white border px-4 py-2 rounded-xl"
+            >
+              Novo organizador
+            </Link>
+
+            <Link
+              href="/events/new"
+              className="bg-black text-white px-4 py-2 rounded-xl"
+            >
+              Novo evento
+            </Link>
+          </div>
         </div>
 
         {events.length === 0 ? (
           <p>Nenhum evento encontrado.</p>
         ) : (
-          <div className="flex gap-4 overflow-x-auto pb-2">
+          <div className="flex flex-wrap gap-4">
             {events.map((event) => (
               <div
                 key={event.id}
-                className="min-w-[320px] bg-gray-50 border rounded-2xl p-5"
+                className="inline-flex min-w-[280px] max-w-[340px] flex-col rounded-2xl border border-gray-300 bg-white p-4 shadow-sm"
               >
                 <h3 className="text-lg font-semibold">{event.name || "-"}</h3>
-                <p className="text-gray-600 mt-1 line-clamp-2">
+
+                <p className="mt-2 text-sm text-gray-700">
                   {event.description || "Sem descrição"}
                 </p>
 
-                <div className="mt-4 text-sm space-y-2">
+                <div className="mt-3 space-y-1 text-sm text-gray-800">
                   <p>
                     <strong>Data:</strong> {formatDate(event.eventDate)}
                   </p>
@@ -234,19 +210,12 @@ export default function DashboardPage() {
                   </p>
                 </div>
 
-                <div className="mt-5 flex gap-3">
+                <div className="mt-4">
                   <Link
                     href={`/events/${event.id}`}
-                    className="bg-black text-white px-4 py-2 rounded"
+                    className="block rounded-xl bg-black px-4 py-2.5 text-center text-white font-medium"
                   >
                     Abrir evento
-                  </Link>
-
-                  <Link
-                    href={`/orders/new?eventId=${event.id}`}
-                    className="bg-white border px-4 py-2 rounded"
-                  >
-                    Novo pedido
                   </Link>
                 </div>
               </div>

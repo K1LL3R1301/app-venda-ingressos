@@ -86,8 +86,10 @@ export default function NewOrderPage() {
     const map = new Map<string, string>();
 
     ticketTypes.forEach((item) => {
-      if (item.event?.id) {
-        map.set(item.event.id, item.event.name || "Evento");
+      const currentEventId = item.event?.id || item.eventId;
+
+      if (currentEventId) {
+        map.set(currentEventId, item.event?.name || "Evento");
       }
     });
 
@@ -96,7 +98,10 @@ export default function NewOrderPage() {
 
   const filteredTicketTypes = useMemo(() => {
     if (!selectedEventId) return ticketTypes;
-    return ticketTypes.filter((item) => item.event?.id === selectedEventId);
+
+    return ticketTypes.filter(
+      (item) => (item.event?.id || item.eventId) === selectedEventId,
+    );
   }, [ticketTypes, selectedEventId]);
 
   const selectedTicketType = useMemo(() => {
@@ -113,6 +118,31 @@ export default function NewOrderPage() {
       return;
     }
 
+    if (!selectedEventId) {
+      alert("Selecione um evento");
+      return;
+    }
+
+    if (!customerName.trim()) {
+      alert("Informe o nome do cliente");
+      return;
+    }
+
+    if (!customerEmail.trim()) {
+      alert("Informe o email do cliente");
+      return;
+    }
+
+    if (!ticketTypeId) {
+      alert("Selecione um tipo de ingresso");
+      return;
+    }
+
+    if (!quantity || Number(quantity) < 1) {
+      alert("Informe uma quantidade válida");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -123,6 +153,7 @@ export default function NewOrderPage() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
+          eventId: selectedEventId,
           customerName,
           customerEmail,
           items: [
@@ -146,15 +177,7 @@ export default function NewOrderPage() {
       }
 
       alert("Pedido criado com sucesso 🧾");
-
-      const createdEventId =
-        selectedTicketType?.event?.id || selectedEventId || "";
-
-      if (createdEventId) {
-        window.location.href = `/events/${createdEventId}`;
-      } else {
-        window.location.href = "/orders";
-      }
+      window.location.href = `/events/${selectedEventId}`;
     } catch (err) {
       console.error(err);
       alert("Erro ao conectar com a API");
@@ -242,12 +265,14 @@ export default function NewOrderPage() {
             className="w-full border rounded p-3"
             value={ticketTypeId}
             onChange={(e) => setTicketTypeId(e.target.value)}
-            disabled={loadingTicketTypes}
+            disabled={loadingTicketTypes || !selectedEventId}
           >
             <option value="">
               {loadingTicketTypes
                 ? "Carregando tipos de ingresso..."
-                : "Selecione um tipo de ingresso"}
+                : !selectedEventId
+                  ? "Selecione primeiro um evento"
+                  : "Selecione um tipo de ingresso"}
             </option>
 
             {filteredTicketTypes.map((ticketType) => (
