@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organizer {
+  id        String   @id @default(uuid())
+  tradeName String
+  legalName String?
+  document  String?  @unique
+  email     String?
+  phone     String?
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events Event[]
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  organizerId String
+  name        String
+  description String?
+  eventDate   DateTime
+  capacity    Int
+  status      String   @default("DRAFT")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organizer   Organizer    @relation(fields: [organizerId], references: [id])
+  ticketTypes TicketType[]
+}
+
+model TicketType {
+  id          String   @id @default(uuid())
+  eventId     String
+  name        String
+  description String?
+  price       Decimal  @db.Decimal(10, 2)
+  quantity    Int
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  event      Event       @relation(fields: [eventId], references: [id])
+  orderItems OrderItem[]
+}
+
+model Order {
+  id            String   @id @default(uuid())
+  customerName  String
+  customerEmail String
+  status        String   @default("PENDING")
+  totalAmount   Decimal  @db.Decimal(10, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items    OrderItem[]
+  payments Payment[]
+}
+
+model OrderItem {
+  id           String   @id @default(uuid())
+  orderId      String
+  ticketTypeId String
+  quantity     Int
+  unitPrice    Decimal  @db.Decimal(10, 2)
+  totalPrice   Decimal  @db.Decimal(10, 2)
+  createdAt    DateTime @default(now())
+
+  order      Order      @relation(fields: [orderId], references: [id])
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+  tickets    Ticket[]
+}
+
+model Ticket {
+  id          String    @id @default(uuid())
+  orderItemId String
+  code        String    @unique
+  status      String    @default("AVAILABLE")
+  holderName  String?
+  holderEmail String?
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+  checkins  Checkin[]
+}
+
+model Checkin {
+  id           String   @id @default(uuid())
+  ticketId     String
+  checkedAt    DateTime @default(now())
+  gate         String?
+  operatorName String?
+  createdAt    DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+}
+
+model Payment {
+  id        String    @id @default(uuid())
+  orderId   String
+  amount    Decimal   @db.Decimal(10, 2)
+  method    String
+  status    String    @default("PENDING")
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+}
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  role          String   @default("ADMIN")
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
