@@ -39,6 +39,7 @@ export default function LoginPage() {
   function getRedirectPathByRole(role?: string) {
     if (role === "ADMIN") return "/dashboard";
     if (role === "OPERATOR") return "/operator/dashboard";
+    if (role === "CUSTOMER") return "/customer/dashboard";
     return "/dashboard";
   }
 

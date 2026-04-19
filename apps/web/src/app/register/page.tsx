@@ -60,7 +60,7 @@ export default function RegisterPage() {
           name,
           email,
           password,
-          role: "OPERATOR",
+          role: "CUSTOMER",
         }),
       });
 
