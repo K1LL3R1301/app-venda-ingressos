@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -119,5 +120,43 @@ export class UsersService {
         updatedAt: true,
       },
     });
+  }
+
+  async getWalletSummary(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado');
+    }
+
+    const transactions = await this.prisma.walletTransaction.findMany({
+      where: { userId },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    let balance = new Prisma.Decimal(0);
+
+    for (const transaction of transactions) {
+      if (transaction.type === 'DEBIT') {
+        balance = balance.sub(transaction.amount);
+      } else {
+        balance = balance.add(transaction.amount);
+      }
+    }
+
+    return {
+      user,
+      balance,
+      transactions,
+    };
   }
 }

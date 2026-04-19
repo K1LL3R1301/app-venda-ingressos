@@ -1,8 +1,10 @@
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsInt,
+  IsOptional,
   IsString,
   Min,
   ValidateNested,
@@ -33,4 +35,8 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items: CreateOrderItemDto[];
+
+  @IsOptional()
+  @IsBoolean()
+  useWalletBalance?: boolean;
 }

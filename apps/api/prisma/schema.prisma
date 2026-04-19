@@ -62,9 +62,10 @@ model Order {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  event    Event       @relation(fields: [eventId], references: [id])
-  items    OrderItem[]
-  payments Payment[]
+  event         Event               @relation(fields: [eventId], references: [id])
+  items         OrderItem[]
+  payments      Payment[]
+  cancellations TicketCancellation[]
 }
 
 model OrderItem {
@@ -82,18 +83,21 @@ model OrderItem {
 }
 
 model Ticket {
-  id          String    @id @default(uuid())
-  orderItemId String
-  code        String    @unique
-  status      String    @default("AVAILABLE")
-  holderName  String?
-  holderEmail String?
-  usedAt      DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id            String               @id @default(uuid())
+  orderItemId   String
+  code          String               @unique
+  status        String               @default("AVAILABLE")
+  holderName    String?
+  holderEmail   String?
+  usedAt        DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
 
-  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
-  checkins  Checkin[]
+  orderItem     OrderItem            @relation(fields: [orderItemId], references: [id])
+  checkins      Checkin[]
+  cancellations TicketCancellation[]
+
+  @@index([orderItemId])
 }
 
 model Checkin {
@@ -108,25 +112,68 @@ model Checkin {
 }
 
 model Payment {
-  id        String    @id @default(uuid())
+  id        String   @id @default(uuid())
   orderId   String
-  amount    Decimal   @db.Decimal(10, 2)
+  amount    Decimal  @db.Decimal(10, 2)
   method    String
-  status    String    @default("PENDING")
+  status    String   @default("PENDING")
   paidAt    DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
 }
 
 model User {
-  id           String   @id @default(uuid())
-  name         String
-  email        String   @unique
-  passwordHash String
-  role         String   @default("ADMIN")
-  status       String   @default("ACTIVE")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                 String               @id @default(uuid())
+  name               String
+  email              String               @unique
+  passwordHash       String
+  role               String               @default("ADMIN")
+  status             String               @default("ACTIVE")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  walletTransactions WalletTransaction[]
+  ticketCancellations TicketCancellation[]
+}
+
+model WalletTransaction {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String
+  source      String
+  sourceId    String?
+  amount      Decimal  @db.Decimal(10, 2)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([source])
+}
+
+model TicketCancellation {
+  id             String   @id @default(uuid())
+  ticketId        String
+  orderId         String
+  userId          String
+  mode            String
+  originalAmount  Decimal  @db.Decimal(10, 2)
+  returnedAmount  Decimal  @db.Decimal(10, 2)
+  status          String   @default("COMPLETED")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  order  Order  @relation(fields: [orderId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([ticketId])
+  @@index([orderId])
+  @@index([userId])
 }
