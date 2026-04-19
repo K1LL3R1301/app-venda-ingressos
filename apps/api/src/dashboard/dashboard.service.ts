@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class DashboardService {
@@ -56,6 +56,29 @@ export class DashboardService {
         pending: pendingOrders,
         canceled: canceledOrders,
       },
+      revenue: {
+        paidTotal: paidRevenue._sum.amount ?? new Prisma.Decimal(0),
+      },
+    };
+  }
+
+  async getOperatorSummary() {
+    const [events, orders, paidRevenue] = await Promise.all([
+      this.prisma.event.count(),
+      this.prisma.order.count(),
+      this.prisma.payment.aggregate({
+        _sum: {
+          amount: true,
+        },
+        where: {
+          status: 'PAID',
+        },
+      }),
+    ]);
+
+    return {
+      events,
+      orders,
       revenue: {
         paidTotal: paidRevenue._sum.amount ?? new Prisma.Decimal(0),
       },

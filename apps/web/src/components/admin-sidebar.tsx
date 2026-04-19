@@ -1,16 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-const menuItems = [
-  { href: "/dashboard", label: "Dashboard", emoji: "🎟️" },
-  { href: "/organizers", label: "Organizadores", emoji: "🏢" },
-  { href: "/events", label: "Eventos", emoji: "🎫" },
-  { href: "/orders", label: "Pedidos", emoji: "🧾" },
-  { href: "/checkin", label: "Check-in", emoji: "✅" },
-];
+type StoredUser = {
+  id?: string;
+  name?: string;
+  email?: string;
+  role?: string;
+};
 
 export default function AdminSidebar({
   children,
@@ -19,13 +17,57 @@ export default function AdminSidebar({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [userRole, setUserRole] = useState<string>("ADMIN");
 
-  function isActive(href: string) {
-    if (href === "/dashboard") {
-      return pathname === "/dashboard";
+  useEffect(() => {
+    try {
+      const rawUser = localStorage.getItem("user");
+
+      if (!rawUser) {
+        setUserRole("ADMIN");
+        return;
+      }
+
+      const parsedUser = JSON.parse(rawUser) as StoredUser;
+      setUserRole(parsedUser?.role || "ADMIN");
+    } catch {
+      setUserRole("ADMIN");
+    }
+  }, []);
+
+  const menuItems = useMemo(() => {
+    if (userRole === "OPERATOR") {
+      return [
+        { href: "/operator/dashboard", label: "Dashboard", emoji: "🎟️" },
+        { href: "/operator/events", label: "Eventos", emoji: "🎫" },
+        { href: "/operator/orders", label: "Pedidos", emoji: "🧾" },
+        { href: "/operator/checkin", label: "Check-in", emoji: "✅" },
+      ];
     }
 
-    return pathname === href || pathname.startsWith(`${href}/`);
+    return [
+      { href: "/dashboard", label: "Dashboard", emoji: "🎟️" },
+      { href: "/organizers", label: "Organizadores", emoji: "🏢" },
+      { href: "/events", label: "Eventos", emoji: "🎫" },
+      { href: "/orders", label: "Pedidos", emoji: "🧾" },
+      { href: "/checkin", label: "Check-in", emoji: "✅" },
+    ];
+  }, [userRole]);
+
+  function isActive(href: string) {
+    if (pathname === href) return true;
+    return pathname.startsWith(`${href}/`);
+  }
+
+  function goTo(href: string) {
+    setOpen(false);
+    window.location.href = href;
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    window.location.href = "/login";
   }
 
   return (
@@ -55,7 +97,9 @@ export default function AdminSidebar({
       >
         <div className="flex items-center justify-between border-b px-5 py-4">
           <div>
-            <h2 className="text-xl font-bold">Painel Admin</h2>
+            <h2 className="text-xl font-bold">
+              {userRole === "OPERATOR" ? "Painel Operador" : "Painel Admin"}
+            </h2>
             <p className="text-sm text-gray-500">Plataforma de ingressos</p>
           </div>
 
@@ -69,16 +113,16 @@ export default function AdminSidebar({
           </button>
         </div>
 
-        <nav className="p-4 space-y-2">
+        <nav className="space-y-2 p-4">
           {menuItems.map((item) => {
             const active = isActive(item.href);
 
             return (
-              <Link
+              <button
                 key={item.href}
-                href={item.href}
-                onClick={() => setOpen(false)}
-                className={`flex items-center gap-3 rounded-xl px-4 py-3 transition ${
+                type="button"
+                onClick={() => goTo(item.href)}
+                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition ${
                   active
                     ? "bg-black text-white"
                     : "text-gray-800 hover:bg-gray-100"
@@ -86,19 +130,19 @@ export default function AdminSidebar({
               >
                 <span>{item.emoji}</span>
                 <span className="font-medium">{item.label}</span>
-              </Link>
+              </button>
             );
           })}
         </nav>
 
         <div className="absolute bottom-0 left-0 right-0 border-t p-4">
-          <Link
-            href="/dashboard"
-            onClick={() => setOpen(false)}
-            className="block w-full rounded-xl border px-4 py-3 text-center font-medium hover:bg-gray-50"
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="block w-full rounded-xl bg-red-600 px-4 py-3 text-center font-medium text-white hover:bg-red-700"
           >
-            Voltar para dashboard
-          </Link>
+            Sair
+          </button>
         </div>
       </aside>
 

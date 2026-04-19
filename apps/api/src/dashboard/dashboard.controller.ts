@@ -17,4 +17,10 @@ export class DashboardController {
   getSummary() {
     return this.dashboardService.getSummary();
   }
+
+  @Get('operator')
+  @Roles('ADMIN', 'OPERATOR')
+  getOperatorSummary() {
+    return this.dashboardService.getOperatorSummary();
+  }
 }

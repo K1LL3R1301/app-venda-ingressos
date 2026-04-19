@@ -3,64 +3,70 @@
 import Link from "next/link";
 import { useState } from "react";
 
-type LoginResponse = {
-  accessToken?: string;
-  access_token?: string;
-  token?: string;
-  jwt?: string;
-  user?: {
-    id: string;
-    name?: string;
-    email?: string;
-    role?: string;
-    status?: string;
-  };
-  data?: {
-    accessToken?: string;
-    access_token?: string;
-    token?: string;
-    jwt?: string;
-    user?: {
-      id: string;
-      name?: string;
-      email?: string;
-      role?: string;
-      status?: string;
-    };
-  };
+type RegisterResponse = {
+  id?: string;
+  name?: string;
+  email?: string;
+  role?: string;
+  createdAt?: string;
+  updatedAt?: string;
   message?: string;
 };
 
-export default function LoginPage() {
+export default function RegisterPage() {
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  function getRedirectPathByRole(role?: string) {
-    if (role === "ADMIN") return "/dashboard";
-    if (role === "OPERATOR") return "/operator/dashboard";
-    return "/dashboard";
-  }
-
-  async function handleLogin(e: React.FormEvent) {
+  async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
+
+    if (!name.trim()) {
+      alert("Informe o nome");
+      return;
+    }
+
+    if (!email.trim()) {
+      alert("Informe o email");
+      return;
+    }
+
+    if (!password.trim()) {
+      alert("Informe a senha");
+      return;
+    }
+
+    if (password.length < 6) {
+      alert("A senha deve ter pelo menos 6 caracteres");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      alert("As senhas não coincidem");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:3001/v1/auth/login", {
+      const res = await fetch("http://localhost:3001/v1/users", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          name,
           email,
           password,
+          role: "OPERATOR",
         }),
       });
 
       const rawText = await res.text();
 
-      let data: LoginResponse = {};
+      let data: RegisterResponse = {};
       try {
         data = JSON.parse(rawText);
       } catch {
@@ -77,35 +83,10 @@ export default function LoginPage() {
         return;
       }
 
-      const token =
-        data.access_token ||
-        data.accessToken ||
-        data.token ||
-        data.jwt ||
-        data?.data?.access_token ||
-        data?.data?.accessToken ||
-        data?.data?.token ||
-        data?.data?.jwt;
-
-      const user = data.user || data?.data?.user;
-
-      if (!token || typeof token !== "string") {
-        alert(`Token não retornado pela API: ${JSON.stringify(data)}`);
-        return;
-      }
-
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-
-      localStorage.setItem("token", token);
-
-      if (user) {
-        localStorage.setItem("user", JSON.stringify(user));
-      }
-
-      window.location.href = getRedirectPathByRole(user?.role);
+      alert("Conta criada com sucesso");
+      window.location.href = "/login";
     } catch (err) {
-      console.error("LOGIN ERROR:", err);
+      console.error("REGISTER ERROR:", err);
       alert("Erro na conexão com a API");
     } finally {
       setLoading(false);
@@ -115,12 +96,23 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8">
-        <h1 className="text-3xl font-bold text-center mb-2">Login 🔐</h1>
+        <h1 className="text-3xl font-bold text-center mb-2">
+          Criar nova conta
+        </h1>
+
         <p className="text-center text-gray-600 mb-6">
-          Entre para acessar a plataforma
+          Preencha os dados abaixo para criar sua conta
         </p>
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleRegister} className="space-y-4">
+          <input
+            type="text"
+            placeholder="Nome"
+            className="w-full border rounded-xl p-3"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+
           <input
             type="email"
             placeholder="Email"
@@ -137,23 +129,29 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
           />
 
+          <input
+            type="password"
+            placeholder="Confirmar senha"
+            className="w-full border rounded-xl p-3"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+          />
+
           <button
             type="submit"
             disabled={loading}
             className="w-full bg-black text-white p-3 rounded-xl"
           >
-            {loading ? "Entrando..." : "Entrar"}
+            {loading ? "Criando conta..." : "Criar conta"}
           </button>
         </form>
 
         <div className="mt-6 text-center">
-          <p className="text-sm text-gray-600 mb-3">Ainda não tem conta?</p>
-
           <Link
-            href="/register"
+            href="/login"
             className="inline-block w-full rounded-xl border border-gray-300 px-4 py-3 font-medium hover:bg-gray-50"
           >
-            Criar nova conta
+            Voltar para login
           </Link>
         </div>
       </div>
