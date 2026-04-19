@@ -49,6 +49,10 @@ type OrderItem = {
       id: string;
       code?: string;
       status?: string;
+      checkins?: Array<{
+        id: string;
+        checkedAt?: string;
+      }>;
     }>;
   }>;
   payments?: Array<{
@@ -212,6 +216,23 @@ export default function EventDetailsPage() {
     return orders.filter((order) => order.status === "PAID").length;
   }
 
+  function getTotalCheckins() {
+    return orders.reduce(
+      (sum, order) =>
+        sum +
+        (order.items?.reduce(
+          (inner, item) =>
+            inner +
+            (item.tickets?.reduce(
+              (ticketSum, ticket) => ticketSum + (ticket.checkins?.length || 0),
+              0,
+            ) || 0),
+          0,
+        ) || 0),
+      0,
+    );
+  }
+
   if (loading) {
     return (
       <div className="bg-white rounded-2xl shadow p-6">
@@ -230,7 +251,7 @@ export default function EventDetailsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-2xl shadow p-6">
+      <div className="rounded-3xl bg-white border border-gray-200 shadow-sm p-8">
         <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold">{event.name || "Evento"}</h1>
@@ -258,21 +279,21 @@ export default function EventDetailsPage() {
           <div className="flex flex-wrap gap-3">
             <Link
               href="/events"
-              className="bg-white border px-4 py-2 rounded"
+              className="rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50"
             >
               Voltar para eventos
             </Link>
 
             <Link
               href={`/orders/new?eventId=${event.id}`}
-              className="bg-black text-white px-4 py-2 rounded"
+              className="rounded-2xl bg-black px-4 py-2 text-sm font-medium text-white hover:opacity-90"
             >
               Novo pedido
             </Link>
 
             <Link
               href={`/events/${event.id}/tickets`}
-              className="bg-white border px-4 py-2 rounded"
+              className="rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50"
             >
               Gerir ingressos
             </Link>
@@ -281,34 +302,39 @@ export default function EventDetailsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-        <div className="bg-white rounded-2xl shadow p-6">
+        <div className="rounded-3xl bg-white border border-gray-200 shadow-sm p-6">
           <p className="text-sm text-gray-500 mb-2">Pedidos do evento</p>
           <h2 className="text-3xl font-bold">{orders.length}</h2>
         </div>
 
-        <div className="bg-white rounded-2xl shadow p-6">
+        <div className="rounded-3xl bg-white border border-gray-200 shadow-sm p-6">
           <p className="text-sm text-gray-500 mb-2">Pedidos pagos</p>
           <h2 className="text-3xl font-bold">{getPaidOrders()}</h2>
         </div>
 
-        <div className="bg-white rounded-2xl shadow p-6">
+        <div className="rounded-3xl bg-white border border-gray-200 shadow-sm p-6">
           <p className="text-sm text-gray-500 mb-2">Tipos de ingresso</p>
           <h2 className="text-3xl font-bold">{ticketTypes.length}</h2>
         </div>
 
-        <div className="bg-white rounded-2xl shadow p-6">
+        <div className="rounded-3xl bg-white border border-gray-200 shadow-sm p-6">
           <p className="text-sm text-gray-500 mb-2">Tickets gerados</p>
           <h2 className="text-3xl font-bold">{getTotalTickets()}</h2>
         </div>
+
+        <div className="rounded-3xl bg-white border border-gray-200 shadow-sm p-6 md:col-span-2 xl:col-span-4">
+          <p className="text-sm text-gray-500 mb-2">Check-ins do evento</p>
+          <h2 className="text-3xl font-bold">{getTotalCheckins()}</h2>
+        </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow p-6">
+      <div className="rounded-3xl bg-white border border-gray-200 shadow-sm p-6">
         <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
           <h2 className="text-xl font-bold">Pedidos do evento</h2>
 
           <input
             type="text"
-            className="border rounded p-3 min-w-[280px]"
+            className="w-full md:w-auto border rounded-2xl p-3 min-w-[280px]"
             placeholder="Buscar por cliente, email, status, ticket..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -348,7 +374,7 @@ export default function EventDetailsPage() {
                       <div className="flex flex-wrap gap-2">
                         <Link
                           href={`/orders/${order.id}`}
-                          className="bg-white border px-3 py-2 rounded inline-block"
+                          className="rounded-2xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50"
                         >
                           Ver pedido
                         </Link>
@@ -357,7 +383,7 @@ export default function EventDetailsPage() {
                         order.status !== "CANCELED" ? (
                           <Link
                             href={`/orders/${order.id}/payment`}
-                            className="bg-black text-white px-3 py-2 rounded inline-block"
+                            className="rounded-2xl bg-black px-3 py-2 text-sm font-medium text-white hover:opacity-90"
                           >
                             Pagamento
                           </Link>
@@ -372,7 +398,7 @@ export default function EventDetailsPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-2xl shadow p-6">
+      <div className="rounded-3xl bg-white border border-gray-200 shadow-sm p-6">
         <h2 className="text-xl font-bold mb-4">Tipos de ingresso do evento</h2>
 
         {ticketTypes.length === 0 ? (
@@ -380,7 +406,10 @@ export default function EventDetailsPage() {
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {ticketTypes.map((ticketType) => (
-              <div key={ticketType.id} className="border rounded-2xl p-4">
+              <div
+                key={ticketType.id}
+                className="rounded-2xl border border-gray-200 bg-gray-50 p-4"
+              >
                 <h3 className="text-lg font-semibold">{ticketType.name}</h3>
                 <p className="text-gray-600 mt-1">
                   {ticketType.description || "-"}
