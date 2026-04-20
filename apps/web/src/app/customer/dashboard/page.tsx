@@ -247,14 +247,6 @@ export default function CustomerDashboardPage() {
           <nav className="ml-auto hidden items-center gap-5 md:flex">
             <button
               type="button"
-              onClick={() => goTo("/customer/events")}
-              className="text-sm font-medium text-gray-600 hover:text-gray-900"
-            >
-              Eventos
-            </button>
-
-            <button
-              type="button"
               onClick={() => goTo("/customer/orders")}
               className="text-sm font-medium text-gray-600 hover:text-gray-900"
             >
@@ -304,26 +296,10 @@ export default function CustomerDashboardPage() {
 
                   <button
                     type="button"
-                    onClick={() => goTo("/customer/events")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Eventos
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={() => goTo("/customer/orders")}
                     className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
                   >
                     Meus pedidos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/tickets")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Meus ingressos
                   </button>
 
                   <button
@@ -841,14 +817,6 @@ export default function CustomerDashboardPage() {
                 className="rounded-2xl border border-gray-200 px-4 py-4 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
               >
                 Ver wallet
-              </button>
-
-              <button
-                type="button"
-                onClick={() => goTo("/customer/tickets")}
-                className="rounded-2xl border border-gray-200 px-4 py-4 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
-              >
-                Ir para meus ingressos
               </button>
             </div>
           </div>
