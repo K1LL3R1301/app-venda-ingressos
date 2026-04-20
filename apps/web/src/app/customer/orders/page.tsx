@@ -268,7 +268,7 @@ export default function CustomerOrdersPage() {
                   <p className="text-sm font-semibold text-gray-900">
                     {user?.name || "Usuário"}
                   </p>
-                  <p className="mt-1 text-xs break-all text-gray-500">
+                  <p className="mt-1 break-all text-xs text-gray-500">
                     {user?.email || "-"}
                   </p>
                 </div>
@@ -288,14 +288,6 @@ export default function CustomerOrdersPage() {
                     className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
                   >
                     Meus pedidos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/tickets")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Meus ingressos
                   </button>
 
                   <button
@@ -443,7 +435,7 @@ export default function CustomerOrdersPage() {
                             <p className="mt-2 font-semibold text-gray-900">
                               {order.customerName || "-"}
                             </p>
-                            <p className="mt-1 text-sm text-gray-500 break-all">
+                            <p className="mt-1 break-all text-sm text-gray-500">
                               {order.customerEmail || "-"}
                             </p>
                           </div>

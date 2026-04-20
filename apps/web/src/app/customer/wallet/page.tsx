@@ -214,14 +214,6 @@ export default function CustomerWalletPage() {
           <nav className="ml-auto hidden items-center gap-5 md:flex">
             <button
               type="button"
-              onClick={() => goTo("/customer/events")}
-              className="text-sm font-medium text-gray-600 hover:text-gray-900"
-            >
-              Eventos
-            </button>
-
-            <button
-              type="button"
               onClick={() => goTo("/customer/orders")}
               className="text-sm font-medium text-gray-600 hover:text-gray-900"
             >
@@ -271,26 +263,10 @@ export default function CustomerWalletPage() {
 
                   <button
                     type="button"
-                    onClick={() => goTo("/customer/events")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Eventos
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={() => goTo("/customer/orders")}
                     className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
                   >
                     Meus pedidos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/tickets")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Meus ingressos
                   </button>
 
                   <button
