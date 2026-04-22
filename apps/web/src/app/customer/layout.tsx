@@ -41,11 +41,11 @@ export default function CustomerLayout({
   function getActiveNav():
     | "dashboard"
     | "orders"
-    | "tickets"
-    | "wallet" {
+    | "wallet"
+    | "support" {
     if (pathname.startsWith("/customer/orders")) return "orders";
-    if (pathname.startsWith("/customer/tickets")) return "tickets";
     if (pathname.startsWith("/customer/wallet")) return "wallet";
+    if (pathname.startsWith("/customer/support")) return "support";
     return "dashboard";
   }
 

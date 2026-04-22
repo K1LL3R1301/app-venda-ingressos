@@ -125,6 +125,10 @@ function getStatusClasses(status?: string) {
   return "bg-gray-50 text-gray-700 border border-gray-200";
 }
 
+function isTicketCanceled(ticket?: TicketItem | null) {
+  return ticket?.status === "CANCELED";
+}
+
 export default function CustomerOrderDetailPage() {
   const [order, setOrder] = useState<OrderItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -217,6 +221,15 @@ export default function CustomerOrderDetailPage() {
       console.error(error);
       alert("Não foi possível copiar o código");
     }
+  }
+
+  function handleOpenTicket(ticket: TicketItem) {
+    if (isTicketCanceled(ticket)) {
+      alert("Este ingresso foi cancelado e não está mais acessível.");
+      return;
+    }
+
+    setSelectedTicket(ticket);
   }
 
   async function handleFinishPayment() {
@@ -585,6 +598,11 @@ export default function CustomerOrderDetailPage() {
   }
 
   function handlePrintTicket(ticket: TicketItem) {
+    if (isTicketCanceled(ticket)) {
+      alert("Este ingresso foi cancelado e não está mais acessível.");
+      return;
+    }
+
     const eventName = order?.event?.name || "Ingresso";
     const eventDate = formatDate(order?.event?.eventDate);
     const holderName = ticket.holderName || order?.customerName || "-";
@@ -1049,51 +1067,74 @@ export default function CustomerOrderDetailPage() {
 
                         {item.tickets?.length ? (
                           <div className="mt-5 grid gap-4">
-                            {item.tickets.map((ticket) => (
-                              <div
-                                key={ticket.id}
-                                className="rounded-[24px] border border-gray-200 bg-white p-5"
-                              >
-                                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                                  <div>
-                                    <div className="flex flex-wrap items-center gap-3">
-                                      <span
-                                        className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClasses(
-                                          ticket.status,
-                                        )}`}
-                                      >
-                                        {ticket.status || "SEM STATUS"}
-                                      </span>
+                            {item.tickets.map((ticket) => {
+                              const ticketCanceled = isTicketCanceled(ticket);
+
+                              return (
+                                <div
+                                  key={ticket.id}
+                                  className="rounded-[24px] border border-gray-200 bg-white p-5"
+                                >
+                                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-3">
+                                        <span
+                                          className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClasses(
+                                            ticket.status,
+                                          )}`}
+                                        >
+                                          {ticket.status || "SEM STATUS"}
+                                        </span>
+                                      </div>
+
+                                      {ticketCanceled ? (
+                                        <>
+                                          <p className="mt-4 text-sm font-semibold text-red-600">
+                                            Este ingresso foi cancelado e não está mais acessível.
+                                          </p>
+                                          <p className="mt-1 text-sm text-gray-500">
+                                            Os botões foram removidos porque este ingresso não pode mais ser usado.
+                                          </p>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <p className="mt-4 text-sm text-gray-500">
+                                            Código do ingresso
+                                          </p>
+                                          <p className="mt-1 break-all font-mono text-sm font-semibold text-gray-900">
+                                            {ticket.code || "-"}
+                                          </p>
+                                        </>
+                                      )}
                                     </div>
 
-                                    <p className="mt-4 text-sm text-gray-500">
-                                      Código do ingresso
-                                    </p>
-                                    <p className="mt-1 break-all font-mono text-sm font-semibold text-gray-900">
-                                      {ticket.code || "-"}
-                                    </p>
-                                  </div>
+                                    {!ticketCanceled ? (
+                                      <div className="flex flex-col gap-3 sm:flex-row">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenTicket(ticket)}
+                                          className="rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-700"
+                                        >
+                                          Ver ingresso
+                                        </button>
 
-                                  <div className="flex flex-col gap-3 sm:flex-row">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedTicket(ticket)}
-                                      className="rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-700"
-                                    >
-                                      Ver ingresso
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => copyTicketCode(ticket.code)}
-                                      className="rounded-2xl border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                                    >
-                                      Copiar código
-                                    </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => copyTicketCode(ticket.code)}
+                                          className="rounded-2xl border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                                        >
+                                          Copiar código
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                                        Ingresso cancelado
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
                           <p className="mt-4 text-sm text-gray-500">
@@ -1485,7 +1526,7 @@ export default function CustomerOrderDetailPage() {
         </div>
       )}
 
-      {selectedTicket && (
+      {selectedTicket && !isTicketCanceled(selectedTicket) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3">
           <div className="w-full max-w-lg overflow-hidden rounded-[22px] bg-white shadow-2xl">
             <div className="bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 px-5 py-4 text-white">

@@ -11,7 +11,7 @@ export type CustomerHeaderUser = {
 
 type CustomerHeaderProps = {
   user: CustomerHeaderUser | null;
-  activeNav?: "dashboard" | "orders" | "tickets" | "wallet";
+  activeNav?: "dashboard" | "orders" | "wallet" | "support";
   showSearch?: boolean;
   searchPlaceholder?: string;
   searchValue?: string;
@@ -32,6 +32,12 @@ function getTopNavClasses(isActive: boolean) {
     : "text-sm font-medium text-gray-600 hover:text-gray-900";
 }
 
+function getMenuItemClasses(isActive: boolean) {
+  return isActive
+    ? "flex w-full items-center rounded-xl bg-sky-50 px-3 py-3 text-left text-sm font-semibold text-sky-700"
+    : "flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50";
+}
+
 export default function CustomerHeader({
   user,
   activeNav = "dashboard",
@@ -46,6 +52,11 @@ export default function CustomerHeader({
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     window.location.href = "/login";
+  }
+
+  function handleGo(path: string) {
+    setMenuOpen(false);
+    goTo(path);
   }
 
   return (
@@ -87,14 +98,6 @@ export default function CustomerHeader({
 
           <button
             type="button"
-            onClick={() => goTo("/customer/tickets")}
-            className={getTopNavClasses(activeNav === "tickets")}
-          >
-            Meus tickets
-          </button>
-
-          <button
-            type="button"
             onClick={() => goTo("/customer/wallet")}
             className={getTopNavClasses(activeNav === "wallet")}
           >
@@ -128,32 +131,32 @@ export default function CustomerHeader({
               <div className="p-2">
                 <button
                   type="button"
-                  onClick={() => goTo("/customer/dashboard")}
-                  className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={() => handleGo("/customer/dashboard")}
+                  className={getMenuItemClasses(activeNav === "dashboard")}
                 >
                   Início
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => goTo("/customer/orders")}
-                  className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={() => handleGo("/customer/orders")}
+                  className={getMenuItemClasses(activeNav === "orders")}
                 >
                   Meus pedidos
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => goTo("/customer/tickets")}
-                  className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={() => handleGo("/customer/support")}
+                  className={getMenuItemClasses(activeNav === "support")}
                 >
-                  Meus tickets
+                  Suporte
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => goTo("/customer/wallet")}
-                  className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={() => handleGo("/customer/wallet")}
+                  className={getMenuItemClasses(activeNav === "wallet")}
                 >
                   Wallet
                 </button>
