@@ -7,6 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum EventCollection {
+  FESTAS_SHOWS
+  TEATROS_ESPETACULOS
+  STAND_UP_COMEDY
+  ESPORTES
+  PASSEIOS_TOURS
+  CONGRESSOS
+  INFANTIL
+  GASTRONOMIA
+}
+
 model Organizer {
   id        String  @id @default(uuid())
   tradeName String
@@ -45,16 +56,16 @@ model Event {
   capacity    Int
   status      String   @default("DRAFT")
 
-  slug             String?   @unique
+  slug             String?          @unique
   shortDescription String?
-  category         String?
-  visibility       String    @default("PUBLIC")
-  timezone         String    @default("America/Sao_Paulo")
+  category         EventCollection?
+  visibility       String           @default("PUBLIC")
+  timezone         String           @default("America/Sao_Paulo")
   startDate        DateTime?
   endDate          DateTime?
   saleStartAt      DateTime?
   saleEndAt        DateTime?
-  featured         Boolean   @default(false)
+  featured         Boolean          @default(false)
   highlightTag     String?
   checkoutTitle    String?
   checkoutSubtitle String?
@@ -279,13 +290,13 @@ model TicketTransferRequest {
   toEmail          String?
   toCpf            String?
 
-  status         String    @default("PENDING_PAYMENT")
+  status         String   @default("PENDING_PAYMENT")
   responseReason String?
-  requestedAt    DateTime  @default(now())
+  requestedAt    DateTime @default(now())
   respondedAt    DateTime?
   expiresAt      DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   ticket          Ticket @relation(fields: [ticketId], references: [id])
   order           Order  @relation(fields: [orderId], references: [id])
@@ -317,14 +328,14 @@ model Checkin {
 }
 
 model Payment {
-  id        String    @id @default(uuid())
+  id        String   @id @default(uuid())
   orderId   String
-  amount    Decimal   @db.Decimal(10, 2)
+  amount    Decimal  @db.Decimal(10, 2)
   method    String
-  status    String    @default("PENDING")
+  status    String   @default("PENDING")
   paidAt    DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
 
@@ -332,22 +343,22 @@ model Payment {
 }
 
 model User {
-  id              String    @id @default(uuid())
+  id              String   @id @default(uuid())
   name            String
-  email           String    @unique
+  email           String   @unique
   passwordHash    String?
   cpf             String?
-  cpfNormalized   String?   @unique
-  googleId        String?   @unique
+  cpfNormalized   String?  @unique
+  googleId        String?  @unique
   avatarUrl       String?
-  authProvider    String    @default("PASSWORD")
-  role            String    @default("ADMIN")
-  status          String    @default("ACTIVE")
+  authProvider    String   @default("PASSWORD")
+  role            String   @default("ADMIN")
+  status          String   @default("ACTIVE")
   emailVerifiedAt DateTime?
   cpfVerifiedAt   DateTime?
   lastLoginAt     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   orders                   Order[]         @relation("OrderCustomerUser")
   ownedTickets             Ticket[]        @relation("TicketCurrentOwner")
