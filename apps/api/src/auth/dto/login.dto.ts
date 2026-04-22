@@ -1,9 +1,13 @@
-import { IsEmail, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsString, Length, MinLength } from 'class-validator';
 
 export class LoginDto {
-  @IsEmail()
-  email: string;
+  @IsString()
+  @Transform(({ value }) => String(value || '').replace(/\D/g, ''))
+  @Length(11, 11, { message: 'CPF deve ter 11 dígitos' })
+  cpf: string;
 
   @IsString()
+  @MinLength(6)
   password: string;
 }

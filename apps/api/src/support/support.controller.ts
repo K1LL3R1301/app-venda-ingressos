@@ -34,7 +34,7 @@ export class SupportController {
   constructor(private readonly supportService: SupportService) {}
 
   @Post('customer')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   createCustomerThread(
     @Body() body: CreateCustomerSupportThreadDto,
     @Req() req: AuthenticatedRequest,
@@ -48,13 +48,13 @@ export class SupportController {
   }
 
   @Get('customer')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   listCustomerThreads(@Req() req: AuthenticatedRequest) {
     return this.supportService.listCustomerThreads(req.user.email);
   }
 
   @Get('customer/:threadId')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   findCustomerThreadById(
     @Param('threadId') threadId: string,
     @Req() req: AuthenticatedRequest,
@@ -66,7 +66,7 @@ export class SupportController {
   }
 
   @Post('customer/:threadId/messages')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   createCustomerMessage(
     @Param('threadId') threadId: string,
     @Body() body: CreateCustomerSupportMessageDto,
@@ -82,7 +82,7 @@ export class SupportController {
   }
 
   @Patch('customer/:threadId/reopen')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   reopenCustomerThread(
     @Param('threadId') threadId: string,
     @Req() req: AuthenticatedRequest,

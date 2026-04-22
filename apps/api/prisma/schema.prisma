@@ -16,7 +16,6 @@ model Organizer {
   phone     String?
   status    String  @default("ACTIVE")
 
-  // novos campos para página pública / perfil do produtor
   slug         String? @unique
   bio          String?
   websiteUrl   String?
@@ -40,14 +39,12 @@ model Event {
   id          String @id @default(uuid())
   organizerId String
 
-  // campos atuais
   name        String
   description String?
   eventDate   DateTime
   capacity    Int
   status      String   @default("DRAFT")
 
-  // novos campos de vitrine / venda
   slug             String?   @unique
   shortDescription String?
   category         String?
@@ -70,7 +67,6 @@ model Event {
   orders         Order[]
   supportThreads SupportThread[]
 
-  // novos blocos ricos do evento
   content  EventContent?
   location EventLocation?
   media    EventMedia?
@@ -175,7 +171,6 @@ model TicketType {
   quantity    Int
   status      String  @default("ACTIVE")
 
-  // novos campos comerciais para exibição
   lotLabel           String?
   salesStartAt       DateTime?
   salesEndAt         DateTime?
@@ -199,22 +194,29 @@ model TicketType {
 }
 
 model Order {
-  id            String   @id @default(uuid())
-  eventId       String
-  customerName  String
-  customerEmail String
-  status        String   @default("PENDING")
-  totalAmount   Decimal  @db.Decimal(10, 2)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(uuid())
+  eventId        String
+  customerUserId String?
+  customerName   String
+  customerEmail  String
+  customerCpf    String?
+  status         String   @default("PENDING")
+  totalAmount    Decimal  @db.Decimal(10, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  event          Event                @relation(fields: [eventId], references: [id])
-  items          OrderItem[]
-  payments       Payment[]
-  cancellations  TicketCancellation[]
-  supportThreads SupportThread[]
+  event            Event                   @relation(fields: [eventId], references: [id])
+  customerUser     User?                   @relation("OrderCustomerUser", fields: [customerUserId], references: [id])
+  items            OrderItem[]
+  payments         Payment[]
+  cancellations    TicketCancellation[]
+  supportThreads   SupportThread[]
+  transferRequests TicketTransferRequest[]
 
   @@index([eventId])
+  @@index([customerUserId])
+  @@index([customerEmail])
+  @@index([customerCpf])
 }
 
 model OrderItem {
@@ -235,21 +237,70 @@ model OrderItem {
 }
 
 model Ticket {
-  id          String    @id @default(uuid())
-  orderItemId String
-  code        String    @unique
-  status      String    @default("AVAILABLE")
-  holderName  String?
-  holderEmail String?
-  usedAt      DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                 String    @id @default(uuid())
+  orderItemId        String
+  currentOwnerUserId String?
+  code               String    @unique
+  status             String    @default("AVAILABLE")
+  holderName         String?
+  holderEmail        String?
+  holderCpf          String?
+  usedAt             DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  orderItem     OrderItem            @relation(fields: [orderItemId], references: [id])
-  checkins      Checkin[]
-  cancellations TicketCancellation[]
+  orderItem        OrderItem               @relation(fields: [orderItemId], references: [id])
+  currentOwnerUser User?                   @relation("TicketCurrentOwner", fields: [currentOwnerUserId], references: [id])
+  checkins         Checkin[]
+  cancellations    TicketCancellation[]
+  transferRequests TicketTransferRequest[]
 
   @@index([orderItemId])
+  @@index([currentOwnerUserId])
+  @@index([holderEmail])
+  @@index([holderCpf])
+}
+
+model TicketTransferRequest {
+  id                String @id @default(uuid())
+  ticketId          String
+  orderId           String
+  requestedByUserId String
+  fromUserId        String
+  toUserId          String
+
+  requestedByName  String?
+  requestedByEmail String?
+  requestedByCpf   String?
+  fromName         String?
+  fromEmail        String?
+  fromCpf          String?
+  toName           String?
+  toEmail          String?
+  toCpf            String?
+
+  status         String    @default("PENDING_PAYMENT")
+  responseReason String?
+  requestedAt    DateTime  @default(now())
+  respondedAt    DateTime?
+  expiresAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  ticket          Ticket @relation(fields: [ticketId], references: [id])
+  order           Order  @relation(fields: [orderId], references: [id])
+  requestedByUser User   @relation("TicketTransferRequestedByUser", fields: [requestedByUserId], references: [id])
+  fromUser        User   @relation("TicketTransferFromUser", fields: [fromUserId], references: [id])
+  toUser          User   @relation("TicketTransferToUser", fields: [toUserId], references: [id])
+
+  @@index([ticketId])
+  @@index([orderId])
+  @@index([requestedByUserId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([status])
+  @@index([requestedAt])
+  @@index([respondedAt])
 }
 
 model Checkin {
@@ -281,20 +332,41 @@ model Payment {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  name         String
-  email        String   @unique
-  passwordHash String
-  role         String   @default("ADMIN")
-  status       String   @default("ACTIVE")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String    @id @default(uuid())
+  name            String
+  email           String    @unique
+  passwordHash    String?
+  cpf             String?
+  cpfNormalized   String?   @unique
+  googleId        String?   @unique
+  avatarUrl       String?
+  authProvider    String    @default("PASSWORD")
+  role            String    @default("ADMIN")
+  status          String    @default("ACTIVE")
+  emailVerifiedAt DateTime?
+  cpfVerifiedAt   DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  orders                   Order[]         @relation("OrderCustomerUser")
+  ownedTickets             Ticket[]        @relation("TicketCurrentOwner")
+  supportThreadsAsCustomer SupportThread[] @relation("SupportThreadCustomerUser")
+
+  requestedTicketTransfers TicketTransferRequest[] @relation("TicketTransferRequestedByUser")
+  outgoingTicketTransfers  TicketTransferRequest[] @relation("TicketTransferFromUser")
+  incomingTicketTransfers  TicketTransferRequest[] @relation("TicketTransferToUser")
 
   walletTransactions  WalletTransaction[]
   ticketCancellations TicketCancellation[]
 
   sentMessages    SupportMessage[] @relation("SupportMessageSender")
   assignedThreads SupportThread[]  @relation("SupportThreadAssignedUser")
+
+  @@index([role])
+  @@index([status])
+  @@index([authProvider])
+  @@index([cpf])
 }
 
 model WalletTransaction {
@@ -340,8 +412,10 @@ model SupportThread {
   organizerId    String
   eventId        String
   orderId        String?
+  customerUserId String?
   customerEmail  String
   customerName   String?
+  customerCpf    String?
   subject        String
   status         String   @default("OPEN")
   lastMessageAt  DateTime @default(now())
@@ -352,13 +426,16 @@ model SupportThread {
   organizer    Organizer        @relation(fields: [organizerId], references: [id])
   event        Event            @relation(fields: [eventId], references: [id])
   order        Order?           @relation(fields: [orderId], references: [id])
+  customerUser User?            @relation("SupportThreadCustomerUser", fields: [customerUserId], references: [id])
   assignedUser User?            @relation("SupportThreadAssignedUser", fields: [assignedUserId], references: [id])
   messages     SupportMessage[]
 
   @@index([organizerId])
   @@index([eventId])
   @@index([orderId])
+  @@index([customerUserId])
   @@index([customerEmail])
+  @@index([customerCpf])
   @@index([status])
   @@index([lastMessageAt])
   @@index([assignedUserId])

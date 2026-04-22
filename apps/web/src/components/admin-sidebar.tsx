@@ -7,8 +7,38 @@ type StoredUser = {
   id?: string;
   name?: string;
   email?: string;
+  cpf?: string;
   role?: string;
 };
+
+type MenuItem = {
+  href: string;
+  label: string;
+  emoji: string;
+};
+
+const adminItems: MenuItem[] = [
+  { href: "/dashboard", label: "Dashboard", emoji: "🎟️" },
+  { href: "/organizers", label: "Organizadores", emoji: "🏢" },
+  { href: "/events", label: "Eventos", emoji: "🎫" },
+  { href: "/orders", label: "Pedidos", emoji: "🧾" },
+  { href: "/support", label: "Atendimentos", emoji: "💬" },
+  { href: "/checkin", label: "Check-in", emoji: "✅" },
+];
+
+const operatorItems: MenuItem[] = [
+  { href: "/operator/dashboard", label: "Dashboard", emoji: "🎟️" },
+  { href: "/operator/events", label: "Eventos", emoji: "🎫" },
+  { href: "/operator/orders", label: "Pedidos", emoji: "🧾" },
+  { href: "/operator/checkin", label: "Check-in", emoji: "✅" },
+];
+
+const customerItems: MenuItem[] = [
+  { href: "/customer/dashboard", label: "Área do cliente", emoji: "👤" },
+  { href: "/customer/orders", label: "Meus pedidos", emoji: "🛍️" },
+  { href: "/customer/support", label: "Suporte", emoji: "💬" },
+  { href: "/customer/wallet", label: "Wallet", emoji: "👛" },
+];
 
 export default function AdminSidebar({
   children,
@@ -17,43 +47,34 @@ export default function AdminSidebar({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [userRole, setUserRole] = useState<string>("ADMIN");
+  const [user, setUser] = useState<StoredUser | null>(null);
 
   useEffect(() => {
     try {
       const rawUser = localStorage.getItem("user");
 
       if (!rawUser) {
-        setUserRole("ADMIN");
+        setUser({ role: "ADMIN" });
         return;
       }
 
       const parsedUser = JSON.parse(rawUser) as StoredUser;
-      setUserRole(parsedUser?.role || "ADMIN");
+      setUser(parsedUser || { role: "ADMIN" });
     } catch {
-      setUserRole("ADMIN");
+      setUser({ role: "ADMIN" });
     }
   }, []);
 
-  const menuItems = useMemo(() => {
-    if (userRole === "OPERATOR") {
-      return [
-        { href: "/operator/dashboard", label: "Dashboard", emoji: "🎟️" },
-        { href: "/operator/events", label: "Eventos", emoji: "🎫" },
-        { href: "/operator/orders", label: "Pedidos", emoji: "🧾" },
-        { href: "/operator/checkin", label: "Check-in", emoji: "✅" },
-      ];
-    }
+  const userRole = String(user?.role || "ADMIN").toUpperCase();
+  const isAdmin = userRole === "ADMIN";
+  const isOperator = userRole === "OPERATOR";
+  const canAccessCustomer = isAdmin || isOperator;
 
-    return [
-      { href: "/dashboard", label: "Dashboard", emoji: "🎟️" },
-      { href: "/organizers", label: "Organizadores", emoji: "🏢" },
-      { href: "/events", label: "Eventos", emoji: "🎫" },
-      { href: "/orders", label: "Pedidos", emoji: "🧾" },
-      { href: "/support", label: "Atendimentos", emoji: "💬" },
-      { href: "/checkin", label: "Check-in", emoji: "✅" },
-    ];
-  }, [userRole]);
+  const currentPanelTitle = useMemo(() => {
+    if (pathname.startsWith("/operator")) return "Painel Operador";
+    if (pathname.startsWith("/customer")) return "Área do Cliente";
+    return "Painel Admin";
+  }, [pathname]);
 
   function isActive(href: string) {
     if (pathname === href) return true;
@@ -69,6 +90,36 @@ export default function AdminSidebar({
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     window.location.href = "/login";
+  }
+
+  function renderMenuSection(title: string, items: MenuItem[]) {
+    return (
+      <div className="space-y-2">
+        <p className="px-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">
+          {title}
+        </p>
+
+        {items.map((item) => {
+          const active = isActive(item.href);
+
+          return (
+            <button
+              key={item.href}
+              type="button"
+              onClick={() => goTo(item.href)}
+              className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition ${
+                active
+                  ? "bg-black text-white"
+                  : "text-gray-800 hover:bg-gray-100"
+              }`}
+            >
+              <span>{item.emoji}</span>
+              <span className="font-medium">{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
   }
 
   return (
@@ -92,51 +143,53 @@ export default function AdminSidebar({
       )}
 
       <aside
-        className={`fixed left-0 top-0 z-50 h-full w-[280px] bg-white shadow-2xl transition-transform duration-300 ${
+        className={`fixed left-0 top-0 z-50 h-full w-[300px] overflow-y-auto bg-white shadow-2xl transition-transform duration-300 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div>
-            <h2 className="text-xl font-bold">
-              {userRole === "OPERATOR" ? "Painel Operador" : "Painel Admin"}
-            </h2>
-            <p className="text-sm text-gray-500">Plataforma de ingressos</p>
-          </div>
+        <div className="border-b px-5 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold">{currentPanelTitle}</h2>
+              <p className="text-sm text-gray-500">Plataforma de ingressos</p>
 
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="flex h-10 w-10 items-center justify-center rounded-lg border"
-            aria-label="Fechar menu"
-          >
-            ✕
-          </button>
+              {user?.name ? (
+                <div className="mt-3">
+                  <p className="truncate text-sm font-semibold text-gray-900">
+                    {user.name}
+                  </p>
+                  <p className="truncate text-xs text-gray-500">
+                    {user.email || "-"}
+                  </p>
+                  {user.cpf ? (
+                    <p className="mt-1 text-xs text-gray-400">CPF: {user.cpf}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="flex h-10 w-10 items-center justify-center rounded-lg border"
+              aria-label="Fechar menu"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
-        <nav className="space-y-2 p-4">
-          {menuItems.map((item) => {
-            const active = isActive(item.href);
+        <div className="space-y-6 p-4">
+          {isAdmin ? renderMenuSection("Administração", adminItems) : null}
 
-            return (
-              <button
-                key={item.href}
-                type="button"
-                onClick={() => goTo(item.href)}
-                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition ${
-                  active
-                    ? "bg-black text-white"
-                    : "text-gray-800 hover:bg-gray-100"
-                }`}
-              >
-                <span>{item.emoji}</span>
-                <span className="font-medium">{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
+          {isOperator ? renderMenuSection("Painel Operador", operatorItems) : null}
 
-        <div className="absolute bottom-0 left-0 right-0 border-t p-4">
+          {canAccessCustomer
+            ? renderMenuSection("Conta / Cliente", customerItems)
+            : null}
+        </div>
+
+        <div className="border-t p-4">
           <button
             type="button"
             onClick={handleLogout}

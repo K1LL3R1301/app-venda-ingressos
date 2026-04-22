@@ -64,6 +64,38 @@ type CheckoutCartItem = {
   quantity: number;
 };
 
+type CheckoutHolderForm = {
+  useBuyerData: boolean;
+  name: string;
+  email: string;
+  cpf: string;
+};
+
+type StoredUser = {
+  name?: string;
+  email?: string;
+  cpf?: string;
+};
+
+function onlyDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function formatCpf(value: string) {
+  const digits = onlyDigits(value).slice(0, 11);
+
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  }
+
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(
+    6,
+    9,
+  )}-${digits.slice(9, 11)}`;
+}
+
 function formatDate(value?: string) {
   if (!value) return "-";
 
@@ -153,7 +185,11 @@ export default function CustomerCheckoutPage() {
 
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
+  const [customerCpf, setCustomerCpf] = useState("");
   const [useWalletBalance, setUseWalletBalance] = useState(true);
+  const [holdersByTicketType, setHoldersByTicketType] = useState<
+    Record<string, CheckoutHolderForm[]>
+  >({});
 
   const searchParams = useMemo(() => {
     if (typeof window === "undefined") return new URLSearchParams();
@@ -190,12 +226,10 @@ export default function CustomerCheckoutPage() {
 
       if (rawUser) {
         try {
-          const parsed = JSON.parse(rawUser) as {
-            name?: string;
-            email?: string;
-          };
+          const parsed = JSON.parse(rawUser) as StoredUser;
           setCustomerName(parsed.name || "");
           setCustomerEmail(parsed.email || "");
+          setCustomerCpf(formatCpf(parsed.cpf || ""));
         } catch (error) {
           console.error("Erro ao ler usuário do localStorage:", error);
         }
@@ -330,6 +364,45 @@ export default function CustomerCheckoutPage() {
   const remainingAmount = Math.max(0, subtotal - walletApplied);
   const purchaseWillBePaid = remainingAmount === 0;
 
+  useEffect(() => {
+    setHoldersByTicketType((prev) => {
+      const next: Record<string, CheckoutHolderForm[]> = {};
+      const formattedBuyerCpf = formatCpf(customerCpf);
+
+      for (const item of selectedItemsDetailed) {
+        const existing = prev[item.ticketTypeId] || [];
+
+        next[item.ticketTypeId] = Array.from({ length: item.quantity }).map(
+          (_, index) => {
+            const previousHolder = existing[index];
+
+            if (!previousHolder) {
+              return {
+                useBuyerData: true,
+                name: customerName,
+                email: customerEmail,
+                cpf: formattedBuyerCpf,
+              };
+            }
+
+            if (previousHolder.useBuyerData) {
+              return {
+                ...previousHolder,
+                name: customerName,
+                email: customerEmail,
+                cpf: formattedBuyerCpf,
+              };
+            }
+
+            return previousHolder;
+          },
+        );
+      }
+
+      return next;
+    });
+  }, [selectedItemsDetailed, customerName, customerEmail, customerCpf]);
+
   function handleQuantityChange(ticketTypeId: string, nextQuantity: number) {
     setCartItems((prev) =>
       prev.map((item) =>
@@ -361,6 +434,54 @@ export default function CustomerCheckoutPage() {
     );
   }
 
+  function handleHolderUseBuyerChange(
+    ticketTypeId: string,
+    index: number,
+    checked: boolean,
+  ) {
+    setHoldersByTicketType((prev) => {
+      const current = prev[ticketTypeId] || [];
+
+      return {
+        ...prev,
+        [ticketTypeId]: current.map((holder, holderIndex) =>
+          holderIndex === index
+            ? {
+                ...holder,
+                useBuyerData: checked,
+                name: checked ? customerName : holder.name,
+                email: checked ? customerEmail : holder.email,
+                cpf: checked ? formatCpf(customerCpf) : holder.cpf,
+              }
+            : holder,
+        ),
+      };
+    });
+  }
+
+  function handleHolderFieldChange(
+    ticketTypeId: string,
+    index: number,
+    field: "name" | "email" | "cpf",
+    value: string,
+  ) {
+    setHoldersByTicketType((prev) => {
+      const current = prev[ticketTypeId] || [];
+
+      return {
+        ...prev,
+        [ticketTypeId]: current.map((holder, holderIndex) =>
+          holderIndex === index
+            ? {
+                ...holder,
+                [field]: field === "cpf" ? formatCpf(value) : value,
+              }
+            : holder,
+        ),
+      };
+    });
+  }
+
   async function handleCreateOrder(e: FormEvent) {
     e.preventDefault();
 
@@ -376,6 +497,8 @@ export default function CustomerCheckoutPage() {
       return;
     }
 
+    const customerCpfDigits = onlyDigits(customerCpf);
+
     if (!customerName.trim()) {
       alert("Informe o nome");
       return;
@@ -383,6 +506,11 @@ export default function CustomerCheckoutPage() {
 
     if (!customerEmail.trim()) {
       alert("Informe o email");
+      return;
+    }
+
+    if (customerCpfDigits.length !== 11) {
+      alert("Informe o CPF do comprador com 11 dígitos");
       return;
     }
 
@@ -408,6 +536,49 @@ export default function CustomerCheckoutPage() {
         );
         return;
       }
+
+      const holders = holdersByTicketType[item.ticketTypeId] || [];
+
+      if (holders.length !== item.quantity) {
+        alert(
+          `Os titulares do item ${item.ticketType.name || "ingresso"} ainda não foram preparados corretamente`,
+        );
+        return;
+      }
+
+      for (let index = 0; index < holders.length; index += 1) {
+        const holder = holders[index];
+        const holderName = holder.useBuyerData ? customerName : holder.name;
+        const holderEmail = holder.useBuyerData ? customerEmail : holder.email;
+        const holderCpf = holder.useBuyerData ? customerCpf : holder.cpf;
+        const holderCpfDigits = onlyDigits(holderCpf);
+
+        if (!String(holderName || "").trim()) {
+          alert(
+            `Informe o nome do titular do ingresso ${index + 1} em ${
+              item.ticketType.name || "ingresso"
+            }`,
+          );
+          return;
+        }
+
+        if (holderCpfDigits.length !== 11) {
+          alert(
+            `Informe um CPF válido para o ingresso ${index + 1} em ${
+              item.ticketType.name || "ingresso"
+            }`,
+          );
+          return;
+        }
+
+        if (
+          !holder.useBuyerData &&
+          holderCpfDigits !== customerCpfDigits &&
+          holderEmail.trim().length === 0
+        ) {
+          // opcional, mas ajuda o suporte operacional
+        }
+      }
     }
 
     setCreatingOrder(true);
@@ -423,10 +594,18 @@ export default function CustomerCheckoutPage() {
           eventId: event.id,
           customerName: customerName.trim(),
           customerEmail: customerEmail.trim(),
+          customerCpf: customerCpfDigits,
           useWalletBalance,
           items: selectedItemsDetailed.map((item) => ({
             ticketTypeId: item.ticketTypeId,
             quantity: item.quantity,
+            holders: (holdersByTicketType[item.ticketTypeId] || []).map(
+              (holder) => ({
+                name: (holder.useBuyerData ? customerName : holder.name).trim(),
+                email: (holder.useBuyerData ? customerEmail : holder.email).trim(),
+                cpf: onlyDigits(holder.useBuyerData ? customerCpf : holder.cpf),
+              }),
+            ),
           })),
         }),
       });
@@ -508,8 +687,8 @@ export default function CustomerCheckoutPage() {
         </h1>
 
         <p className="mt-4 max-w-3xl text-sm leading-6 text-white/85 md:text-base">
-          Agora você pode combinar setores e lotes diferentes no mesmo pedido, sem
-          precisar abrir várias compras separadas.
+          Agora cada ingresso pode ficar no nome do comprador ou de outro
+          titular com conta já cadastrada por CPF.
         </p>
       </section>
 
@@ -545,6 +724,29 @@ export default function CustomerCheckoutPage() {
                   className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
                   placeholder="seuemail@exemplo.com"
                 />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  CPF do comprador
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={customerCpf}
+                  onChange={(e) => setCustomerCpf(formatCpf(e.target.value))}
+                  className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                  placeholder="000.000.000-00"
+                  maxLength={14}
+                />
+              </div>
+
+              <div className="rounded-[24px] border border-amber-200 bg-amber-50 p-5">
+                <p className="text-sm leading-6 text-amber-800">
+                  Se você informar o CPF de outra pessoa como titular, esse
+                  ingresso vai para a conta dessa pessoa. Se a conta ainda não
+                  existir, o pedido será bloqueado.
+                </p>
               </div>
 
               <div className="rounded-[24px] border border-gray-200 bg-gray-50 p-5">
@@ -653,6 +855,152 @@ export default function CustomerCheckoutPage() {
                           <p className="mt-1 text-xl font-black text-gray-900">
                             {formatMoney(item.totalPrice)}
                           </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 rounded-[22px] border border-sky-100 bg-sky-50 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <h5 className="text-base font-bold text-gray-900">
+                              Titulares deste item
+                            </h5>
+                            <p className="mt-1 text-sm text-gray-600">
+                              Defina para quem cada ingresso vai ficar.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 space-y-4">
+                          {(holdersByTicketType[item.ticketTypeId] || []).map(
+                            (holder, index) => (
+                              <div
+                                key={`${item.ticketTypeId}-${index}`}
+                                className="rounded-2xl border border-gray-200 bg-white p-4"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <div>
+                                    <p className="font-semibold text-gray-900">
+                                      Ingresso {index + 1}
+                                    </p>
+                                    <p className="mt-1 text-sm text-gray-500">
+                                      {item.ticketType.name || "Ingresso"}
+                                    </p>
+                                  </div>
+
+                                  <label className="flex items-center gap-3 rounded-2xl bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700">
+                                    <input
+                                      type="checkbox"
+                                      checked={holder.useBuyerData}
+                                      onChange={(e) =>
+                                        handleHolderUseBuyerChange(
+                                          item.ticketTypeId,
+                                          index,
+                                          e.target.checked,
+                                        )
+                                      }
+                                      className="h-4 w-4"
+                                    />
+                                    Usar dados do comprador
+                                  </label>
+                                </div>
+
+                                {holder.useBuyerData ? (
+                                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                                    <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                                      <p className="text-xs uppercase tracking-[0.16em] text-gray-500">
+                                        Nome
+                                      </p>
+                                      <p className="mt-1 font-semibold text-gray-900">
+                                        {customerName || "-"}
+                                      </p>
+                                    </div>
+
+                                    <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                                      <p className="text-xs uppercase tracking-[0.16em] text-gray-500">
+                                        Email
+                                      </p>
+                                      <p className="mt-1 break-all font-semibold text-gray-900">
+                                        {customerEmail || "-"}
+                                      </p>
+                                    </div>
+
+                                    <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                                      <p className="text-xs uppercase tracking-[0.16em] text-gray-500">
+                                        CPF
+                                      </p>
+                                      <p className="mt-1 font-semibold text-gray-900">
+                                        {customerCpf || "-"}
+                                      </p>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="mt-4 grid gap-4 md:grid-cols-3">
+                                    <div>
+                                      <label className="mb-2 block text-sm font-medium text-gray-700">
+                                        Nome do titular
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={holder.name}
+                                        onChange={(e) =>
+                                          handleHolderFieldChange(
+                                            item.ticketTypeId,
+                                            index,
+                                            "name",
+                                            e.target.value,
+                                          )
+                                        }
+                                        className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                                        placeholder="Nome da pessoa"
+                                      />
+                                    </div>
+
+                                    <div>
+                                      <label className="mb-2 block text-sm font-medium text-gray-700">
+                                        Email do titular
+                                      </label>
+                                      <input
+                                        type="email"
+                                        value={holder.email}
+                                        onChange={(e) =>
+                                          handleHolderFieldChange(
+                                            item.ticketTypeId,
+                                            index,
+                                            "email",
+                                            e.target.value,
+                                          )
+                                        }
+                                        className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                                        placeholder="email@exemplo.com"
+                                      />
+                                    </div>
+
+                                    <div>
+                                      <label className="mb-2 block text-sm font-medium text-gray-700">
+                                        CPF do titular
+                                      </label>
+                                      <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        value={holder.cpf}
+                                        onChange={(e) =>
+                                          handleHolderFieldChange(
+                                            item.ticketTypeId,
+                                            index,
+                                            "cpf",
+                                            e.target.value,
+                                          )
+                                        }
+                                        className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                                        placeholder="000.000.000-00"
+                                        maxLength={14}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ),
+                          )}
                         </div>
                       </div>
                     </div>
@@ -868,13 +1216,13 @@ export default function CustomerCheckoutPage() {
 
             <div className="mt-5 space-y-3">
               <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                Criar um pedido com vários setores/lotes
+                Criar um pedido com vários setores e lotes
               </div>
               <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                Aplicar wallet automaticamente
+                Definir titular diferente para cada ingresso
               </div>
               <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                Pagar apenas o restante, se existir
+                Fazer o ingresso cair na conta correta pelo CPF
               </div>
             </div>
           </div>

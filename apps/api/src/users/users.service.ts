@@ -9,17 +9,34 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
+function normalizeCpf(value?: string | null) {
+  return String(value || '').replace(/\D/g, '');
+}
+
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(data: CreateUserDto) {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: data.email },
+    const normalizedEmail = String(data.email || '').trim().toLowerCase();
+    const normalizedCpf = normalizeCpf(data.cpf);
+
+    const existingUserByEmail = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
     });
 
-    if (existingUser) {
+    if (existingUserByEmail) {
       throw new ConflictException('Já existe um usuário com este email');
+    }
+
+    if (normalizedCpf) {
+      const existingUserByCpf = await this.prisma.user.findUnique({
+        where: { cpfNormalized: normalizedCpf },
+      });
+
+      if (existingUserByCpf) {
+        throw new ConflictException('Já existe um usuário com este CPF');
+      }
     }
 
     const passwordHash = await bcrypt.hash(data.password, 10);
@@ -27,15 +44,21 @@ export class UsersService {
     return this.prisma.user.create({
       data: {
         name: data.name,
-        email: data.email,
+        email: normalizedEmail,
+        cpf: normalizedCpf || null,
+        cpfNormalized: normalizedCpf || null,
         passwordHash,
+        authProvider: 'PASSWORD',
         role: data.role,
       },
       select: {
         id: true,
         name: true,
         email: true,
+        cpf: true,
+        authProvider: true,
         role: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -48,7 +71,10 @@ export class UsersService {
         id: true,
         name: true,
         email: true,
+        cpf: true,
+        authProvider: true,
         role: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -65,7 +91,10 @@ export class UsersService {
         id: true,
         name: true,
         email: true,
+        cpf: true,
+        authProvider: true,
         role: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -115,7 +144,10 @@ export class UsersService {
         id: true,
         name: true,
         email: true,
+        cpf: true,
+        authProvider: true,
         role: true,
+        status: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -129,6 +161,7 @@ export class UsersService {
         id: true,
         name: true,
         email: true,
+        cpf: true,
       },
     });
 

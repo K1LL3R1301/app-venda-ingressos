@@ -12,8 +12,10 @@ type LoginResponse = {
     id: string;
     name?: string;
     email?: string;
+    cpf?: string;
     role?: string;
     status?: string;
+    authProvider?: string;
   };
   data?: {
     accessToken?: string;
@@ -24,27 +26,58 @@ type LoginResponse = {
       id: string;
       name?: string;
       email?: string;
+      cpf?: string;
       role?: string;
       status?: string;
+      authProvider?: string;
     };
   };
   message?: string;
 };
 
+function onlyDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function formatCpf(value: string) {
+  const digits = onlyDigits(value).slice(0, 11);
+
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  }
+
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(
+    6,
+    9,
+  )}-${digits.slice(9, 11)}`;
+}
+
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [cpf, setCpf] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  function getRedirectPathByRole(role?: string) {
-    if (role === "ADMIN") return "/dashboard";
-    if (role === "OPERATOR") return "/operator/dashboard";
-    if (role === "CUSTOMER") return "/customer/dashboard";
-    return "/dashboard";
+  function getDefaultRedirectPath() {
+    return "/customer/dashboard";
   }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+
+    const cpfDigits = onlyDigits(cpf);
+
+    if (cpfDigits.length !== 11) {
+      alert("Informe um CPF válido com 11 dígitos");
+      return;
+    }
+
+    if (!password.trim()) {
+      alert("Informe sua senha");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -54,7 +87,7 @@ export default function LoginPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email,
+          cpf: cpfDigits,
           password,
         }),
       });
@@ -104,7 +137,7 @@ export default function LoginPage() {
         localStorage.setItem("user", JSON.stringify(user));
       }
 
-      window.location.href = getRedirectPathByRole(user?.role);
+      window.location.href = getDefaultRedirectPath();
     } catch (err) {
       console.error("LOGIN ERROR:", err);
       alert("Erro na conexão com a API");
@@ -114,26 +147,28 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8">
-        <h1 className="text-3xl font-bold text-center mb-2">Login 🔐</h1>
-        <p className="text-center text-gray-600 mb-6">
-          Entre para acessar a plataforma
+    <div className="flex min-h-screen items-center justify-center bg-gray-100 px-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
+        <h1 className="mb-2 text-center text-3xl font-bold">Login 🔐</h1>
+        <p className="mb-6 text-center text-gray-600">
+          Entre com seu CPF para acessar a plataforma
         </p>
 
         <form onSubmit={handleLogin} className="space-y-4">
           <input
-            type="email"
-            placeholder="Email"
-            className="w-full border rounded-xl p-3"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            type="text"
+            inputMode="numeric"
+            placeholder="CPF"
+            className="w-full rounded-xl border p-3"
+            value={cpf}
+            onChange={(e) => setCpf(formatCpf(e.target.value))}
+            maxLength={14}
           />
 
           <input
             type="password"
             placeholder="Senha"
-            className="w-full border rounded-xl p-3"
+            className="w-full rounded-xl border p-3"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
@@ -141,14 +176,14 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-black text-white p-3 rounded-xl"
+            className="w-full rounded-xl bg-black p-3 text-white"
           >
             {loading ? "Entrando..." : "Entrar"}
           </button>
         </form>
 
         <div className="mt-6 text-center">
-          <p className="text-sm text-gray-600 mb-3">Ainda não tem conta?</p>
+          <p className="mb-3 text-sm text-gray-600">Ainda não tem conta?</p>
 
           <Link
             href="/register"

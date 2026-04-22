@@ -38,7 +38,7 @@ export class OrdersController {
   @ApiBearerAuth('bearer')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post('customer')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   createCustomerOrder(
     @Body() body: CreateOrderDto,
     @Req() req: AuthenticatedRequest,
@@ -58,7 +58,7 @@ export class OrdersController {
   @ApiBearerAuth('bearer')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get('customer')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   findCustomerOrders(@Req() req: AuthenticatedRequest) {
     return this.ordersService.findCustomerOrders(req.user.email);
   }
@@ -66,7 +66,7 @@ export class OrdersController {
   @ApiBearerAuth('bearer')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get('customer/:id')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   findCustomerOrderById(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
@@ -77,7 +77,7 @@ export class OrdersController {
   @ApiBearerAuth('bearer')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch('customer/:id/cancel')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   cancelCustomerOrder(
     @Param('id') id: string,
     @Body() body: CancelOrderDto,
@@ -94,7 +94,7 @@ export class OrdersController {
   @ApiBearerAuth('bearer')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch('customer/tickets/:ticketId/cancel')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   cancelCustomerTicket(
     @Param('ticketId') ticketId: string,
     @Body() body: CancelTicketDto,

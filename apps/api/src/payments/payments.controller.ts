@@ -35,7 +35,7 @@ export class PaymentsController {
   @ApiBearerAuth('bearer')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post('customer/:orderId/finalize')
-  @Roles('CUSTOMER')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
   finalizeCustomerPayment(
     @Param('orderId') orderId: string,
     @Req() req: AuthenticatedRequest,

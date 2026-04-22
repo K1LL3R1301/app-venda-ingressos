@@ -24,6 +24,48 @@ export class PaymentsService {
     return paidTotal;
   }
 
+  private async activateOrderTransferRequests(
+    orderId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    const pendingTransfers = await db.ticketTransferRequest.findMany({
+      where: {
+        orderId,
+        status: 'PENDING_PAYMENT',
+      },
+      select: {
+        id: true,
+        ticketId: true,
+      },
+    });
+
+    if (pendingTransfers.length === 0) {
+      return;
+    }
+
+    await db.ticketTransferRequest.updateMany({
+      where: {
+        id: {
+          in: pendingTransfers.map((item) => item.id),
+        },
+      },
+      data: {
+        status: 'PENDING_ACCEPTANCE',
+      },
+    });
+
+    await db.ticket.updateMany({
+      where: {
+        id: {
+          in: pendingTransfers.map((item) => item.ticketId),
+        },
+      },
+      data: {
+        status: 'TRANSFER_PENDING',
+      },
+    });
+  }
+
   async create(data: CreatePaymentDto) {
     const order = await this.prisma.order.findUnique({
       where: { id: data.orderId },
@@ -35,6 +77,7 @@ export class PaymentsService {
           },
         },
         payments: true,
+        transferRequests: true,
       },
     });
 
@@ -63,36 +106,32 @@ export class PaymentsService {
       ? outstandingAmount
       : requestedAmount;
 
-    const payment = await this.prisma.payment.create({
-      data: {
-        orderId: data.orderId,
-        amount: amountToCharge,
-        method: data.method,
-        status: 'PAID',
-        paidAt: new Date(),
-      },
-      include: {
-        order: {
-          include: {
-            items: {
-              include: {
-                ticketType: true,
-                tickets: true,
-              },
-            },
-            payments: true,
-          },
+    const payment = await this.prisma.$transaction(async (tx) => {
+      const createdPayment = await tx.payment.create({
+        data: {
+          orderId: data.orderId,
+          amount: amountToCharge,
+          method: data.method,
+          status: 'PAID',
+          paidAt: new Date(),
         },
-      },
-    });
+      });
 
-    const newPaidTotal = paidTotal.add(amountToCharge);
+      const newPaidTotal = paidTotal.add(amountToCharge);
+      const orderWillBePaid = newPaidTotal.gte(order.totalAmount);
 
-    await this.prisma.order.update({
-      where: { id: data.orderId },
-      data: {
-        status: newPaidTotal.gte(order.totalAmount) ? 'PAID' : 'PENDING',
-      },
+      await tx.order.update({
+        where: { id: data.orderId },
+        data: {
+          status: orderWillBePaid ? 'PAID' : 'PENDING',
+        },
+      });
+
+      if (orderWillBePaid) {
+        await this.activateOrderTransferRequests(data.orderId, tx);
+      }
+
+      return createdPayment;
     });
 
     return this.findById(payment.id);
@@ -114,6 +153,7 @@ export class PaymentsService {
           },
         },
         payments: true,
+        transferRequests: true,
       },
     });
 
@@ -140,21 +180,27 @@ export class PaymentsService {
 
     const normalizedMethod = method?.trim() || 'PIX';
 
-    const payment = await this.prisma.payment.create({
-      data: {
-        orderId: order.id,
-        amount: outstandingAmount,
-        method: normalizedMethod,
-        status: 'PAID',
-        paidAt: new Date(),
-      },
-    });
+    const payment = await this.prisma.$transaction(async (tx) => {
+      const createdPayment = await tx.payment.create({
+        data: {
+          orderId: order.id,
+          amount: outstandingAmount,
+          method: normalizedMethod,
+          status: 'PAID',
+          paidAt: new Date(),
+        },
+      });
 
-    await this.prisma.order.update({
-      where: { id: order.id },
-      data: {
-        status: 'PAID',
-      },
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'PAID',
+        },
+      });
+
+      await this.activateOrderTransferRequests(order.id, tx);
+
+      return createdPayment;
     });
 
     return this.findById(payment.id);
@@ -171,6 +217,7 @@ export class PaymentsService {
                 tickets: true,
               },
             },
+            transferRequests: true,
           },
         },
       },
@@ -194,6 +241,7 @@ export class PaymentsService {
               },
             },
             payments: true,
+            transferRequests: true,
           },
         },
       },

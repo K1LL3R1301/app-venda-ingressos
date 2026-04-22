@@ -6,6 +6,7 @@ export type CustomerHeaderUser = {
   id?: string;
   name?: string;
   email?: string;
+  cpf?: string;
   role?: string;
 };
 
@@ -47,6 +48,10 @@ export default function CustomerHeader({
   onSearchChange,
 }: CustomerHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const role = String(user?.role || "").toUpperCase();
+  const canAccessAdmin = role === "ADMIN";
+  const canAccessOperator = role === "OPERATOR";
 
   function handleLogout() {
     localStorage.removeItem("token");
@@ -126,6 +131,9 @@ export default function CustomerHeader({
                 <p className="mt-1 break-all text-xs text-gray-500">
                   {user?.email || "-"}
                 </p>
+                {user?.cpf ? (
+                  <p className="mt-1 text-xs text-gray-400">CPF: {user.cpf}</p>
+                ) : null}
               </div>
 
               <div className="p-2">
@@ -160,6 +168,26 @@ export default function CustomerHeader({
                 >
                   Wallet
                 </button>
+
+                {canAccessAdmin ? (
+                  <button
+                    type="button"
+                    onClick={() => handleGo("/dashboard")}
+                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    Painel Admin
+                  </button>
+                ) : null}
+
+                {canAccessOperator ? (
+                  <button
+                    type="button"
+                    onClick={() => handleGo("/operator/dashboard")}
+                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    Painel Operador
+                  </button>
+                ) : null}
 
                 <button
                   type="button"

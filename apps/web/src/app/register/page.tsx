@@ -7,14 +7,36 @@ type RegisterResponse = {
   id?: string;
   name?: string;
   email?: string;
+  cpf?: string;
+  authProvider?: string;
   role?: string;
   createdAt?: string;
   updatedAt?: string;
   message?: string;
 };
 
+function onlyDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function formatCpf(value: string) {
+  const digits = onlyDigits(value).slice(0, 11);
+
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  }
+
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(
+    6,
+    9,
+  )}-${digits.slice(9, 11)}`;
+}
+
 export default function RegisterPage() {
   const [name, setName] = useState("");
+  const [cpf, setCpf] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -23,8 +45,15 @@ export default function RegisterPage() {
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
 
+    const cpfDigits = onlyDigits(cpf);
+
     if (!name.trim()) {
       alert("Informe o nome");
+      return;
+    }
+
+    if (cpfDigits.length !== 11) {
+      alert("Informe um CPF válido com 11 dígitos");
       return;
     }
 
@@ -57,8 +86,9 @@ export default function RegisterPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name,
-          email,
+          name: name.trim(),
+          cpf: cpfDigits,
+          email: email.trim().toLowerCase(),
           password,
           role: "CUSTOMER",
         }),
@@ -94,13 +124,13 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8">
-        <h1 className="text-3xl font-bold text-center mb-2">
+    <div className="flex min-h-screen items-center justify-center bg-gray-100 px-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
+        <h1 className="mb-2 text-center text-3xl font-bold">
           Criar nova conta
         </h1>
 
-        <p className="text-center text-gray-600 mb-6">
+        <p className="mb-6 text-center text-gray-600">
           Preencha os dados abaixo para criar sua conta
         </p>
 
@@ -108,15 +138,25 @@ export default function RegisterPage() {
           <input
             type="text"
             placeholder="Nome"
-            className="w-full border rounded-xl p-3"
+            className="w-full rounded-xl border p-3"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
 
           <input
+            type="text"
+            inputMode="numeric"
+            placeholder="CPF"
+            className="w-full rounded-xl border p-3"
+            value={cpf}
+            onChange={(e) => setCpf(formatCpf(e.target.value))}
+            maxLength={14}
+          />
+
+          <input
             type="email"
             placeholder="Email"
-            className="w-full border rounded-xl p-3"
+            className="w-full rounded-xl border p-3"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
@@ -124,7 +164,7 @@ export default function RegisterPage() {
           <input
             type="password"
             placeholder="Senha"
-            className="w-full border rounded-xl p-3"
+            className="w-full rounded-xl border p-3"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
@@ -132,7 +172,7 @@ export default function RegisterPage() {
           <input
             type="password"
             placeholder="Confirmar senha"
-            className="w-full border rounded-xl p-3"
+            className="w-full rounded-xl border p-3"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
           />
@@ -140,7 +180,7 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-black text-white p-3 rounded-xl"
+            className="w-full rounded-xl bg-black p-3 text-white"
           >
             {loading ? "Criando conta..." : "Criar conta"}
           </button>
