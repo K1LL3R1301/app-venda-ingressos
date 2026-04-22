@@ -11,7 +11,7 @@ export type CustomerHeaderUser = {
 
 type CustomerHeaderProps = {
   user: CustomerHeaderUser | null;
-  activeNav?: "dashboard" | "orders" | "wallet";
+  activeNav?: "dashboard" | "orders" | "tickets" | "wallet";
   showSearch?: boolean;
   searchPlaceholder?: string;
   searchValue?: string;
@@ -87,6 +87,14 @@ export default function CustomerHeader({
 
           <button
             type="button"
+            onClick={() => goTo("/customer/tickets")}
+            className={getTopNavClasses(activeNav === "tickets")}
+          >
+            Meus tickets
+          </button>
+
+          <button
+            type="button"
             onClick={() => goTo("/customer/wallet")}
             className={getTopNavClasses(activeNav === "wallet")}
           >
@@ -132,6 +140,14 @@ export default function CustomerHeader({
                   className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
                 >
                   Meus pedidos
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => goTo("/customer/tickets")}
+                  className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Meus tickets
                 </button>
 
                 <button

@@ -50,6 +50,7 @@ export default function AdminSidebar({
       { href: "/organizers", label: "Organizadores", emoji: "🏢" },
       { href: "/events", label: "Eventos", emoji: "🎫" },
       { href: "/orders", label: "Pedidos", emoji: "🧾" },
+      { href: "/support", label: "Atendimentos", emoji: "💬" },
       { href: "/checkin", label: "Check-in", emoji: "✅" },
     ];
   }, [userRole]);
@@ -75,7 +76,7 @@ export default function AdminSidebar({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed top-4 left-4 z-[60] flex h-11 w-11 items-center justify-center rounded-xl bg-black text-white shadow-lg"
+        className="fixed left-4 top-4 z-[60] flex h-11 w-11 items-center justify-center rounded-xl bg-black text-white shadow-lg"
         aria-label="Abrir menu"
       >
         ☰
@@ -91,7 +92,7 @@ export default function AdminSidebar({
       )}
 
       <aside
-        className={`fixed top-0 left-0 z-50 h-full w-[280px] bg-white shadow-2xl transition-transform duration-300 ${
+        className={`fixed left-0 top-0 z-50 h-full w-[280px] bg-white shadow-2xl transition-transform duration-300 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >

@@ -2,13 +2,6 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
-type StoredUser = {
-  id?: string;
-  name?: string;
-  email?: string;
-  role?: string;
-};
-
 type TicketItem = {
   id: string;
   code?: string;
@@ -67,17 +60,8 @@ type OrderItem = {
   cancellations?: CancellationItem[];
 };
 
-type EventContactInfo = {
-  id?: string;
-  name?: string;
-  organizer?: {
-    id?: string;
-    tradeName?: string;
-    legalName?: string;
-    email?: string;
-    phone?: string;
-    whatsapp?: string;
-  };
+type SupportThreadResponse = {
+  id: string;
 };
 
 function toNumber(value?: string | number) {
@@ -141,20 +125,14 @@ function getStatusClasses(status?: string) {
   return "bg-gray-50 text-gray-700 border border-gray-200";
 }
 
-function getInitial(user: StoredUser | null) {
-  return (user?.name?.[0] || "U").toUpperCase();
-}
-
 export default function CustomerOrderDetailPage() {
-  const [user, setUser] = useState<StoredUser | null>(null);
   const [order, setOrder] = useState<OrderItem | null>(null);
   const [loading, setLoading] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null);
-  const [eventContact, setEventContact] = useState<EventContactInfo | null>(null);
   const [producerTicketOpen, setProducerTicketOpen] = useState(false);
   const [ticketSubject, setTicketSubject] = useState("");
   const [ticketMessage, setTicketMessage] = useState("");
+  const [creatingSupportThread, setCreatingSupportThread] = useState(false);
   const [paying, setPaying] = useState(false);
   const [cancelingOrderMode, setCancelingOrderMode] = useState<
     "" | "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80"
@@ -172,7 +150,6 @@ export default function CustomerOrderDetailPage() {
 
   async function loadOrder(orderIdParam: string) {
     const token = localStorage.getItem("token");
-    const rawUser = localStorage.getItem("user");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -183,15 +160,6 @@ export default function CustomerOrderDetailPage() {
       alert("Pedido inválido");
       window.location.href = "/customer/orders";
       return;
-    }
-
-    if (rawUser) {
-      try {
-        const parsedUser = JSON.parse(rawUser) as StoredUser;
-        setUser(parsedUser);
-      } catch (error) {
-        console.error("Erro ao ler usuário do localStorage:", error);
-      }
     }
 
     try {
@@ -219,28 +187,6 @@ export default function CustomerOrderDetailPage() {
       }
 
       setOrder(data);
-
-      if (data?.event?.id) {
-        try {
-          const eventRes = await fetch(
-            `http://localhost:3001/v1/events/${data.event.id}`,
-            {
-              method: "GET",
-              headers: {
-                "Content-Type": "application/json",
-              },
-            },
-          );
-
-          const eventData = await eventRes.json();
-
-          if (eventRes.ok) {
-            setEventContact(eventData);
-          }
-        } catch (error) {
-          console.error("EVENT CONTACT ERROR:", error);
-        }
-      }
     } catch (error) {
       console.error("CUSTOMER ORDER DETAIL ERROR:", error);
       alert("Erro ao conectar com a API");
@@ -253,12 +199,6 @@ export default function CustomerOrderDetailPage() {
   useEffect(() => {
     loadOrder(orderId);
   }, [orderId]);
-
-  function handleLogout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    window.location.href = "/login";
-  }
 
   function goTo(path: string) {
     window.location.href = path;
@@ -564,13 +504,9 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-  function normalizePhone(value?: string) {
-    return String(value || "").replace(/\D/g, "");
-  }
-
   function handleTalkToProducer() {
-    if (!order?.event?.id) {
-      alert("Evento não encontrado para este pedido");
+    if (!order?.id) {
+      alert("Pedido inválido");
       return;
     }
 
@@ -579,60 +515,69 @@ export default function CustomerOrderDetailPage() {
     setProducerTicketOpen(true);
   }
 
-  function handleSubmitProducerTicket(e: FormEvent) {
+  async function handleSubmitProducerTicket(e: FormEvent) {
     e.preventDefault();
 
-    const subject = ticketSubject.trim() || `Problema no pedido #${order?.id}`;
+    const token = localStorage.getItem("token");
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    if (!order?.id) {
+      alert("Pedido inválido");
+      return;
+    }
+
+    const subject = ticketSubject.trim() || `Problema no pedido #${order.id}`;
     const message = ticketMessage.trim();
 
     if (!message) {
-      alert("Descreva o problema para falar com o produtor");
+      alert("Descreva o problema para abrir o atendimento");
       return;
     }
 
-    const producerName =
-      eventContact?.organizer?.tradeName ||
-      eventContact?.organizer?.legalName ||
-      "produtor";
+    setCreatingSupportThread(true);
 
-    const producerEmail = String(eventContact?.organizer?.email || "").trim();
-    const producerPhone = normalizePhone(
-      eventContact?.organizer?.whatsapp || eventContact?.organizer?.phone,
-    );
+    try {
+      const res = await fetch("http://localhost:3001/v1/support/customer", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          orderId: order.id,
+          subject,
+          message,
+        }),
+      });
 
-    const ticketBody = [
-      `Pedido: #${order?.id || "-"}`,
-      `Evento: ${order?.event?.name || "-"}`,
-      `Data do evento: ${formatDate(order?.event?.eventDate)}`,
-      `Comprador: ${order?.customerName || "-"}`,
-      `Email do comprador: ${order?.customerEmail || "-"}`,
-      "",
-      `Assunto: ${subject}`,
-      "",
-      "Problema relatado:",
-      message,
-    ].join("\n");
+      const data: SupportThreadResponse & { message?: string } = await res.json();
 
-    if (producerEmail) {
-      window.location.href = `mailto:${producerEmail}?subject=${encodeURIComponent(
-        subject,
-      )}&body=${encodeURIComponent(ticketBody)}`;
+      if (!res.ok) {
+        alert(
+          typeof data?.message === "string"
+            ? data.message
+            : "Erro ao abrir atendimento",
+        );
+        return;
+      }
+
+      if (!data?.id) {
+        alert("Atendimento criado, mas sem id retornado");
+        return;
+      }
+
       setProducerTicketOpen(false);
-      return;
+      window.location.href = `/customer/support/${data.id}`;
+    } catch (error) {
+      console.error("CREATE SUPPORT THREAD ERROR:", error);
+      alert("Erro ao conectar com a API");
+    } finally {
+      setCreatingSupportThread(false);
     }
-
-    if (producerPhone) {
-      window.open(
-        `https://wa.me/${producerPhone}?text=${encodeURIComponent(
-          `Olá ${producerName}, preciso de ajuda com este pedido.\n\n${ticketBody}`,
-        )}`,
-        "_blank",
-      );
-      setProducerTicketOpen(false);
-      return;
-    }
-
-    alert("O produtor deste evento ainda não possui email ou WhatsApp cadastrado.");
   }
 
   function handleTransferTicket() {
@@ -886,29 +831,25 @@ export default function CustomerOrderDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
-            <p className="text-lg font-medium text-gray-800">
-              Carregando pedido...
-            </p>
-          </div>
+      <main className="mx-auto max-w-7xl px-4 py-10">
+        <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
+          <p className="text-lg font-medium text-gray-800">
+            Carregando pedido...
+          </p>
         </div>
-      </div>
+      </main>
     );
   }
 
   if (!order) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
-            <p className="text-lg font-medium text-gray-800">
-              Pedido não encontrado.
-            </p>
-          </div>
+      <main className="mx-auto max-w-7xl px-4 py-10">
+        <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
+          <p className="text-lg font-medium text-gray-800">
+            Pedido não encontrado.
+          </p>
         </div>
-      </div>
+      </main>
     );
   }
 
@@ -940,116 +881,11 @@ export default function CustomerOrderDetailPage() {
       : "Aguardando pagamento";
 
   const showTickets = order.status !== "PENDING";
-  const activeTicketsCount =
-    order.items?.reduce((sum, item) => {
-      const count =
-        item.tickets?.filter((ticket) => ticket.status !== "CANCELED").length || 0;
-      return sum + count;
-    }, 0) || 0;
-
   const isPendingOrder = order.status === "PENDING";
   const isPaidOrder = order.status === "PAID";
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb] text-gray-900">
-      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-4">
-          <button
-            type="button"
-            onClick={() => goTo("/customer/dashboard")}
-            className="shrink-0 text-3xl font-black tracking-tight text-sky-600"
-          >
-            Sympla
-          </button>
-
-          <nav className="ml-auto hidden items-center gap-5 md:flex">
-            <button
-              type="button"
-              onClick={() => goTo("/customer/orders")}
-              className="text-sm font-semibold text-sky-600"
-            >
-              Meus pedidos
-            </button>
-
-            <button
-              type="button"
-              onClick={() => goTo("/customer/wallet")}
-              className="text-sm font-medium text-gray-600 hover:text-gray-900"
-            >
-              Wallet
-            </button>
-          </nav>
-
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((prev) => !prev)}
-              className="flex h-12 items-center gap-3 rounded-full border border-gray-200 bg-white px-3 shadow-sm hover:bg-gray-50"
-            >
-              <span className="text-lg">☰</span>
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-sm font-semibold text-gray-700">
-                {getInitial(user)}
-              </span>
-            </button>
-
-            {menuOpen && (
-              <div className="absolute right-0 mt-3 w-72 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
-                <div className="border-b border-gray-100 px-4 py-4">
-                  <p className="text-sm font-semibold text-gray-900">
-                    {user?.name || "Usuário"}
-                  </p>
-                  <p className="mt-1 break-all text-xs text-gray-500">
-                    {user?.email || "-"}
-                  </p>
-                </div>
-
-                <div className="p-2">
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/dashboard")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Início
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/orders")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Meus pedidos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/tickets")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Meus ingressos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/wallet")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Wallet
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    Sair
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
+    <>
       <main className="mx-auto max-w-7xl px-4 py-8">
         <section className="overflow-hidden rounded-[32px] bg-gradient-to-r from-fuchsia-600 via-purple-600 to-indigo-700 text-white shadow-sm">
           <button
@@ -1444,7 +1280,7 @@ export default function CustomerOrderDetailPage() {
                   onClick={handleTalkToProducer}
                   className="flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
                 >
-                  <span className="text-lg">✉️</span>
+                  <span className="text-lg">💬</span>
                   <span>Fale com o produtor</span>
                 </button>
 
@@ -1566,7 +1402,7 @@ export default function CustomerOrderDetailPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/75">
-                    Ticket com o produtor
+                    Chat com o produtor
                   </p>
                   <h3 className="mt-2 line-clamp-2 text-2xl font-black leading-tight">
                     {order.event?.name || "Evento"}
@@ -1589,17 +1425,10 @@ export default function CustomerOrderDetailPage() {
             >
               <div className="grid gap-4">
                 <div className="rounded-[18px] bg-gray-50 p-4">
-                  <p className="text-xs text-gray-500">Canal disponível</p>
+                  <p className="text-xs text-gray-500">Atendimento interno</p>
                   <p className="mt-1 text-sm font-semibold text-gray-900">
-                    {eventContact?.organizer?.email
-                      ? `Email: ${eventContact.organizer.email}`
-                      : eventContact?.organizer?.whatsapp ||
-                        eventContact?.organizer?.phone
-                      ? `WhatsApp/Telefone: ${
-                          eventContact.organizer.whatsapp ||
-                          eventContact.organizer.phone
-                        }`
-                      : "Nenhum canal do produtor cadastrado"}
+                    Sua mensagem ficará salva dentro do app e vinculada a este
+                    pedido.
                   </p>
                 </div>
 
@@ -1629,16 +1458,17 @@ export default function CustomerOrderDetailPage() {
                 </div>
 
                 <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs leading-5 text-violet-800">
-                  Esta primeira versão abre o contato com o produtor por email ou
-                  WhatsApp, usando os dados do evento.
+                  Depois de abrir o atendimento, a conversa continua dentro do
+                  próprio app.
                 </div>
 
                 <div className="grid gap-2 sm:grid-cols-2">
                   <button
                     type="submit"
-                    className="rounded-xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-700"
+                    disabled={creatingSupportThread}
+                    className="rounded-xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Abrir ticket
+                    {creatingSupportThread ? "Abrindo..." : "Abrir atendimento"}
                   </button>
 
                   <button
@@ -1832,6 +1662,6 @@ export default function CustomerOrderDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
