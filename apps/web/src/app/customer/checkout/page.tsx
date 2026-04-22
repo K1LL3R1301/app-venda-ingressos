@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import CustomerHeader from "../../../components/customer/CustomerHeader";
 
 type StoredUser = {
   id?: string;
@@ -12,17 +13,26 @@ type StoredUser = {
 type TicketTypeItem = {
   id: string;
   name?: string;
+  lotLabel?: string;
   description?: string;
   price?: string | number;
   quantity?: number;
   status?: string;
+  salesEndAt?: string;
+  feeAmount?: string | number;
+  feeDescription?: string;
+  benefitDescription?: string;
+  isHidden?: boolean;
 };
 
 type EventDetail = {
   id: string;
   name?: string;
   description?: string;
+  shortDescription?: string;
   eventDate?: string;
+  startDate?: string;
+  endDate?: string;
   capacity?: number;
   status?: string;
   organizer?: {
@@ -54,6 +64,12 @@ type CreateCustomerOrderResponse = {
   };
   walletAppliedAmount?: string | number;
   remainingAmount?: string | number;
+  message?: string;
+};
+
+type CheckoutCartItem = {
+  ticketTypeId: string;
+  quantity: number;
 };
 
 function formatDate(value?: string) {
@@ -62,7 +78,13 @@ function formatDate(value?: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
 
-  return date.toLocaleString("pt-BR");
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function toNumber(value?: string | number) {
@@ -81,23 +103,70 @@ function formatMoney(value?: string | number) {
   }).format(toNumber(value));
 }
 
-function getInitial(user: StoredUser | null) {
-  return (user?.name?.[0] || "U").toUpperCase();
+function parseRequestedItems(searchParams: URLSearchParams): CheckoutCartItem[] {
+  const itemsParam = searchParams.get("items");
+
+  if (itemsParam) {
+    try {
+      const parsed = JSON.parse(itemsParam) as Array<{
+        ticketTypeId?: string;
+        quantity?: number;
+      }>;
+
+      const normalized = (Array.isArray(parsed) ? parsed : [])
+        .map((item) => ({
+          ticketTypeId: String(item.ticketTypeId || "").trim(),
+          quantity: Math.max(1, Number(item.quantity || 1)),
+        }))
+        .filter((item) => item.ticketTypeId);
+
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    } catch (error) {
+      console.error("Erro ao ler items do checkout:", error);
+    }
+  }
+
+  const ticketTypeId = String(searchParams.get("ticketTypeId") || "").trim();
+  const quantity = Math.max(1, Number(searchParams.get("quantity") || 1));
+
+  if (!ticketTypeId) return [];
+
+  return [
+    {
+      ticketTypeId,
+      quantity,
+    },
+  ];
+}
+
+function mergeCartItems(items: CheckoutCartItem[]) {
+  const grouped = new Map<string, number>();
+
+  for (const item of items) {
+    grouped.set(
+      item.ticketTypeId,
+      (grouped.get(item.ticketTypeId) || 0) + Math.max(1, item.quantity),
+    );
+  }
+
+  return Array.from(grouped.entries()).map(([ticketTypeId, quantity]) => ({
+    ticketTypeId,
+    quantity,
+  }));
 }
 
 export default function CustomerCheckoutPage() {
   const [user, setUser] = useState<StoredUser | null>(null);
   const [event, setEvent] = useState<EventDetail | null>(null);
-  const [selectedTicketType, setSelectedTicketType] =
-    useState<TicketTypeItem | null>(null);
   const [wallet, setWallet] = useState<WalletSummary | null>(null);
+  const [cartItems, setCartItems] = useState<CheckoutCartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [creatingOrder, setCreatingOrder] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
 
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
-  const [quantity, setQuantity] = useState(1);
   const [useWalletBalance, setUseWalletBalance] = useState(true);
 
   const searchParams = useMemo(() => {
@@ -106,7 +175,10 @@ export default function CustomerCheckoutPage() {
   }, []);
 
   const eventId = searchParams.get("eventId") || "";
-  const ticketTypeId = searchParams.get("ticketTypeId") || "";
+  const requestedItems = useMemo(
+    () => parseRequestedItems(searchParams),
+    [searchParams],
+  );
 
   useEffect(() => {
     async function loadCheckoutBase() {
@@ -118,9 +190,15 @@ export default function CustomerCheckoutPage() {
         return;
       }
 
-      if (!eventId || !ticketTypeId) {
+      if (!eventId) {
         alert("Checkout inválido");
         window.location.href = "/customer/events";
+        return;
+      }
+
+      if (requestedItems.length === 0) {
+        alert("Nenhum ingresso selecionado");
+        window.location.href = `/customer/events/${eventId}`;
         return;
       }
 
@@ -174,19 +252,23 @@ export default function CustomerCheckoutPage() {
           return;
         }
 
-        const foundTicketType = (eventData.ticketTypes || []).find(
-          (ticket: TicketTypeItem) => ticket.id === ticketTypeId,
+        const availableTicketTypes = (eventData.ticketTypes || []).filter(
+          (ticket: TicketTypeItem) => ticket.status === "ACTIVE" && !ticket.isHidden,
         );
 
-        if (!foundTicketType) {
-          alert("Tipo de ingresso não encontrado");
+        const normalizedItems = requestedItems.filter((item) =>
+          availableTicketTypes.some((ticket: TicketTypeItem) => ticket.id === item.ticketTypeId),
+        );
+
+        if (normalizedItems.length === 0) {
+          alert("Nenhum ingresso válido encontrado para este checkout");
           window.location.href = `/customer/events/${eventId}`;
           return;
         }
 
         setEvent(eventData);
-        setSelectedTicketType(foundTicketType);
         setWallet(walletData);
+        setCartItems(mergeCartItems(normalizedItems));
       } catch (error) {
         console.error("CUSTOMER CHECKOUT ERROR:", error);
         alert("Erro ao conectar com a API");
@@ -197,31 +279,100 @@ export default function CustomerCheckoutPage() {
     }
 
     loadCheckoutBase();
-  }, [eventId, ticketTypeId]);
+  }, [eventId, requestedItems]);
 
   function goTo(path: string) {
     window.location.href = path;
   }
 
-  function handleLogout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    window.location.href = "/login";
-  }
+  const activeTicketTypes = useMemo(
+    () =>
+      (event?.ticketTypes || []).filter(
+        (ticket) => ticket.status === "ACTIVE" && !ticket.isHidden,
+      ),
+    [event],
+  );
 
-  const quantityNumber = Math.max(1, Number(quantity || 1));
-  const unitPriceNumber = toNumber(selectedTicketType?.price);
-  const subtotal = quantityNumber * unitPriceNumber;
+  const selectedItemsDetailed = useMemo(() => {
+    return cartItems
+      .map((item) => {
+        const ticketType = activeTicketTypes.find(
+          (ticket) => ticket.id === item.ticketTypeId,
+        );
+
+        if (!ticketType) return null;
+
+        return {
+          ...item,
+          ticketType,
+          unitPrice: toNumber(ticketType.price),
+          totalPrice: toNumber(ticketType.price) * item.quantity,
+        };
+      })
+      .filter(Boolean) as Array<{
+      ticketTypeId: string;
+      quantity: number;
+      ticketType: TicketTypeItem;
+      unitPrice: number;
+      totalPrice: number;
+    }>;
+  }, [cartItems, activeTicketTypes]);
+
+  const notSelectedTicketTypes = useMemo(() => {
+    const selectedIds = new Set(cartItems.map((item) => item.ticketTypeId));
+    return activeTicketTypes.filter((ticket) => !selectedIds.has(ticket.id));
+  }, [activeTicketTypes, cartItems]);
+
+  const subtotal = useMemo(
+    () =>
+      selectedItemsDetailed.reduce((sum, item) => sum + item.totalPrice, 0),
+    [selectedItemsDetailed],
+  );
+
+  const totalTickets = useMemo(
+    () => selectedItemsDetailed.reduce((sum, item) => sum + item.quantity, 0),
+    [selectedItemsDetailed],
+  );
+
   const walletBalanceNumber = toNumber(wallet?.balance);
-
   const walletApplied = useWalletBalance
     ? Math.min(walletBalanceNumber, subtotal)
     : 0;
-
   const remainingAmount = Math.max(0, subtotal - walletApplied);
   const purchaseWillBePaid = remainingAmount === 0;
 
-  async function handleCreateOrder(e: React.FormEvent) {
+  function handleQuantityChange(ticketTypeId: string, nextQuantity: number) {
+    setCartItems((prev) =>
+      prev.map((item) =>
+        item.ticketTypeId === ticketTypeId
+          ? {
+              ...item,
+              quantity: Math.max(1, nextQuantity),
+            }
+          : item,
+      ),
+    );
+  }
+
+  function handleAddTicketType(ticketTypeId: string) {
+    setCartItems((prev) =>
+      mergeCartItems([
+        ...prev,
+        {
+          ticketTypeId,
+          quantity: 1,
+        },
+      ]),
+    );
+  }
+
+  function handleRemoveTicketType(ticketTypeId: string) {
+    setCartItems((prev) =>
+      prev.filter((item) => item.ticketTypeId !== ticketTypeId),
+    );
+  }
+
+  async function handleCreateOrder(e: FormEvent) {
     e.preventDefault();
 
     const token = localStorage.getItem("token");
@@ -231,7 +382,7 @@ export default function CustomerCheckoutPage() {
       return;
     }
 
-    if (!event?.id || !selectedTicketType?.id) {
+    if (!event?.id) {
       alert("Dados do checkout inválidos");
       return;
     }
@@ -246,17 +397,28 @@ export default function CustomerCheckoutPage() {
       return;
     }
 
-    if (!quantityNumber || quantityNumber < 1) {
-      alert("Informe uma quantidade válida");
+    if (selectedItemsDetailed.length === 0) {
+      alert("Selecione pelo menos um ingresso");
       return;
     }
 
-    if (
-      typeof selectedTicketType.quantity === "number" &&
-      quantityNumber > selectedTicketType.quantity
-    ) {
-      alert("Quantidade maior do que a disponível");
-      return;
+    for (const item of selectedItemsDetailed) {
+      const availableQuantity =
+        typeof item.ticketType.quantity === "number"
+          ? item.ticketType.quantity
+          : 0;
+
+      if (item.quantity < 1) {
+        alert(`Quantidade inválida para ${item.ticketType.name || "ingresso"}`);
+        return;
+      }
+
+      if (availableQuantity > 0 && item.quantity > availableQuantity) {
+        alert(
+          `A quantidade de ${item.ticketType.name || "ingresso"} é maior do que a disponível`,
+        );
+        return;
+      }
     }
 
     setCreatingOrder(true);
@@ -273,17 +435,14 @@ export default function CustomerCheckoutPage() {
           customerName: customerName.trim(),
           customerEmail: customerEmail.trim(),
           useWalletBalance,
-          items: [
-            {
-              ticketTypeId: selectedTicketType.id,
-              quantity: quantityNumber,
-            },
-          ],
+          items: selectedItemsDetailed.map((item) => ({
+            ticketTypeId: item.ticketTypeId,
+            quantity: item.quantity,
+          })),
         }),
       });
 
-      const data: CreateCustomerOrderResponse & { message?: string } =
-        await res.json();
+      const data: CreateCustomerOrderResponse = await res.json();
 
       if (!res.ok) {
         alert(
@@ -334,7 +493,7 @@ export default function CustomerCheckoutPage() {
     );
   }
 
-  if (!event || !selectedTicketType) {
+  if (!event || selectedItemsDetailed.length === 0) {
     return (
       <div className="min-h-screen bg-[#f6f7fb]">
         <div className="mx-auto max-w-7xl px-4 py-10">
@@ -350,119 +509,7 @@ export default function CustomerCheckoutPage() {
 
   return (
     <div className="min-h-screen bg-[#f6f7fb] text-gray-900">
-      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-4">
-          <button
-            type="button"
-            onClick={() => goTo("/customer/dashboard")}
-            className="shrink-0 text-3xl font-black tracking-tight text-sky-600"
-          >
-            Sympla
-          </button>
-
-          <nav className="ml-auto hidden items-center gap-5 md:flex">
-            <button
-              type="button"
-              onClick={() => goTo("/customer/events")}
-              className="text-sm font-semibold text-sky-600"
-            >
-              Eventos
-            </button>
-
-            <button
-              type="button"
-              onClick={() => goTo("/customer/orders")}
-              className="text-sm font-medium text-gray-600 hover:text-gray-900"
-            >
-              Meus pedidos
-            </button>
-
-            <button
-              type="button"
-              onClick={() => goTo("/customer/wallet")}
-              className="text-sm font-medium text-gray-600 hover:text-gray-900"
-            >
-              Wallet
-            </button>
-          </nav>
-
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((prev) => !prev)}
-              className="flex h-12 items-center gap-3 rounded-full border border-gray-200 bg-white px-3 shadow-sm hover:bg-gray-50"
-            >
-              <span className="text-lg">☰</span>
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-sm font-semibold text-gray-700">
-                {getInitial(user)}
-              </span>
-            </button>
-
-            {menuOpen && (
-              <div className="absolute right-0 mt-3 w-72 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
-                <div className="border-b border-gray-100 px-4 py-4">
-                  <p className="text-sm font-semibold text-gray-900">
-                    {user?.name || "Usuário"}
-                  </p>
-                  <p className="mt-1 break-all text-xs text-gray-500">
-                    {user?.email || "-"}
-                  </p>
-                </div>
-
-                <div className="p-2">
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/dashboard")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Início
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/events")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Eventos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/orders")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Meus pedidos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/tickets")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Meus ingressos
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => goTo("/customer/wallet")}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Wallet
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    Sair
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
+      <CustomerHeader user={user} />
 
       <main className="mx-auto max-w-7xl px-4 py-8">
         <section className="overflow-hidden rounded-[32px] bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 p-8 text-white shadow-sm">
@@ -474,125 +521,266 @@ export default function CustomerCheckoutPage() {
             Finalize seu pedido
           </h1>
 
-          <p className="mt-4 max-w-2xl text-sm leading-6 text-white/85 md:text-base">
-            Agora o checkout já pode usar seu saldo da wallet para reduzir ou
-            quitar o valor da compra.
+          <p className="mt-4 max-w-3xl text-sm leading-6 text-white/85 md:text-base">
+            Agora você pode combinar setores e lotes diferentes no mesmo pedido,
+            sem precisar abrir várias compras separadas.
           </p>
         </section>
 
         <section className="mt-10 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-900">
-              Dados da compra
-            </h2>
+          <div className="space-y-6">
+            <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="text-2xl font-bold text-gray-900">
+                Dados do comprador
+              </h2>
 
-            <form onSubmit={handleCreateOrder} className="mt-6 space-y-5">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  Nome do comprador
-                </label>
-                <input
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
-                  placeholder="Seu nome"
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  Email do comprador
-                </label>
-                <input
-                  type="email"
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
-                  placeholder="seuemail@exemplo.com"
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  Quantidade
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={selectedTicketType.quantity || 1}
-                  value={quantity}
-                  onChange={(e) =>
-                    setQuantity(Math.max(1, Number(e.target.value || 1)))
-                  }
-                  className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div className="rounded-[24px] border border-violet-200 bg-violet-50 p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-violet-900">
-                      Usar saldo da wallet
-                    </p>
-                    <p className="mt-1 text-sm leading-6 text-violet-800">
-                      Saldo disponível: {formatMoney(walletBalanceNumber)}
-                    </p>
-                  </div>
-
-                  <label className="flex cursor-pointer items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={useWalletBalance}
-                      onChange={(e) => setUseWalletBalance(e.target.checked)}
-                      className="h-5 w-5 rounded border-gray-300"
-                    />
+              <form onSubmit={handleCreateOrder} className="mt-6 space-y-5">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Nome do comprador
                   </label>
+                  <input
+                    type="text"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                    placeholder="Seu nome"
+                  />
                 </div>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <div className="rounded-2xl bg-white px-4 py-3">
-                    <p className="text-sm text-gray-500">Abatimento da wallet</p>
-                    <p className="mt-1 font-bold text-violet-700">
-                      {formatMoney(walletApplied)}
-                    </p>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Email do comprador
+                  </label>
+                  <input
+                    type="email"
+                    value={customerEmail}
+                    onChange={(e) => setCustomerEmail(e.target.value)}
+                    className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                    placeholder="seuemail@exemplo.com"
+                  />
+                </div>
+
+                <div className="rounded-[24px] border border-gray-200 bg-gray-50 p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">
+                        Itens selecionados
+                      </h3>
+                      <p className="mt-1 text-sm text-gray-500">
+                        Ajuste as quantidades dos setores e lotes no mesmo pedido.
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="rounded-2xl bg-white px-4 py-3">
-                    <p className="text-sm text-gray-500">Valor restante</p>
-                    <p className="mt-1 font-bold text-gray-900">
-                      {formatMoney(remainingAmount)}
-                    </p>
+                  <div className="mt-5 space-y-4">
+                    {selectedItemsDetailed.map((item) => (
+                      <div
+                        key={item.ticketTypeId}
+                        className="rounded-[22px] border border-gray-200 bg-white p-4"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            {item.ticketType.lotLabel ? (
+                              <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                                {item.ticketType.lotLabel}
+                              </span>
+                            ) : null}
+
+                            <h4 className="mt-3 text-lg font-bold text-gray-900">
+                              {item.ticketType.name || "Ingresso"}
+                            </h4>
+
+                            {item.ticketType.description ? (
+                              <p className="mt-2 text-sm leading-6 text-gray-600">
+                                {item.ticketType.description}
+                              </p>
+                            ) : null}
+
+                            <div className="mt-3 space-y-1 text-sm text-gray-500">
+                              <p>Valor unitário: {formatMoney(item.unitPrice)}</p>
+                              <p>
+                                Disponível: {item.ticketType.quantity ?? 0}
+                              </p>
+                              {item.ticketType.salesEndAt ? (
+                                <p>
+                                  Vendas até {formatDate(item.ticketType.salesEndAt)}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTicketType(item.ticketTypeId)}
+                            className="rounded-2xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                          >
+                            Remover
+                          </button>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleQuantityChange(
+                                  item.ticketTypeId,
+                                  Math.max(1, item.quantity - 1),
+                                )
+                              }
+                              className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-300 bg-white text-lg font-bold text-gray-700 hover:bg-gray-50"
+                            >
+                              -
+                            </button>
+
+                            <input
+                              type="number"
+                              min={1}
+                              max={item.ticketType.quantity || undefined}
+                              value={item.quantity}
+                              onChange={(e) =>
+                                handleQuantityChange(
+                                  item.ticketTypeId,
+                                  Math.max(1, Number(e.target.value || 1)),
+                                )
+                              }
+                              className="w-24 rounded-2xl border border-gray-300 bg-white px-4 py-2 text-center outline-none focus:border-sky-500"
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleQuantityChange(
+                                  item.ticketTypeId,
+                                  item.quantity + 1,
+                                )
+                              }
+                              className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-300 bg-white text-lg font-bold text-gray-700 hover:bg-gray-50"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <div className="rounded-2xl bg-gray-50 px-4 py-3 text-right">
+                            <p className="text-xs uppercase tracking-[0.16em] text-gray-500">
+                              Total deste item
+                            </p>
+                            <p className="mt-1 text-xl font-black text-gray-900">
+                              {formatMoney(item.totalPrice)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
 
-              <div className="rounded-[24px] border border-sky-100 bg-sky-50 p-5">
-                <p className="text-sm leading-6 text-sky-800">
-                  {purchaseWillBePaid
-                    ? "Com o saldo atual, este pedido pode ser quitado integralmente pela wallet."
-                    : "Depois de criar o pedido, você seguirá para a tela do pedido para concluir o pagamento do valor restante."}
-                </p>
-              </div>
+                {notSelectedTicketTypes.length > 0 ? (
+                  <div className="rounded-[24px] border border-gray-200 bg-white p-5">
+                    <h3 className="text-lg font-bold text-gray-900">
+                      Adicionar mais setores ou lotes
+                    </h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Você pode combinar diferentes opções no mesmo pedido.
+                    </p>
 
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <button
-                  type="submit"
-                  disabled={creatingOrder}
-                  className="rounded-2xl bg-sky-600 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {creatingOrder ? "Criando pedido..." : "Criar pedido"}
-                </button>
+                    <div className="mt-5 space-y-3">
+                      {notSelectedTicketTypes.map((ticket) => (
+                        <div
+                          key={ticket.id}
+                          className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-gray-200 bg-gray-50 p-4"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-semibold text-gray-900">
+                              {ticket.lotLabel
+                                ? `${ticket.name || "Ingresso"} • ${ticket.lotLabel}`
+                                : ticket.name || "Ingresso"}
+                            </p>
+                            <p className="mt-1 text-sm text-gray-500">
+                              {formatMoney(ticket.price)} • disponível{" "}
+                              {ticket.quantity ?? 0}
+                            </p>
+                          </div>
 
-                <button
-                  type="button"
-                  onClick={() => goTo(`/customer/events/${event.id}`)}
-                  className="rounded-2xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                >
-                  Voltar ao evento
-                </button>
-              </div>
-            </form>
+                          <button
+                            type="button"
+                            onClick={() => handleAddTicketType(ticket.id)}
+                            className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+                          >
+                            Adicionar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="rounded-[24px] border border-violet-200 bg-violet-50 p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-violet-900">
+                        Usar saldo da wallet
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-violet-800">
+                        Saldo disponível: {formatMoney(walletBalanceNumber)}
+                      </p>
+                    </div>
+
+                    <label className="flex cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={useWalletBalance}
+                        onChange={(e) => setUseWalletBalance(e.target.checked)}
+                        className="h-5 w-5 rounded border-gray-300"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-2xl bg-white px-4 py-3">
+                      <p className="text-sm text-gray-500">Abatimento da wallet</p>
+                      <p className="mt-1 font-bold text-violet-700">
+                        {formatMoney(walletApplied)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl bg-white px-4 py-3">
+                      <p className="text-sm text-gray-500">Valor restante</p>
+                      <p className="mt-1 font-bold text-gray-900">
+                        {formatMoney(remainingAmount)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-sky-100 bg-sky-50 p-5">
+                  <p className="text-sm leading-6 text-sky-800">
+                    {purchaseWillBePaid
+                      ? "Com o saldo atual, este pedido pode ser quitado integralmente pela wallet."
+                      : "Depois de criar o pedido, você seguirá para a tela do pedido para concluir o pagamento do valor restante."}
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <button
+                    type="submit"
+                    disabled={creatingOrder}
+                    className="rounded-2xl bg-sky-600 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {creatingOrder ? "Criando pedido..." : "Criar pedido"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => goTo(`/customer/events/${event.id}`)}
+                    className="rounded-2xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    Voltar ao evento
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
 
           <div className="space-y-6">
@@ -607,47 +795,50 @@ export default function CustomerCheckoutPage() {
                   <p className="mt-1 font-semibold text-gray-900">
                     {event.name || "Evento sem nome"}
                   </p>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {event.shortDescription || event.description || "Sem descrição"}
+                  </p>
                 </div>
 
                 <div className="rounded-2xl bg-gray-50 p-4">
                   <p className="text-sm text-gray-500">Data</p>
                   <p className="mt-1 font-semibold text-gray-900">
-                    {formatDate(event.eventDate)}
+                    {formatDate(event.startDate || event.eventDate)}
                   </p>
                 </div>
 
                 <div className="rounded-2xl bg-gray-50 p-4">
-                  <p className="text-sm text-gray-500">Ingresso</p>
-                  <p className="mt-1 font-semibold text-gray-900">
-                    {selectedTicketType.name || "Ingresso"}
-                  </p>
-                  <p className="mt-1 text-sm text-gray-500">
-                    {selectedTicketType.description || "Sem descrição"}
-                  </p>
-                </div>
+                  <p className="text-sm text-gray-500">Itens do pedido</p>
+                  <div className="mt-3 space-y-3">
+                    {selectedItemsDetailed.map((item) => (
+                      <div
+                        key={`summary-${item.ticketTypeId}`}
+                        className="flex items-start justify-between gap-4 rounded-2xl bg-white px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-semibold text-gray-900">
+                            {item.ticketType.name || "Ingresso"}
+                          </p>
+                          <p className="mt-1 text-sm text-gray-500">
+                            {item.ticketType.lotLabel || "Lote padrão"} • Qty{" "}
+                            {item.quantity}
+                          </p>
+                        </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="rounded-2xl bg-gray-50 p-4">
-                    <p className="text-sm text-gray-500">Valor unitário</p>
-                    <p className="mt-1 font-semibold text-gray-900">
-                      {formatMoney(selectedTicketType.price)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl bg-gray-50 p-4">
-                    <p className="text-sm text-gray-500">Disponível</p>
-                    <p className="mt-1 font-semibold text-gray-900">
-                      {selectedTicketType.quantity ?? 0}
-                    </p>
+                        <p className="shrink-0 font-bold text-gray-900">
+                          {formatMoney(item.totalPrice)}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
                 <div className="rounded-[24px] border border-gray-200 bg-white p-5">
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-4">
-                      <p className="text-sm text-gray-500">Quantidade</p>
+                      <p className="text-sm text-gray-500">Total de ingressos</p>
                       <p className="font-semibold text-gray-900">
-                        {quantityNumber}
+                        {totalTickets}
                       </p>
                     </div>
 
@@ -697,7 +888,7 @@ export default function CustomerCheckoutPage() {
 
               <div className="mt-5 space-y-3">
                 <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                  Criar pedido
+                  Criar um pedido com vários setores/lotes
                 </div>
                 <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
                   Aplicar wallet automaticamente

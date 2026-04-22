@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 type StoredUser = {
   id?: string;
@@ -65,6 +65,19 @@ type OrderItem = {
   items?: OrderItemEntry[];
   payments?: PaymentItem[];
   cancellations?: CancellationItem[];
+};
+
+type EventContactInfo = {
+  id?: string;
+  name?: string;
+  organizer?: {
+    id?: string;
+    tradeName?: string;
+    legalName?: string;
+    email?: string;
+    phone?: string;
+    whatsapp?: string;
+  };
 };
 
 function toNumber(value?: string | number) {
@@ -138,6 +151,10 @@ export default function CustomerOrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null);
+  const [eventContact, setEventContact] = useState<EventContactInfo | null>(null);
+  const [producerTicketOpen, setProducerTicketOpen] = useState(false);
+  const [ticketSubject, setTicketSubject] = useState("");
+  const [ticketMessage, setTicketMessage] = useState("");
   const [paying, setPaying] = useState(false);
   const [cancelingOrderMode, setCancelingOrderMode] = useState<
     "" | "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80"
@@ -202,6 +219,28 @@ export default function CustomerOrderDetailPage() {
       }
 
       setOrder(data);
+
+      if (data?.event?.id) {
+        try {
+          const eventRes = await fetch(
+            `http://localhost:3001/v1/events/${data.event.id}`,
+            {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+              },
+            },
+          );
+
+          const eventData = await eventRes.json();
+
+          if (eventRes.ok) {
+            setEventContact(eventData);
+          }
+        } catch (error) {
+          console.error("EVENT CONTACT ERROR:", error);
+        }
+      }
     } catch (error) {
       console.error("CUSTOMER ORDER DETAIL ERROR:", error);
       alert("Erro ao conectar com a API");
@@ -525,8 +564,75 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
+  function normalizePhone(value?: string) {
+    return String(value || "").replace(/\D/g, "");
+  }
+
   function handleTalkToProducer() {
-    alert("Contato com o produtor vamos ligar no próximo passo.");
+    if (!order?.event?.id) {
+      alert("Evento não encontrado para este pedido");
+      return;
+    }
+
+    setTicketSubject(`Problema no pedido #${order.id}`);
+    setTicketMessage("");
+    setProducerTicketOpen(true);
+  }
+
+  function handleSubmitProducerTicket(e: FormEvent) {
+    e.preventDefault();
+
+    const subject = ticketSubject.trim() || `Problema no pedido #${order?.id}`;
+    const message = ticketMessage.trim();
+
+    if (!message) {
+      alert("Descreva o problema para falar com o produtor");
+      return;
+    }
+
+    const producerName =
+      eventContact?.organizer?.tradeName ||
+      eventContact?.organizer?.legalName ||
+      "produtor";
+
+    const producerEmail = String(eventContact?.organizer?.email || "").trim();
+    const producerPhone = normalizePhone(
+      eventContact?.organizer?.whatsapp || eventContact?.organizer?.phone,
+    );
+
+    const ticketBody = [
+      `Pedido: #${order?.id || "-"}`,
+      `Evento: ${order?.event?.name || "-"}`,
+      `Data do evento: ${formatDate(order?.event?.eventDate)}`,
+      `Comprador: ${order?.customerName || "-"}`,
+      `Email do comprador: ${order?.customerEmail || "-"}`,
+      "",
+      `Assunto: ${subject}`,
+      "",
+      "Problema relatado:",
+      message,
+    ].join("\n");
+
+    if (producerEmail) {
+      window.location.href = `mailto:${producerEmail}?subject=${encodeURIComponent(
+        subject,
+      )}&body=${encodeURIComponent(ticketBody)}`;
+      setProducerTicketOpen(false);
+      return;
+    }
+
+    if (producerPhone) {
+      window.open(
+        `https://wa.me/${producerPhone}?text=${encodeURIComponent(
+          `Olá ${producerName}, preciso de ajuda com este pedido.\n\n${ticketBody}`,
+        )}`,
+        "_blank",
+      );
+      setProducerTicketOpen(false);
+      return;
+    }
+
+    alert("O produtor deste evento ainda não possui email ou WhatsApp cadastrado.");
   }
 
   function handleTransferTicket() {
@@ -837,8 +943,7 @@ export default function CustomerOrderDetailPage() {
   const activeTicketsCount =
     order.items?.reduce((sum, item) => {
       const count =
-        item.tickets?.filter((ticket) => ticket.status !== "CANCELED").length ||
-        0;
+        item.tickets?.filter((ticket) => ticket.status !== "CANCELED").length || 0;
       return sum + count;
     }, 0) || 0;
 
@@ -893,7 +998,7 @@ export default function CustomerOrderDetailPage() {
                   <p className="text-sm font-semibold text-gray-900">
                     {user?.name || "Usuário"}
                   </p>
-                  <p className="mt-1 text-xs break-all text-gray-500">
+                  <p className="mt-1 break-all text-xs text-gray-500">
                     {user?.email || "-"}
                   </p>
                 </div>
@@ -949,7 +1054,11 @@ export default function CustomerOrderDetailPage() {
         <section className="overflow-hidden rounded-[32px] bg-gradient-to-r from-fuchsia-600 via-purple-600 to-indigo-700 text-white shadow-sm">
           <button
             type="button"
-            onClick={() => goTo("/customer/dashboard")}
+            onClick={() =>
+              order.event?.id
+                ? goTo(`/customer/events/${order.event.id}`)
+                : goTo("/customer/orders")
+            }
             className="block w-full px-8 pt-8 text-left"
           >
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/75">
@@ -969,7 +1078,11 @@ export default function CustomerOrderDetailPage() {
           <div className="flex flex-wrap gap-3 px-8 pb-8 pt-6">
             <button
               type="button"
-              onClick={() => goTo("/customer/dashboard")}
+              onClick={() =>
+                order.event?.id
+                  ? goTo(`/customer/events/${order.event.id}`)
+                  : goTo("/customer/orders")
+              }
               className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-sky-700 shadow-sm hover:bg-sky-50"
             >
               Ver evento
@@ -1032,7 +1145,7 @@ export default function CustomerOrderDetailPage() {
               <div className="mt-5 grid gap-4 md:grid-cols-2">
                 <div className="rounded-2xl bg-gray-50 p-4">
                   <p className="text-sm text-gray-500">Pedido</p>
-                  <p className="mt-2 font-semibold text-gray-900 break-all">
+                  <p className="mt-2 break-all font-semibold text-gray-900">
                     #{order.id}
                   </p>
                 </div>
@@ -1354,8 +1467,8 @@ export default function CustomerOrderDetailPage() {
                 {order.status !== "CANCELED" && isPaidOrder ? (
                   <>
                     <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800">
-                      Pedido pago: você pode cancelar com 80% na wallet ou 70%
-                      de estorno.
+                      Pedido pago: você pode cancelar com 80% na wallet ou 70% de
+                      estorno.
                     </div>
 
                     <button
@@ -1446,16 +1559,112 @@ export default function CustomerOrderDetailPage() {
         </section>
       </main>
 
-      {selectedTicket && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
-            <div className="bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 p-6 text-white">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/75">
-                    Visualização do ingresso
+      {producerTicketOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3">
+          <div className="w-full max-w-lg overflow-hidden rounded-[22px] bg-white shadow-2xl">
+            <div className="bg-gradient-to-r from-fuchsia-600 via-purple-600 to-indigo-700 px-5 py-4 text-white">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/75">
+                    Ticket com o produtor
                   </p>
-                  <h3 className="mt-3 text-3xl font-black">
+                  <h3 className="mt-2 line-clamp-2 text-2xl font-black leading-tight">
+                    {order.event?.name || "Evento"}
+                  </h3>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setProducerTicketOpen(false)}
+                  className="shrink-0 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+
+            <form
+              onSubmit={handleSubmitProducerTicket}
+              className="max-h-[78vh] overflow-y-auto p-5"
+            >
+              <div className="grid gap-4">
+                <div className="rounded-[18px] bg-gray-50 p-4">
+                  <p className="text-xs text-gray-500">Canal disponível</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-900">
+                    {eventContact?.organizer?.email
+                      ? `Email: ${eventContact.organizer.email}`
+                      : eventContact?.organizer?.whatsapp ||
+                        eventContact?.organizer?.phone
+                      ? `WhatsApp/Telefone: ${
+                          eventContact.organizer.whatsapp ||
+                          eventContact.organizer.phone
+                        }`
+                      : "Nenhum canal do produtor cadastrado"}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Assunto
+                  </label>
+                  <input
+                    type="text"
+                    value={ticketSubject}
+                    onChange={(e) => setTicketSubject(e.target.value)}
+                    className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
+                    placeholder="Ex: Problema com meu pedido"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Descreva o problema
+                  </label>
+                  <textarea
+                    value={ticketMessage}
+                    onChange={(e) => setTicketMessage(e.target.value)}
+                    className="min-h-[140px] w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-sky-500"
+                    placeholder="Explique o que aconteceu com seu pedido ou ingresso"
+                  />
+                </div>
+
+                <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs leading-5 text-violet-800">
+                  Esta primeira versão abre o contato com o produtor por email ou
+                  WhatsApp, usando os dados do evento.
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-700"
+                  >
+                    Abrir ticket
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setProducerTicketOpen(false)}
+                    className="rounded-xl border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {selectedTicket && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3">
+          <div className="w-full max-w-lg overflow-hidden rounded-[22px] bg-white shadow-2xl">
+            <div className="bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 px-5 py-4 text-white">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/75">
+                    Ingresso
+                  </p>
+                  <h3 className="mt-2 line-clamp-2 text-2xl font-black leading-tight">
                     {order.event?.name || "Ingresso"}
                   </h3>
                 </div>
@@ -1463,158 +1672,161 @@ export default function CustomerOrderDetailPage() {
                 <button
                   type="button"
                   onClick={() => setSelectedTicket(null)}
-                  className="rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15"
+                  className="shrink-0 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15"
                 >
                   Fechar
                 </button>
               </div>
             </div>
 
-            <div className="space-y-5 p-6">
-              <div className="rounded-[24px] bg-gray-50 p-5">
-                <p className="text-sm text-gray-500">Código</p>
-                <p className="mt-2 break-all font-mono text-sm font-semibold text-gray-900">
-                  {selectedTicket.code || "-"}
-                </p>
-              </div>
+            <div className="max-h-[78vh] overflow-y-auto p-5">
+              <div className="grid gap-3">
+                <div className="rounded-[18px] bg-gray-50 p-4">
+                  <p className="text-xs text-gray-500">Código</p>
+                  <p className="mt-1 break-all font-mono text-sm font-semibold text-gray-900">
+                    {selectedTicket.code || "-"}
+                  </p>
+                </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-[24px] bg-gray-50 p-5">
-                  <p className="text-sm text-gray-500">Status</p>
-                  <div className="mt-2">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClasses(
-                        selectedTicket.status,
-                      )}`}
-                    >
-                      {selectedTicket.status || "SEM STATUS"}
-                    </span>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[18px] bg-gray-50 p-4">
+                    <p className="text-xs text-gray-500">Status</p>
+                    <div className="mt-2">
+                      <span
+                        className={`rounded-full px-3 py-1 text-[11px] font-semibold ${getStatusClasses(
+                          selectedTicket.status,
+                        )}`}
+                      >
+                        {selectedTicket.status || "SEM STATUS"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-[18px] bg-gray-50 p-4">
+                    <p className="text-xs text-gray-500">Data do evento</p>
+                    <p className="mt-2 text-sm font-semibold text-gray-900">
+                      {formatDate(order.event?.eventDate)}
+                    </p>
                   </div>
                 </div>
 
-                <div className="rounded-[24px] bg-gray-50 p-5">
-                  <p className="text-sm text-gray-500">Data do evento</p>
-                  <p className="mt-2 font-semibold text-gray-900">
-                    {formatDate(order.event?.eventDate)}
+                <div className="rounded-[18px] bg-gray-50 p-4">
+                  <p className="text-xs text-gray-500">Titular</p>
+                  <p className="mt-1 text-base font-semibold text-gray-900">
+                    {selectedTicket.holderName || order.customerName || "-"}
+                  </p>
+                  <p className="mt-1 break-all text-sm text-gray-500">
+                    {selectedTicket.holderEmail || order.customerEmail || "-"}
                   </p>
                 </div>
-              </div>
 
-              <div className="rounded-[24px] bg-gray-50 p-5">
-                <p className="text-sm text-gray-500">Titular</p>
-                <p className="mt-2 font-semibold text-gray-900">
-                  {selectedTicket.holderName || order.customerName || "-"}
-                </p>
-                <p className="mt-1 text-sm text-gray-500 break-all">
-                  {selectedTicket.holderEmail || order.customerEmail || "-"}
-                </p>
-              </div>
+                <div className="rounded-[18px] border border-gray-200 bg-white p-4">
+                  <h4 className="text-sm font-bold text-gray-900">
+                    Opções do ingresso
+                  </h4>
 
-              <div className="rounded-[24px] border border-gray-200 bg-white p-5">
-                <h4 className="text-base font-bold text-gray-900">
-                  Opções do ingresso
-                </h4>
-
-                <div className="mt-4 space-y-3">
-                  <button
-                    type="button"
-                    onClick={() => handlePrintTicket(selectedTicket)}
-                    className="flex w-full items-center gap-3 text-left text-sm font-semibold text-sky-600 hover:text-sky-700"
-                  >
-                    <span className="text-lg">🖨️</span>
-                    <span>IMPRIMIR INGRESSO</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleTransferTicket}
-                    className="flex w-full items-center gap-3 text-left text-sm font-semibold text-sky-600 hover:text-sky-700"
-                  >
-                    <span className="text-lg">🎫</span>
-                    <span>TRANSFERIR INGRESSO</span>
-                  </button>
-
-                  {selectedTicket.status !== "CANCELED" &&
-                  order.status !== "CANCELED" &&
-                  isPendingOrder ? (
+                  <div className="mt-3 grid gap-2">
                     <button
                       type="button"
-                      onClick={handleCancelTicketPending}
-                      disabled={cancelingTicketMode !== ""}
-                      className="flex w-full items-center gap-3 text-left text-sm font-semibold text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => handlePrintTicket(selectedTicket)}
+                      className="flex w-full items-center gap-2 rounded-xl border border-gray-200 px-3 py-3 text-left text-sm font-semibold text-sky-600 hover:bg-sky-50"
                     >
-                      <span className="text-lg">❌</span>
-                      <span>
-                        {cancelingTicketMode === "PENDING_SIMPLE"
-                          ? "CANCELANDO INGRESSO..."
-                          : "CANCELAR INGRESSO"}
-                      </span>
+                      <span>🖨️</span>
+                      <span>Imprimir ingresso</span>
                     </button>
-                  ) : null}
 
-                  {selectedTicket.status !== "CANCELED" &&
-                  order.status !== "CANCELED" &&
-                  isPaidOrder ? (
-                    <>
-                      <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800">
-                        Ingresso pago: você pode cancelar com 80% na wallet ou
-                        70% de estorno.
+                    <button
+                      type="button"
+                      onClick={handleTransferTicket}
+                      className="flex w-full items-center gap-2 rounded-xl border border-gray-200 px-3 py-3 text-left text-sm font-semibold text-sky-600 hover:bg-sky-50"
+                    >
+                      <span>🎫</span>
+                      <span>Transferir ingresso</span>
+                    </button>
+
+                    {selectedTicket.status !== "CANCELED" &&
+                    order.status !== "CANCELED" &&
+                    isPendingOrder ? (
+                      <button
+                        type="button"
+                        onClick={handleCancelTicketPending}
+                        disabled={cancelingTicketMode !== ""}
+                        className="flex w-full items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <span>❌</span>
+                        <span>
+                          {cancelingTicketMode === "PENDING_SIMPLE"
+                            ? "Cancelando ingresso..."
+                            : "Cancelar ingresso"}
+                        </span>
+                      </button>
+                    ) : null}
+
+                    {selectedTicket.status !== "CANCELED" &&
+                    order.status !== "CANCELED" &&
+                    isPaidOrder ? (
+                      <>
+                        <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-3 text-xs leading-5 text-violet-800">
+                          Ingresso pago: você pode cancelar com 80% na wallet ou
+                          70% de estorno.
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCancelTicket("REFUND_70")}
+                          disabled={cancelingTicketMode !== ""}
+                          className="flex w-full items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-3 text-left text-sm font-semibold text-orange-600 hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <span>↩️</span>
+                          <span>
+                            {cancelingTicketMode === "REFUND_70"
+                              ? "Cancelando ingresso..."
+                              : "Cancelar com 70% de estorno"}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCancelTicket("WALLET_80")}
+                          disabled={cancelingTicketMode !== ""}
+                          className="flex w-full items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-3 text-left text-sm font-semibold text-violet-600 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <span>👛</span>
+                          <span>
+                            {cancelingTicketMode === "WALLET_80"
+                              ? "Cancelando ingresso..."
+                              : "Cancelar com 80% na wallet"}
+                          </span>
+                        </button>
+                      </>
+                    ) : null}
+
+                    {selectedTicket.status === "CANCELED" ||
+                    order.status === "CANCELED" ? (
+                      <div className="rounded-xl bg-gray-50 px-3 py-3 text-sm font-semibold text-gray-500">
+                        Este ingresso não pode mais ser cancelado.
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleCancelTicket("REFUND_70")}
-                        disabled={cancelingTicketMode !== ""}
-                        className="flex w-full items-center gap-3 text-left text-sm font-semibold text-orange-600 hover:text-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <span className="text-lg">↩️</span>
-                        <span>
-                          {cancelingTicketMode === "REFUND_70"
-                            ? "CANCELANDO INGRESSO..."
-                            : "CANCELAR COM 70% DE ESTORNO"}
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleCancelTicket("WALLET_80")}
-                        disabled={cancelingTicketMode !== ""}
-                        className="flex w-full items-center gap-3 text-left text-sm font-semibold text-violet-600 hover:text-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <span className="text-lg">👛</span>
-                        <span>
-                          {cancelingTicketMode === "WALLET_80"
-                            ? "CANCELANDO INGRESSO..."
-                            : "CANCELAR COM 80% NA WALLET"}
-                        </span>
-                      </button>
-                    </>
-                  ) : null}
-
-                  {selectedTicket.status === "CANCELED" || order.status === "CANCELED" ? (
-                    <div className="text-sm font-semibold text-gray-500">
-                      Este ingresso não pode mais ser cancelado.
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <button
-                  type="button"
-                  onClick={() => copyTicketCode(selectedTicket.code)}
-                  className="rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-700"
-                >
-                  Copiar código
-                </button>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => copyTicketCode(selectedTicket.code)}
+                    className="rounded-xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-700"
+                  >
+                    Copiar código
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setSelectedTicket(null)}
-                  className="rounded-2xl border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                >
-                  Fechar
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTicket(null)}
+                    className="rounded-xl border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    Fechar
+                  </button>
+                </div>
               </div>
             </div>
           </div>

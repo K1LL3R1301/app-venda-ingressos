@@ -20,9 +20,22 @@ export class TicketTypesService {
       data: {
         eventId: data.eventId,
         name: data.name,
+        lotLabel: data.lotLabel,
         description: data.description,
         price: data.price,
         quantity: data.quantity,
+        salesStartAt: data.salesStartAt
+          ? new Date(data.salesStartAt)
+          : undefined,
+        salesEndAt: data.salesEndAt ? new Date(data.salesEndAt) : undefined,
+        minPerOrder: data.minPerOrder,
+        maxPerOrder: data.maxPerOrder,
+        displayOrder: data.displayOrder,
+        feeAmount: data.feeAmount,
+        feeDescription: data.feeDescription,
+        benefitDescription: data.benefitDescription,
+        isHidden: data.isHidden,
+        status: data.status,
       },
       include: {
         event: true,
@@ -35,9 +48,14 @@ export class TicketTypesService {
       include: {
         event: true,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: [
+        {
+          displayOrder: 'asc',
+        },
+        {
+          createdAt: 'desc',
+        },
+      ],
     });
   }
 
@@ -80,9 +98,21 @@ export class TicketTypesService {
       data: {
         eventId: data.eventId,
         name: data.name,
+        lotLabel: data.lotLabel,
         description: data.description,
         price: data.price,
         quantity: data.quantity,
+        salesStartAt: data.salesStartAt
+          ? new Date(data.salesStartAt)
+          : undefined,
+        salesEndAt: data.salesEndAt ? new Date(data.salesEndAt) : undefined,
+        minPerOrder: data.minPerOrder,
+        maxPerOrder: data.maxPerOrder,
+        displayOrder: data.displayOrder,
+        feeAmount: data.feeAmount,
+        feeDescription: data.feeDescription,
+        benefitDescription: data.benefitDescription,
+        isHidden: data.isHidden,
         status: data.status,
       },
       include: {

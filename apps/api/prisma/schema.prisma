@@ -8,48 +8,194 @@ datasource db {
 }
 
 model Organizer {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   tradeName String
   legalName String?
-  document  String?  @unique
+  document  String? @unique
   email     String?
   phone     String?
-  status    String   @default("ACTIVE")
+  status    String  @default("ACTIVE")
+
+  // novos campos para página pública / perfil do produtor
+  slug         String? @unique
+  bio          String?
+  websiteUrl   String?
+  instagramUrl String?
+  facebookUrl  String?
+  youtubeUrl   String?
+  whatsapp     String?
+  logoUrl      String?
+  bannerUrl    String?
+  city         String?
+  state        String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  events Event[]
+  events         Event[]
+  supportThreads SupportThread[]
 }
 
 model Event {
-  id          String   @id @default(uuid())
+  id          String @id @default(uuid())
   organizerId String
+
+  // campos atuais
   name        String
   description String?
   eventDate   DateTime
   capacity    Int
   status      String   @default("DRAFT")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
 
-  organizer   Organizer    @relation(fields: [organizerId], references: [id])
-  ticketTypes TicketType[]
-  orders      Order[]
+  // novos campos de vitrine / venda
+  slug             String?   @unique
+  shortDescription String?
+  category         String?
+  visibility       String    @default("PUBLIC")
+  timezone         String    @default("America/Sao_Paulo")
+  startDate        DateTime?
+  endDate          DateTime?
+  saleStartAt      DateTime?
+  saleEndAt        DateTime?
+  featured         Boolean   @default(false)
+  highlightTag     String?
+  checkoutTitle    String?
+  checkoutSubtitle String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizer      Organizer       @relation(fields: [organizerId], references: [id])
+  ticketTypes    TicketType[]
+  orders         Order[]
+  supportThreads SupportThread[]
+
+  // novos blocos ricos do evento
+  content  EventContent?
+  location EventLocation?
+  media    EventMedia?
+  policy   EventPolicy?
+}
+
+model EventContent {
+  id      String @id @default(uuid())
+  eventId String @unique
+
+  headline             String?
+  summary              String?
+  fullDescription      String?
+  attractions          String?
+  schedule             String?
+  sectorDetails        String?
+  importantInfo        String?
+  faq                  String?
+  producerDescription  String?
+  purchaseInstructions String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+model EventLocation {
+  id      String @id @default(uuid())
+  eventId String @unique
+
+  mode         String   @default("PRESENTIAL")
+  venueName    String?
+  addressLine1 String?
+  addressLine2 String?
+  neighborhood String?
+  city         String?
+  state        String?
+  zipCode      String?
+  reference    String?
+  mapUrl       String?
+  instructions String?
+  latitude     Decimal? @db.Decimal(10, 7)
+  longitude    Decimal? @db.Decimal(10, 7)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@index([city, state])
+}
+
+model EventMedia {
+  id      String @id @default(uuid())
+  eventId String @unique
+
+  coverImageUrl     String?
+  bannerImageUrl    String?
+  thumbnailUrl      String?
+  mobileBannerUrl   String?
+  sectorMapImageUrl String?
+  gallery           Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+model EventPolicy {
+  id      String @id @default(uuid())
+  eventId String @unique
+
+  ageRating       String?
+  refundPolicy    String?
+  halfEntryPolicy String?
+  transferPolicy  String?
+  termsNotes      String?
+  entryRules      String?
+  documentRules   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
 }
 
 model TicketType {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   eventId     String
   name        String
   description String?
-  price       Decimal  @db.Decimal(10, 2)
+  price       Decimal @db.Decimal(10, 2)
   quantity    Int
-  status      String   @default("ACTIVE")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  status      String  @default("ACTIVE")
+
+  // novos campos comerciais para exibição
+  lotLabel           String?
+  salesStartAt       DateTime?
+  salesEndAt         DateTime?
+  minPerOrder        Int       @default(1)
+  maxPerOrder        Int?
+  displayOrder       Int       @default(0)
+  feeAmount          Decimal?  @db.Decimal(10, 2)
+  feeDescription     String?
+  benefitDescription String?
+  isHidden           Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   event      Event       @relation(fields: [eventId], references: [id])
   orderItems OrderItem[]
+
+  @@index([eventId])
+  @@index([status])
+  @@index([displayOrder])
 }
 
 model Order {
@@ -62,10 +208,13 @@ model Order {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  event         Event               @relation(fields: [eventId], references: [id])
-  items         OrderItem[]
-  payments      Payment[]
-  cancellations TicketCancellation[]
+  event          Event                @relation(fields: [eventId], references: [id])
+  items          OrderItem[]
+  payments       Payment[]
+  cancellations  TicketCancellation[]
+  supportThreads SupportThread[]
+
+  @@index([eventId])
 }
 
 model OrderItem {
@@ -80,18 +229,21 @@ model OrderItem {
   order      Order      @relation(fields: [orderId], references: [id])
   ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
   tickets    Ticket[]
+
+  @@index([orderId])
+  @@index([ticketTypeId])
 }
 
 model Ticket {
-  id            String               @id @default(uuid())
-  orderItemId   String
-  code          String               @unique
-  status        String               @default("AVAILABLE")
-  holderName    String?
-  holderEmail   String?
-  usedAt        DateTime?
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  id          String    @id @default(uuid())
+  orderItemId String
+  code        String    @unique
+  status      String    @default("AVAILABLE")
+  holderName  String?
+  holderEmail String?
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   orderItem     OrderItem            @relation(fields: [orderItemId], references: [id])
   checkins      Checkin[]
@@ -109,17 +261,19 @@ model Checkin {
   createdAt    DateTime @default(now())
 
   ticket Ticket @relation(fields: [ticketId], references: [id])
+
+  @@index([ticketId])
 }
 
 model Payment {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   orderId   String
-  amount    Decimal  @db.Decimal(10, 2)
+  amount    Decimal   @db.Decimal(10, 2)
   method    String
-  status    String   @default("PENDING")
+  status    String    @default("PENDING")
   paidAt    DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
 
@@ -127,17 +281,20 @@ model Payment {
 }
 
 model User {
-  id                 String               @id @default(uuid())
-  name               String
-  email              String               @unique
-  passwordHash       String
-  role               String               @default("ADMIN")
-  status             String               @default("ACTIVE")
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("ADMIN")
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  walletTransactions WalletTransaction[]
+  walletTransactions  WalletTransaction[]
   ticketCancellations TicketCancellation[]
+
+  sentMessages    SupportMessage[] @relation("SupportMessageSender")
+  assignedThreads SupportThread[]  @relation("SupportThreadAssignedUser")
 }
 
 model WalletTransaction {
@@ -159,15 +316,15 @@ model WalletTransaction {
 
 model TicketCancellation {
   id             String   @id @default(uuid())
-  ticketId        String
-  orderId         String
-  userId          String
-  mode            String
-  originalAmount  Decimal  @db.Decimal(10, 2)
-  returnedAmount  Decimal  @db.Decimal(10, 2)
-  status          String   @default("COMPLETED")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  ticketId       String
+  orderId        String
+  userId         String
+  mode           String
+  originalAmount Decimal  @db.Decimal(10, 2)
+  returnedAmount Decimal  @db.Decimal(10, 2)
+  status         String   @default("COMPLETED")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   ticket Ticket @relation(fields: [ticketId], references: [id])
   order  Order  @relation(fields: [orderId], references: [id])
@@ -176,4 +333,53 @@ model TicketCancellation {
   @@index([ticketId])
   @@index([orderId])
   @@index([userId])
+}
+
+model SupportThread {
+  id             String   @id @default(uuid())
+  organizerId    String
+  eventId        String
+  orderId        String?
+  customerEmail  String
+  customerName   String?
+  subject        String
+  status         String   @default("OPEN")
+  lastMessageAt  DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  assignedUserId String?
+
+  organizer    Organizer        @relation(fields: [organizerId], references: [id])
+  event        Event            @relation(fields: [eventId], references: [id])
+  order        Order?           @relation(fields: [orderId], references: [id])
+  assignedUser User?            @relation("SupportThreadAssignedUser", fields: [assignedUserId], references: [id])
+  messages     SupportMessage[]
+
+  @@index([organizerId])
+  @@index([eventId])
+  @@index([orderId])
+  @@index([customerEmail])
+  @@index([status])
+  @@index([lastMessageAt])
+  @@index([assignedUserId])
+}
+
+model SupportMessage {
+  id           String   @id @default(uuid())
+  threadId     String
+  senderUserId String?
+  senderName   String?
+  senderEmail  String?
+  senderType   String
+  message      String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  thread     SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  senderUser User?         @relation("SupportMessageSender", fields: [senderUserId], references: [id])
+
+  @@index([threadId])
+  @@index([senderUserId])
+  @@index([senderType])
+  @@index([createdAt])
 }
