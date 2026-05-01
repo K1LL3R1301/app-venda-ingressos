@@ -17,9 +17,19 @@ type EventContent = {
 };
 
 type EventLocation = {
+  mode?: string;
   venueName?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  neighborhood?: string;
   city?: string;
   state?: string;
+  zipCode?: string;
+  reference?: string;
+  mapUrl?: string;
+  instructions?: string;
+  latitude?: number | string;
+  longitude?: number | string;
 };
 
 type EventItem = {
@@ -62,6 +72,11 @@ type OrganizerSpotlight = {
   name: string;
   totalEvents: number;
   eventSample?: EventItem;
+};
+
+type Coordinates = {
+  latitude: number;
+  longitude: number;
 };
 
 const collections: CollectionItem[] = [
@@ -131,14 +146,6 @@ const collections: CollectionItem[] = [
   },
 ];
 
-const quickFilters = [
-  { id: "all", label: "Tudo" },
-  { id: "published", label: "Publicados" },
-  { id: "week", label: "Esta semana" },
-  { id: "weekend", label: "Fim de semana" },
-  { id: "soon", label: "Última chance" },
-];
-
 const faqItems = [
   {
     question: "Como cancelo um ingresso ou peço reembolso?",
@@ -199,6 +206,14 @@ function previewText(value?: string, max = 110) {
 
 function normalizeText(value?: string) {
   return (value || "").toLowerCase();
+}
+
+function normalizePlainText(value?: string) {
+  return (value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function getOrganizerName(event: EventItem) {
@@ -316,6 +331,109 @@ function getLocationLabel(event?: EventItem | null) {
   return pieces.length > 0 ? pieces.join(", ") : "Local a confirmar";
 }
 
+function parseCoordinate(value?: number | string | null) {
+  if (value === null || value === undefined || value === "") return null;
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getEventCoordinates(event?: EventItem | null) {
+  const latitude = parseCoordinate(event?.location?.latitude);
+  const longitude = parseCoordinate(event?.location?.longitude);
+
+  if (latitude === null || longitude === null) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
+
+function getDistanceInKm(origin: Coordinates, destination: Coordinates) {
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+
+  const earthRadiusKm = 6371;
+  const deltaLat = toRadians(destination.latitude - origin.latitude);
+  const deltaLon = toRadians(destination.longitude - origin.longitude);
+
+  const lat1 = toRadians(origin.latitude);
+  const lat2 = toRadians(destination.latitude);
+
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.sin(deltaLon / 2) *
+      Math.sin(deltaLon / 2) *
+      Math.cos(lat1) *
+      Math.cos(lat2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusKm * c;
+}
+
+function getManualLocationScore(event: EventItem, city?: string, state?: string) {
+  const normalizedCity = normalizePlainText(city);
+  const normalizedState = normalizePlainText(state);
+  const eventCity = normalizePlainText(event.location?.city);
+  const eventState = normalizePlainText(event.location?.state);
+
+  if (!normalizedCity && !normalizedState) return 99;
+  if (normalizedCity && normalizedState && eventCity === normalizedCity && eventState === normalizedState) {
+    return 0;
+  }
+  if (normalizedCity && eventCity === normalizedCity) {
+    return 1;
+  }
+  if (normalizedState && eventState === normalizedState) {
+    return 2;
+  }
+
+  return 3;
+}
+
+function sortEventsByLocation(
+  events: EventItem[],
+  mode: "none" | "current" | "manual",
+  currentCoords: Coordinates | null,
+  manualCity: string,
+  manualState: string,
+) {
+  const list = [...events];
+
+  return list.sort((first, second) => {
+    if (mode === "current" && currentCoords) {
+      const firstCoords = getEventCoordinates(first);
+      const secondCoords = getEventCoordinates(second);
+
+      const firstDistance = firstCoords
+        ? getDistanceInKm(currentCoords, firstCoords)
+        : null;
+      const secondDistance = secondCoords
+        ? getDistanceInKm(currentCoords, secondCoords)
+        : null;
+
+      if (firstDistance !== null && secondDistance !== null && firstDistance !== secondDistance) {
+        return firstDistance - secondDistance;
+      }
+
+      if (firstDistance !== null && secondDistance === null) return -1;
+      if (firstDistance === null && secondDistance !== null) return 1;
+    }
+
+    if (mode === "manual") {
+      const firstScore = getManualLocationScore(first, manualCity, manualState);
+      const secondScore = getManualLocationScore(second, manualCity, manualState);
+
+      if (firstScore !== secondScore) {
+        return firstScore - secondScore;
+      }
+    }
+
+    return getEventTimestamp(first.eventDate) - getEventTimestamp(second.eventDate);
+  });
+}
+
 function matchCollection(event: EventItem, index = 0) {
   const haystack = [
     event.name,
@@ -334,45 +452,6 @@ function matchCollection(event: EventItem, index = 0) {
   );
 
   return found || collections[index % collections.length];
-}
-
-function isThisWeek(value?: string) {
-  if (!value) return false;
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return false;
-
-  const diffMs = date.getTime() - Date.now();
-  const diffDays = diffMs / (1000 * 60 * 60 * 24);
-
-  return diffDays >= 0 && diffDays <= 7;
-}
-
-function isWeekend(value?: string) {
-  if (!value) return false;
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return false;
-
-  const day = date.getDay();
-  const diffMs = date.getTime() - Date.now();
-
-  return diffMs >= 0 && (day === 5 || day === 6 || day === 0);
-}
-
-function isSoon(value?: string) {
-  if (!value) return false;
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return false;
-
-  const diffMs = date.getTime() - Date.now();
-  const diffHours = diffMs / (1000 * 60 * 60);
-
-  return diffHours >= 0 && diffHours <= 72;
 }
 
 function SectionHeader({
@@ -513,7 +592,17 @@ export default function CustomerDashboardPage() {
   const [search, setSearch] = useState("");
   const [activeHeroIndex, setActiveHeroIndex] = useState(0);
   const [activeCollection, setActiveCollection] = useState("all");
-  const [activeQuickFilter, setActiveQuickFilter] = useState("all");
+
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const [locationMode, setLocationMode] = useState<"none" | "current" | "manual">("none");
+  const [currentCoords, setCurrentCoords] = useState<Coordinates | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationError, setLocationError] = useState("");
+
+  const [manualCityInput, setManualCityInput] = useState("");
+  const [manualStateInput, setManualStateInput] = useState("");
+  const [manualCity, setManualCity] = useState("");
+  const [manualState, setManualState] = useState("");
 
   useEffect(() => {
     async function loadDashboard() {
@@ -556,19 +645,162 @@ export default function CustomerDashboardPage() {
     loadDashboard();
   }, []);
 
+  function requestCurrentLocation(closePicker = false) {
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      setLocationError("Seu navegador não suporta geolocalização.");
+      setLocationMode("none");
+      return;
+    }
+
+    setIsLocating(true);
+    setLocationError("");
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setCurrentCoords({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setLocationMode("current");
+        setIsLocating(false);
+
+        if (closePicker) {
+          setLocationPickerOpen(false);
+        }
+      },
+      () => {
+        setIsLocating(false);
+        setLocationMode("none");
+        setLocationError(
+          "Não consegui acessar sua localização atual. Você pode escolher cidade e estado manualmente.",
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 1000 * 60 * 10,
+        timeout: 10000,
+      },
+    );
+  }
+
+  useEffect(() => {
+    requestCurrentLocation(false);
+  }, []);
+
+  function applyManualLocation() {
+    const trimmedCity = manualCityInput.trim();
+    const trimmedState = manualStateInput.trim();
+
+    if (!trimmedCity && !trimmedState) {
+      setLocationError("Informe pelo menos a cidade ou o estado.");
+      return;
+    }
+
+    setManualCity(trimmedCity);
+    setManualState(trimmedState);
+    setLocationMode("manual");
+    setLocationError("");
+    setLocationPickerOpen(false);
+  }
+
+  function clearLocationPreference() {
+    setManualCity("");
+    setManualState("");
+    setManualCityInput("");
+    setManualStateInput("");
+    setLocationMode("none");
+    setLocationError("");
+    setLocationPickerOpen(false);
+  }
+
   function goTo(path: string) {
     window.location.href = path;
   }
 
-  const sortedEvents = useMemo(() => {
+  function goToEventsWithContext(params?: {
+    section?: string;
+    quickFilter?: string;
+    collection?: string;
+    title?: string;
+  }) {
+    const query = new URLSearchParams();
+
+    if (params?.section) query.set("section", params.section);
+    if (params?.quickFilter) query.set("quickFilter", params.quickFilter);
+    if (params?.collection) query.set("collection", params.collection);
+    if (params?.title) query.set("title", params.title);
+
+    if (locationMode === "manual") {
+      if (manualCity) query.set("city", manualCity);
+      if (manualState) query.set("state", manualState);
+    }
+
+    const queryString = query.toString();
+
+    window.location.href = queryString
+      ? `/customer/events?${queryString}`
+      : "/customer/events";
+  }
+
+  const locationButtonLabel = useMemo(() => {
+    if (locationMode === "manual") {
+      if (manualCity && manualState) return `${manualCity} - ${manualState}`;
+      if (manualCity) return manualCity;
+      if (manualState) return manualState;
+    }
+
+    if (locationMode === "current" && currentCoords) {
+      return "Minha localização";
+    }
+
+    if (isLocating) {
+      return "Buscando localização...";
+    }
+
+    return "Escolher local";
+  }, [locationMode, manualCity, manualState, currentCoords, isLocating]);
+
+  const locationDescription = useMemo(() => {
+    if (locationMode === "manual") {
+      if (manualCity && manualState) {
+        return `Mostrando primeiro os eventos de ${manualCity} - ${manualState}.`;
+      }
+
+      if (manualCity) {
+        return `Mostrando primeiro os eventos de ${manualCity}.`;
+      }
+
+      if (manualState) {
+        return `Mostrando primeiro os eventos do estado ${manualState}.`;
+      }
+    }
+
+    if (locationMode === "current" && currentCoords) {
+      return "Mostrando primeiro os eventos mais próximos da sua localização atual.";
+    }
+
+    return "Defina um local para priorizar eventos mais próximos de você.";
+  }, [locationMode, manualCity, manualState, currentCoords]);
+
+  const dateSortedEvents = useMemo(() => {
     return [...events].sort(
       (first, second) =>
         getEventTimestamp(first.eventDate) - getEventTimestamp(second.eventDate),
     );
   }, [events]);
 
+  const locationAwareEvents = useMemo(() => {
+    return sortEventsByLocation(
+      dateSortedEvents,
+      locationMode,
+      currentCoords,
+      manualCity,
+      manualState,
+    );
+  }, [dateSortedEvents, locationMode, currentCoords, manualCity, manualState]);
+
   const filteredEvents = useMemo(() => {
-    return sortedEvents.filter((event, index) => {
+    return locationAwareEvents.filter((event, index) => {
       const text = [
         event.name,
         event.description,
@@ -578,6 +810,9 @@ export default function CustomerDashboardPage() {
         event.organizer?.tradeName,
         event.organizer?.legalName,
         event.status,
+        event.location?.venueName,
+        event.location?.city,
+        event.location?.state,
       ]
         .join(" ")
         .toLowerCase();
@@ -591,34 +826,18 @@ export default function CustomerDashboardPage() {
           ? true
           : matchCollection(event, index).id === activeCollection;
 
-      const quickFilterMatches =
-        activeQuickFilter === "all"
-          ? true
-          : activeQuickFilter === "published"
-            ? normalizeText(event.status).includes("published")
-            : activeQuickFilter === "week"
-              ? isThisWeek(event.eventDate)
-              : activeQuickFilter === "weekend"
-                ? isWeekend(event.eventDate)
-                : activeQuickFilter === "soon"
-                  ? isSoon(event.eventDate)
-                  : true;
-
-      return searchMatches && collectionMatches && quickFilterMatches;
+      return searchMatches && collectionMatches;
     });
-  }, [sortedEvents, search, activeCollection, activeQuickFilter]);
+  }, [locationAwareEvents, search, activeCollection]);
 
-  const hasActiveFilters =
-    Boolean(search.trim()) ||
-    activeCollection !== "all" ||
-    activeQuickFilter !== "all";
+  const hasActiveFilters = Boolean(search.trim()) || activeCollection !== "all";
 
   const showcasedEvents =
-    filteredEvents.length > 0 ? filteredEvents : sortedEvents;
+    filteredEvents.length > 0 ? filteredEvents : locationAwareEvents;
 
   useEffect(() => {
     setActiveHeroIndex(0);
-  }, [search, activeCollection, activeQuickFilter, showcasedEvents.length]);
+  }, [search, activeCollection, locationMode, manualCity, manualState, showcasedEvents.length]);
 
   const heroEvents = showcasedEvents.slice(0, 6);
 
@@ -635,11 +854,11 @@ export default function CustomerDashboardPage() {
   const featuredEvent =
     heroEvents.length > 0 ? heroEvents[activeHeroIndex % heroEvents.length] : null;
 
-  const nextEvent = sortedEvents.find(
+  const nextEvent = locationAwareEvents.find(
     (event) => getEventTimestamp(event.eventDate) >= Date.now(),
   );
 
-  const publishedCount = sortedEvents.filter((event) =>
+  const publishedCount = dateSortedEvents.filter((event) =>
     normalizeText(event.status).includes("published"),
   ).length;
 
@@ -667,7 +886,7 @@ export default function CustomerDashboardPage() {
   const organizerSpotlights = useMemo(() => {
     const map = new Map<string, OrganizerSpotlight>();
 
-    sortedEvents.forEach((event) => {
+    locationAwareEvents.forEach((event) => {
       const organizerId =
         event.organizer?.id ||
         getOrganizerName(event).toLowerCase().replace(/\s+/g, "-");
@@ -696,11 +915,11 @@ export default function CustomerDashboardPage() {
     return Array.from(map.values())
       .sort((first, second) => second.totalEvents - first.totalEvents)
       .slice(0, 6);
-  }, [sortedEvents]);
+  }, [locationAwareEvents]);
 
   const collectionCounts = useMemo(() => {
     return collections.map((collection) => {
-      const matchingEvents = sortedEvents.filter(
+      const matchingEvents = locationAwareEvents.filter(
         (event, index) => matchCollection(event, index).id === collection.id,
       );
 
@@ -710,7 +929,7 @@ export default function CustomerDashboardPage() {
         sampleEvent: matchingEvents[0],
       };
     });
-  }, [sortedEvents]);
+  }, [locationAwareEvents]);
 
   if (loading) {
     return (
@@ -726,7 +945,7 @@ export default function CustomerDashboardPage() {
     );
   }
 
-  if (sortedEvents.length === 0) {
+  if (dateSortedEvents.length === 0) {
     return (
       <main className="mx-auto max-w-7xl px-4 py-8">
         <section className="overflow-hidden rounded-[36px] border border-slate-200 bg-white p-4 shadow-sm">
@@ -770,7 +989,7 @@ export default function CustomerDashboardPage() {
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8">
-      <section className="overflow-hidden rounded-[34px] border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-[34px] border border-slate-200 bg-white p-4 shadow-sm">
         <div className="rounded-[28px] bg-gradient-to-r from-slate-50 via-white to-sky-50 p-4 md:p-5">
           <div className="flex flex-col gap-3 xl:flex-row">
             <div className="flex h-14 flex-1 items-center rounded-2xl border border-slate-200 bg-white px-4 shadow-sm">
@@ -787,41 +1006,87 @@ export default function CustomerDashboardPage() {
 
             <button
               type="button"
-              onClick={() => goTo("/customer/events")}
+              onClick={() => setLocationPickerOpen((previous) => !previous)}
               className="h-14 rounded-2xl border border-sky-100 bg-sky-50 px-5 text-sm font-semibold text-sky-700 transition hover:bg-sky-100"
             >
-              📍 Qualquer lugar
-            </button>
-
-            <button
-              type="button"
-              onClick={() => goTo("/customer/events")}
-              className="h-14 rounded-2xl bg-slate-950 px-5 text-sm font-semibold text-white transition hover:bg-slate-800"
-            >
-              Explorar eventos
+              📍 {locationButtonLabel}
             </button>
           </div>
 
-          <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
-            {quickFilters.map((filter) => {
-              const active = activeQuickFilter === filter.id;
+          <p className="mt-4 text-sm text-slate-500">{locationDescription}</p>
 
-              return (
+          {locationPickerOpen ? (
+            <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-base font-black text-slate-950">
+                    Escolher localização
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Use sua localização atual ou informe cidade e estado para priorizar os eventos mais próximos.
+                  </p>
+                </div>
+
                 <button
-                  key={filter.id}
                   type="button"
-                  onClick={() => setActiveQuickFilter(filter.id)}
-                  className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                    active
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                  }`}
+                  onClick={() => setLocationPickerOpen(false)}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50"
                 >
-                  {filter.label}
+                  Fechar
                 </button>
-              );
-            })}
-          </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+                <input
+                  type="text"
+                  placeholder="Cidade"
+                  value={manualCityInput}
+                  onChange={(event) => setManualCityInput(event.target.value)}
+                  className="h-12 rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none focus:border-slate-400"
+                />
+
+                <input
+                  type="text"
+                  placeholder="Estado"
+                  value={manualStateInput}
+                  onChange={(event) => setManualStateInput(event.target.value)}
+                  className="h-12 rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none focus:border-slate-400"
+                />
+
+                <button
+                  type="button"
+                  onClick={applyManualLocation}
+                  className="h-12 rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Aplicar local
+                </button>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => requestCurrentLocation(true)}
+                  className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                >
+                  {isLocating ? "Buscando sua localização..." : "Usar minha localização atual"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={clearLocationPreference}
+                  className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
+                >
+                  Limpar
+                </button>
+              </div>
+
+              {locationError ? (
+                <p className="mt-3 text-sm leading-6 text-rose-600">
+                  {locationError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -1055,10 +1320,10 @@ export default function CustomerDashboardPage() {
             Eventos no radar
           </p>
           <p className="mt-3 text-3xl font-black text-slate-950">
-            {sortedEvents.length}
+            {dateSortedEvents.length}
           </p>
           <p className="mt-2 text-sm text-slate-500">
-            Sua home agora já usa cadastro real para montar uma vitrine viva.
+            Sua home agora usa localização para puxar a descoberta para perto do cliente.
           </p>
         </div>
 
@@ -1139,7 +1404,7 @@ export default function CustomerDashboardPage() {
             </div>
           </button>
 
-          {collectionCounts.map((collection, index) => {
+          {collectionCounts.map((collection) => {
             const active = activeCollection === collection.id;
             const image = getCardImage(collection.sampleEvent);
 
@@ -1210,7 +1475,12 @@ export default function CustomerDashboardPage() {
           title="Bombando agora"
           description="Uma faixa mais comercial, agora com cara de vitrine real."
           actionLabel="Ver todos"
-          onAction={() => goTo("/customer/events")}
+          onAction={() =>
+            goToEventsWithContext({
+              section: "hot",
+              title: "Bombando agora",
+            })
+          }
         />
 
         <div className="flex gap-5 overflow-x-auto pb-2">
@@ -1278,7 +1548,13 @@ export default function CustomerDashboardPage() {
 
                     <button
                       type="button"
-                      onClick={() => goTo("/customer/events")}
+                      onClick={() =>
+                        goToEventsWithContext({
+                          section: "upcoming",
+                          quickFilter: "week",
+                          title: "Próxima experiência",
+                        })
+                      }
                       className="rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white hover:bg-white/15"
                     >
                       Explorar agenda completa
@@ -1344,7 +1620,13 @@ export default function CustomerDashboardPage() {
           title="Última chance para garantir"
           description="Eventos mais próximos para criar decisão rápida sem perder o visual premium."
           actionLabel="Ver agenda"
-          onAction={() => goTo("/customer/events")}
+          onAction={() =>
+            goToEventsWithContext({
+              section: "urgency",
+              quickFilter: "soon",
+              title: "Última chance para garantir",
+            })
+          }
         />
 
         {urgencySection.length === 0 ? (
@@ -1372,7 +1654,12 @@ export default function CustomerDashboardPage() {
           title="Quem está brilhando na plataforma"
           description="Agora com foto real do universo do evento, em vez de bloco chapado."
           actionLabel="Explorar eventos"
-          onAction={() => goTo("/customer/events")}
+          onAction={() =>
+            goToEventsWithContext({
+              section: "organizers",
+              title: "Quem está brilhando na plataforma",
+            })
+          }
         />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -1418,7 +1705,12 @@ export default function CustomerDashboardPage() {
 
                   <button
                     type="button"
-                    onClick={() => goTo("/customer/events")}
+                    onClick={() =>
+                      goToEventsWithContext({
+                        section: "organizers",
+                        title: "Quem está brilhando na plataforma",
+                      })
+                    }
                     className="mt-5 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                   >
                     Ver eventos desse parceiro
@@ -1436,7 +1728,13 @@ export default function CustomerDashboardPage() {
           title="Hoje e nos próximos dias"
           description="Mais uma faixa com fotos reais para reforçar navegação e descoberta."
           actionLabel="Ver agenda"
-          onAction={() => goTo("/customer/events")}
+          onAction={() =>
+            goToEventsWithContext({
+              section: "week",
+              quickFilter: "week",
+              title: "Hoje e nos próximos dias",
+            })
+          }
         />
 
         <div className="flex gap-5 overflow-x-auto pb-2">
@@ -1458,7 +1756,13 @@ export default function CustomerDashboardPage() {
           title="Passeios, cultura e experiências"
           description="Uma segunda vitrine para dar variedade visual sem cair em repetição."
           actionLabel="Ver tudo"
-          onAction={() => goTo("/customer/events")}
+          onAction={() =>
+            goToEventsWithContext({
+              section: "culture",
+              collection: "tours",
+              title: "Passeios, cultura e experiências",
+            })
+          }
         />
 
         <div className="flex gap-5 overflow-x-auto pb-2">
