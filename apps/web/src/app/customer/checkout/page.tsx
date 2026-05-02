@@ -17,6 +17,12 @@ type TicketTypeItem = {
   isHidden?: boolean;
 };
 
+type OrganizerInfo = {
+  id?: string;
+  tradeName?: string;
+  legalName?: string;
+};
+
 type EventDetail = {
   id: string;
   name?: string;
@@ -27,11 +33,9 @@ type EventDetail = {
   endDate?: string;
   capacity?: number;
   status?: string;
-  organizer?: {
-    id?: string;
-    tradeName?: string;
-    legalName?: string;
-  };
+  checkoutTitle?: string;
+  checkoutSubtitle?: string;
+  organizer?: OrganizerInfo;
   ticketTypes?: TicketTypeItem[];
 };
 
@@ -174,6 +178,20 @@ function mergeCartItems(items: CheckoutCartItem[]) {
     ticketTypeId,
     quantity,
   }));
+}
+
+function getTicketLabel(ticket: TicketTypeItem) {
+  return ticket.lotLabel
+    ? `${ticket.name || "Ingresso"} · ${ticket.lotLabel}`
+    : ticket.name || "Ingresso";
+}
+
+function inputClass() {
+  return "w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none transition focus:border-sky-500";
+}
+
+function cardClass() {
+  return "rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm";
 }
 
 export default function CustomerCheckoutPage() {
@@ -326,11 +344,17 @@ export default function CustomerCheckoutPage() {
 
         if (!ticketType) return null;
 
+        const unitPrice = toNumber(ticketType.price);
+        const feeAmount = toNumber(ticketType.feeAmount);
+        const unitTotal = unitPrice + feeAmount;
+
         return {
           ...item,
           ticketType,
-          unitPrice: toNumber(ticketType.price),
-          totalPrice: toNumber(ticketType.price) * item.quantity,
+          unitPrice,
+          feeAmount,
+          unitTotal,
+          totalPrice: unitTotal * item.quantity,
         };
       })
       .filter(Boolean) as Array<{
@@ -338,6 +362,8 @@ export default function CustomerCheckoutPage() {
       quantity: number;
       ticketType: TicketTypeItem;
       unitPrice: number;
+      feeAmount: number;
+      unitTotal: number;
       totalPrice: number;
     }>;
   }, [cartItems, activeTicketTypes]);
@@ -576,7 +602,7 @@ export default function CustomerCheckoutPage() {
           holderCpfDigits !== customerCpfDigits &&
           holderEmail.trim().length === 0
         ) {
-          // opcional, mas ajuda o suporte operacional
+          // Mantido opcional.
         }
       }
     }
@@ -651,8 +677,8 @@ export default function CustomerCheckoutPage() {
     return (
       <div className="min-h-screen bg-[#f6f7fb]">
         <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
-            <p className="text-lg font-medium text-gray-800">
+          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
+            <p className="text-lg font-medium text-slate-800">
               Carregando checkout...
             </p>
           </div>
@@ -665,8 +691,8 @@ export default function CustomerCheckoutPage() {
     return (
       <div className="min-h-screen bg-[#f6f7fb]">
         <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
-            <p className="text-lg font-medium text-gray-800">
+          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
+            <p className="text-lg font-medium text-slate-800">
               Checkout não encontrado.
             </p>
           </div>
@@ -676,8 +702,8 @@ export default function CustomerCheckoutPage() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
-      <section className="overflow-hidden rounded-[32px] bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 p-8 text-white shadow-sm">
+    <main className="mx-auto max-w-7xl px-4 py-8 pb-32 xl:pb-8">
+      <section className="overflow-hidden rounded-[34px] bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 p-8 text-white shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/75">
           Checkout
         </p>
@@ -687,47 +713,57 @@ export default function CustomerCheckoutPage() {
         </h1>
 
         <p className="mt-4 max-w-3xl text-sm leading-6 text-white/85 md:text-base">
-          Agora cada ingresso pode ficar no nome do comprador ou de outro
-          titular com conta já cadastrada por CPF.
+          Revise seus ingressos, defina os titulares e confirme o pagamento com
+          uma experiência mais clara e operacional.
         </p>
+
+        <div className="mt-6 flex flex-wrap gap-3 text-sm text-white/85">
+          <span>🎟️ {event.name || "Evento"}</span>
+          <span>👤 {event.organizer?.tradeName || event.organizer?.legalName || "Organizador"}</span>
+          <span>📅 {formatDate(event.startDate || event.eventDate)}</span>
+        </div>
       </section>
 
-      <section className="mt-10 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="space-y-6">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-900">
+      <section className="mt-10 grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
+        <form onSubmit={handleCreateOrder} className="space-y-6">
+          <section className={cardClass()}>
+            <h2 className="text-2xl font-black text-slate-950">
               Dados do comprador
             </h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Esses dados serão usados no pedido e podem ser reaproveitados nos
+              titulares.
+            </p>
 
-            <form onSubmit={handleCreateOrder} className="mt-6 space-y-5">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="mb-2 block text-sm font-medium text-slate-700">
                   Nome do comprador
                 </label>
                 <input
                   type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                  className={inputClass()}
                   placeholder="Seu nome"
                 />
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
+                <label className="mb-2 block text-sm font-medium text-slate-700">
                   Email do comprador
                 </label>
                 <input
                   type="email"
                   value={customerEmail}
                   onChange={(e) => setCustomerEmail(e.target.value)}
-                  className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                  className={inputClass()}
                   placeholder="seuemail@exemplo.com"
                 />
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
+                <label className="mb-2 block text-sm font-medium text-slate-700">
                   CPF do comprador
                 </label>
                 <input
@@ -735,429 +771,442 @@ export default function CustomerCheckoutPage() {
                   inputMode="numeric"
                   value={customerCpf}
                   onChange={(e) => setCustomerCpf(formatCpf(e.target.value))}
-                  className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
+                  className={inputClass()}
                   placeholder="000.000.000-00"
                   maxLength={14}
                 />
               </div>
+            </div>
 
-              <div className="rounded-[24px] border border-amber-200 bg-amber-50 p-5">
-                <p className="text-sm leading-6 text-amber-800">
-                  Se você informar o CPF de outra pessoa como titular, esse
-                  ingresso vai para a conta dessa pessoa. Se a conta ainda não
-                  existir, o pedido será bloqueado.
+            <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 p-5">
+              <p className="text-sm leading-6 text-amber-800">
+                Se o CPF do titular for de outra pessoa, o ingresso ficará
+                vinculado à conta dessa pessoa. Para funcionar, esse CPF precisa
+                existir na plataforma.
+              </p>
+            </div>
+          </section>
+
+          <section className={cardClass()}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-black text-slate-950">
+                  Ingressos escolhidos
+                </h2>
+                <p className="mt-2 text-sm text-slate-500">
+                  Ajuste quantidades e monte o pedido final.
                 </p>
               </div>
+            </div>
 
-              <div className="rounded-[24px] border border-gray-200 bg-gray-50 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-900">
-                      Itens selecionados
-                    </h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Ajuste as quantidades dos setores e lotes no mesmo pedido.
-                    </p>
-                  </div>
-                </div>
+            <div className="mt-6 space-y-4">
+              {selectedItemsDetailed.map((item) => (
+                <div
+                  key={item.ticketTypeId}
+                  className="rounded-[24px] border border-slate-200 bg-white p-5"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      {item.ticketType.lotLabel ? (
+                        <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                          {item.ticketType.lotLabel}
+                        </span>
+                      ) : null}
 
-                <div className="mt-5 space-y-4">
-                  {selectedItemsDetailed.map((item) => (
-                    <div
-                      key={item.ticketTypeId}
-                      className="rounded-[22px] border border-gray-200 bg-white p-4"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          {item.ticketType.lotLabel ? (
-                            <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-                              {item.ticketType.lotLabel}
-                            </span>
-                          ) : null}
+                      <h3 className="mt-3 text-xl font-black text-slate-950">
+                        {item.ticketType.name || "Ingresso"}
+                      </h3>
 
-                          <h4 className="mt-3 text-lg font-bold text-gray-900">
-                            {item.ticketType.name || "Ingresso"}
-                          </h4>
+                      {item.ticketType.description ? (
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          {item.ticketType.description}
+                        </p>
+                      ) : null}
 
-                          {item.ticketType.description ? (
-                            <p className="mt-2 text-sm leading-6 text-gray-600">
-                              {item.ticketType.description}
-                            </p>
-                          ) : null}
+                      {item.ticketType.benefitDescription ? (
+                        <p className="mt-2 text-sm font-medium text-emerald-700">
+                          {item.ticketType.benefitDescription}
+                        </p>
+                      ) : null}
 
-                          <div className="mt-3 space-y-1 text-sm text-gray-500">
-                            <p>Valor unitário: {formatMoney(item.unitPrice)}</p>
-                            <p>Disponível: {item.ticketType.quantity ?? 0}</p>
-                            {item.ticketType.salesEndAt ? (
-                              <p>
-                                Vendas até {formatDate(item.ticketType.salesEndAt)}
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveTicketType(item.ticketTypeId)}
-                          className="rounded-2xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
-                        >
-                          Remover
-                        </button>
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleQuantityChange(
-                                item.ticketTypeId,
-                                Math.max(1, item.quantity - 1),
-                              )
-                            }
-                            className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-300 bg-white text-lg font-bold text-gray-700 hover:bg-gray-50"
-                          >
-                            -
-                          </button>
-
-                          <input
-                            type="number"
-                            min={1}
-                            max={item.ticketType.quantity || undefined}
-                            value={item.quantity}
-                            onChange={(e) =>
-                              handleQuantityChange(
-                                item.ticketTypeId,
-                                Math.max(1, Number(e.target.value || 1)),
-                              )
-                            }
-                            className="w-24 rounded-2xl border border-gray-300 bg-white px-4 py-2 text-center outline-none focus:border-sky-500"
-                          />
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleQuantityChange(
-                                item.ticketTypeId,
-                                item.quantity + 1,
-                              )
-                            }
-                            className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-300 bg-white text-lg font-bold text-gray-700 hover:bg-gray-50"
-                          >
-                            +
-                          </button>
-                        </div>
-
-                        <div className="rounded-2xl bg-gray-50 px-4 py-3 text-right">
-                          <p className="text-xs uppercase tracking-[0.16em] text-gray-500">
-                            Total deste item
-                          </p>
-                          <p className="mt-1 text-xl font-black text-gray-900">
-                            {formatMoney(item.totalPrice)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 rounded-[22px] border border-sky-100 bg-sky-50 p-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <h5 className="text-base font-bold text-gray-900">
-                              Titulares deste item
-                            </h5>
-                            <p className="mt-1 text-sm text-gray-600">
-                              Defina para quem cada ingresso vai ficar.
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="mt-4 space-y-4">
-                          {(holdersByTicketType[item.ticketTypeId] || []).map(
-                            (holder, index) => (
-                              <div
-                                key={`${item.ticketTypeId}-${index}`}
-                                className="rounded-2xl border border-gray-200 bg-white p-4"
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                  <div>
-                                    <p className="font-semibold text-gray-900">
-                                      Ingresso {index + 1}
-                                    </p>
-                                    <p className="mt-1 text-sm text-gray-500">
-                                      {item.ticketType.name || "Ingresso"}
-                                    </p>
-                                  </div>
-
-                                  <label className="flex items-center gap-3 rounded-2xl bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700">
-                                    <input
-                                      type="checkbox"
-                                      checked={holder.useBuyerData}
-                                      onChange={(e) =>
-                                        handleHolderUseBuyerChange(
-                                          item.ticketTypeId,
-                                          index,
-                                          e.target.checked,
-                                        )
-                                      }
-                                      className="h-4 w-4"
-                                    />
-                                    Usar dados do comprador
-                                  </label>
-                                </div>
-
-                                {holder.useBuyerData ? (
-                                  <div className="mt-4 grid gap-3 md:grid-cols-3">
-                                    <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                                      <p className="text-xs uppercase tracking-[0.16em] text-gray-500">
-                                        Nome
-                                      </p>
-                                      <p className="mt-1 font-semibold text-gray-900">
-                                        {customerName || "-"}
-                                      </p>
-                                    </div>
-
-                                    <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                                      <p className="text-xs uppercase tracking-[0.16em] text-gray-500">
-                                        Email
-                                      </p>
-                                      <p className="mt-1 break-all font-semibold text-gray-900">
-                                        {customerEmail || "-"}
-                                      </p>
-                                    </div>
-
-                                    <div className="rounded-2xl bg-gray-50 px-4 py-3">
-                                      <p className="text-xs uppercase tracking-[0.16em] text-gray-500">
-                                        CPF
-                                      </p>
-                                      <p className="mt-1 font-semibold text-gray-900">
-                                        {customerCpf || "-"}
-                                      </p>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="mt-4 grid gap-4 md:grid-cols-3">
-                                    <div>
-                                      <label className="mb-2 block text-sm font-medium text-gray-700">
-                                        Nome do titular
-                                      </label>
-                                      <input
-                                        type="text"
-                                        value={holder.name}
-                                        onChange={(e) =>
-                                          handleHolderFieldChange(
-                                            item.ticketTypeId,
-                                            index,
-                                            "name",
-                                            e.target.value,
-                                          )
-                                        }
-                                        className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
-                                        placeholder="Nome da pessoa"
-                                      />
-                                    </div>
-
-                                    <div>
-                                      <label className="mb-2 block text-sm font-medium text-gray-700">
-                                        Email do titular
-                                      </label>
-                                      <input
-                                        type="email"
-                                        value={holder.email}
-                                        onChange={(e) =>
-                                          handleHolderFieldChange(
-                                            item.ticketTypeId,
-                                            index,
-                                            "email",
-                                            e.target.value,
-                                          )
-                                        }
-                                        className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
-                                        placeholder="email@exemplo.com"
-                                      />
-                                    </div>
-
-                                    <div>
-                                      <label className="mb-2 block text-sm font-medium text-gray-700">
-                                        CPF do titular
-                                      </label>
-                                      <input
-                                        type="text"
-                                        inputMode="numeric"
-                                        value={holder.cpf}
-                                        onChange={(e) =>
-                                          handleHolderFieldChange(
-                                            item.ticketTypeId,
-                                            index,
-                                            "cpf",
-                                            e.target.value,
-                                          )
-                                        }
-                                        className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
-                                        placeholder="000.000.000-00"
-                                        maxLength={14}
-                                      />
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            ),
-                          )}
-                        </div>
+                      <div className="mt-3 space-y-1 text-sm text-slate-500">
+                        <p>Valor base: {formatMoney(item.unitPrice)}</p>
+                        {item.feeAmount > 0 ? (
+                          <p>Taxa: {formatMoney(item.feeAmount)}</p>
+                        ) : null}
+                        <p>Disponível: {item.ticketType.quantity ?? 0}</p>
+                        {item.ticketType.salesEndAt ? (
+                          <p>Vendas até {formatDate(item.ticketType.salesEndAt)}</p>
+                        ) : null}
                       </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTicketType(item.ticketTypeId)}
+                      className="rounded-2xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50"
+                    >
+                      Remover
+                    </button>
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleQuantityChange(
+                            item.ticketTypeId,
+                            Math.max(1, item.quantity - 1),
+                          )
+                        }
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-lg font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        -
+                      </button>
+
+                      <input
+                        type="number"
+                        min={1}
+                        max={item.ticketType.quantity || undefined}
+                        value={item.quantity}
+                        onChange={(e) =>
+                          handleQuantityChange(
+                            item.ticketTypeId,
+                            Math.max(1, Number(e.target.value || 1)),
+                          )
+                        }
+                        className="w-24 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-center outline-none focus:border-sky-500"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleQuantityChange(item.ticketTypeId, item.quantity + 1)
+                        }
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-lg font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        +
+                      </button>
+                    </div>
+
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-right">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                        Total deste item
+                      </p>
+                      <p className="mt-1 text-xl font-black text-slate-950">
+                        {formatMoney(item.totalPrice)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {notSelectedTicketTypes.length > 0 ? (
+              <div className="mt-6 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-5">
+                <h3 className="text-lg font-black text-slate-950">
+                  Adicionar mais ingressos
+                </h3>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {notSelectedTicketTypes.map((ticket) => (
+                    <button
+                      key={ticket.id}
+                      type="button"
+                      onClick={() => handleAddTicketType(ticket.id)}
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                    >
+                      + {getTicketLabel(ticket)}
+                    </button>
                   ))}
                 </div>
               </div>
+            ) : null}
+          </section>
 
-              {notSelectedTicketTypes.length > 0 ? (
-                <div className="rounded-[24px] border border-gray-200 bg-white p-5">
-                  <h3 className="text-lg font-bold text-gray-900">
-                    Adicionar mais setores ou lotes
-                  </h3>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Você pode combinar diferentes opções no mesmo pedido.
-                  </p>
+          <section className={cardClass()}>
+            <h2 className="text-2xl font-black text-slate-950">Titulares</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Defina para quem cada ingresso vai ficar.
+            </p>
 
-                  <div className="mt-5 space-y-3">
-                    {notSelectedTicketTypes.map((ticket) => (
-                      <div
-                        key={ticket.id}
-                        className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-gray-200 bg-gray-50 p-4"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-semibold text-gray-900">
-                            {ticket.lotLabel
-                              ? `${ticket.name || "Ingresso"} • ${ticket.lotLabel}`
-                              : ticket.name || "Ingresso"}
-                          </p>
-                          <p className="mt-1 text-sm text-gray-500">
-                            {formatMoney(ticket.price)} • disponível{" "}
-                            {ticket.quantity ?? 0}
-                          </p>
-                        </div>
+            <div className="mt-6 space-y-5">
+              {selectedItemsDetailed.map((item) => (
+                <div
+                  key={`holders-${item.ticketTypeId}`}
+                  className="rounded-[24px] border border-sky-100 bg-sky-50 p-5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-950">
+                        {getTicketLabel(item.ticketType)}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {item.quantity} ingresso(s) neste item
+                      </p>
+                    </div>
+                  </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleAddTicketType(ticket.id)}
-                          className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+                  <div className="mt-4 space-y-4">
+                    {(holdersByTicketType[item.ticketTypeId] || []).map(
+                      (holder, index) => (
+                        <div
+                          key={`${item.ticketTypeId}-${index}`}
+                          className="rounded-[22px] border border-slate-200 bg-white p-4"
                         >
-                          Adicionar
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-900">
+                                Ingresso {index + 1}
+                              </p>
+                              <p className="mt-1 text-sm text-slate-500">
+                                {item.ticketType.name || "Ingresso"}
+                              </p>
+                            </div>
+
+                            <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={holder.useBuyerData}
+                                onChange={(e) =>
+                                  handleHolderUseBuyerChange(
+                                    item.ticketTypeId,
+                                    index,
+                                    e.target.checked,
+                                  )
+                                }
+                                className="h-4 w-4"
+                              />
+                              Usar dados do comprador
+                            </label>
+                          </div>
+
+                          {holder.useBuyerData ? (
+                            <div className="mt-4 grid gap-3 md:grid-cols-3">
+                              <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                                  Nome
+                                </p>
+                                <p className="mt-1 font-semibold text-slate-900">
+                                  {customerName || "-"}
+                                </p>
+                              </div>
+
+                              <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                                  Email
+                                </p>
+                                <p className="mt-1 break-all font-semibold text-slate-900">
+                                  {customerEmail || "-"}
+                                </p>
+                              </div>
+
+                              <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                                  CPF
+                                </p>
+                                <p className="mt-1 font-semibold text-slate-900">
+                                  {customerCpf || "-"}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="mt-4 grid gap-4 md:grid-cols-3">
+                              <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-700">
+                                  Nome do titular
+                                </label>
+                                <input
+                                  type="text"
+                                  value={holder.name}
+                                  onChange={(e) =>
+                                    handleHolderFieldChange(
+                                      item.ticketTypeId,
+                                      index,
+                                      "name",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inputClass()}
+                                  placeholder="Nome da pessoa"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-700">
+                                  Email do titular
+                                </label>
+                                <input
+                                  type="email"
+                                  value={holder.email}
+                                  onChange={(e) =>
+                                    handleHolderFieldChange(
+                                      item.ticketTypeId,
+                                      index,
+                                      "email",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inputClass()}
+                                  placeholder="email@exemplo.com"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-700">
+                                  CPF do titular
+                                </label>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={holder.cpf}
+                                  maxLength={14}
+                                  onChange={(e) =>
+                                    handleHolderFieldChange(
+                                      item.ticketTypeId,
+                                      index,
+                                      "cpf",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inputClass()}
+                                  placeholder="000.000.000-00"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    )}
                   </div>
                 </div>
-              ) : null}
+              ))}
+            </div>
+          </section>
 
-              <div className="rounded-[24px] border border-violet-200 bg-violet-50 p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-violet-900">
-                      Usar saldo da wallet
-                    </p>
-                    <p className="mt-1 text-sm leading-6 text-violet-800">
-                      Saldo disponível: {formatMoney(walletBalanceNumber)}
-                    </p>
-                  </div>
+          <section className={cardClass()}>
+            <h2 className="text-2xl font-black text-slate-950">Pagamento</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Escolha como a wallet entra nesta compra.
+            </p>
 
-                  <label className="flex cursor-pointer items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={useWalletBalance}
-                      onChange={(e) => setUseWalletBalance(e.target.checked)}
-                      className="h-5 w-5 rounded border-gray-300"
-                    />
-                  </label>
+            <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    Saldo disponível
+                  </p>
+                  <p className="mt-2 text-3xl font-black text-slate-950">
+                    {formatMoney(wallet?.balance)}
+                  </p>
                 </div>
 
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <div className="rounded-2xl bg-white px-4 py-3">
-                    <p className="text-sm text-gray-500">Abatimento da wallet</p>
-                    <p className="mt-1 font-bold text-violet-700">
-                      {formatMoney(walletApplied)}
-                    </p>
-                  </div>
+                <label className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={useWalletBalance}
+                    onChange={(e) => setUseWalletBalance(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  Usar wallet nesta compra
+                </label>
+              </div>
 
-                  <div className="rounded-2xl bg-white px-4 py-3">
-                    <p className="text-sm text-gray-500">Valor restante</p>
-                    <p className="mt-1 font-bold text-gray-900">
-                      {formatMoney(remainingAmount)}
-                    </p>
-                  </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl bg-white px-4 py-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                    Subtotal
+                  </p>
+                  <p className="mt-2 text-lg font-black text-slate-950">
+                    {formatMoney(subtotal)}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white px-4 py-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                    Abatimento wallet
+                  </p>
+                  <p className="mt-2 text-lg font-black text-emerald-700">
+                    {formatMoney(walletApplied)}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white px-4 py-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                    Falta pagar
+                  </p>
+                  <p className="mt-2 text-lg font-black text-slate-950">
+                    {formatMoney(remainingAmount)}
+                  </p>
                 </div>
               </div>
 
-              <div className="rounded-[24px] border border-sky-100 bg-sky-50 p-5">
-                <p className="text-sm leading-6 text-sky-800">
-                  {purchaseWillBePaid
-                    ? "Com o saldo atual, este pedido pode ser quitado integralmente pela wallet."
-                    : "Depois de criar o pedido, você seguirá para a tela do pedido para concluir o pagamento do valor restante."}
-                </p>
+              <div className="mt-5 rounded-2xl border border-sky-100 bg-sky-50 px-4 py-4 text-sm text-sky-800">
+                {purchaseWillBePaid
+                  ? "Seu pedido será quitado integralmente com a wallet."
+                  : "Depois da wallet, o pedido seguirá com saldo pendente para pagamento."}
               </div>
+            </div>
+          </section>
+        </form>
 
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <button
-                  type="submit"
-                  disabled={creatingOrder}
-                  className="rounded-2xl bg-sky-600 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {creatingOrder ? "Criando pedido..." : "Criar pedido"}
-                </button>
+        <aside className="xl:sticky xl:top-24 xl:self-start">
+          <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-100 bg-slate-50 px-6 py-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                {event.checkoutTitle || "Resumo do pedido"}
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">
+                {event.name || "Evento"}
+              </h2>
+              <p className="mt-2 text-sm text-slate-500">
+                {event.checkoutSubtitle ||
+                  event.shortDescription ||
+                  "Revise tudo antes de finalizar."}
+              </p>
+            </div>
 
-                <button
-                  type="button"
-                  onClick={() => goTo(`/customer/events/${event.id}`)}
-                  className="rounded-2xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                >
-                  Voltar ao evento
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-900">
-              Resumo do pedido
-            </h2>
-
-            <div className="mt-5 space-y-4">
-              <div className="rounded-2xl bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Evento</p>
-                <p className="mt-1 font-semibold text-gray-900">
-                  {event.name || "Evento sem nome"}
+            <div className="space-y-4 p-5">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                  Quando
                 </p>
-                <p className="mt-1 text-sm text-gray-500">
-                  {event.shortDescription || event.description || "Sem descrição"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Data</p>
-                <p className="mt-1 font-semibold text-gray-900">
+                <p className="mt-2 font-semibold text-slate-900">
                   {formatDate(event.startDate || event.eventDate)}
                 </p>
               </div>
 
-              <div className="rounded-2xl bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Itens do pedido</p>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                  Organizador
+                </p>
+                <p className="mt-2 font-semibold text-slate-900">
+                  {event.organizer?.tradeName ||
+                    event.organizer?.legalName ||
+                    "Organizador parceiro"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                  Itens
+                </p>
                 <div className="mt-3 space-y-3">
                   {selectedItemsDetailed.map((item) => (
                     <div
                       key={`summary-${item.ticketTypeId}`}
-                      className="flex items-start justify-between gap-4 rounded-2xl bg-white px-4 py-3"
+                      className="flex items-start justify-between gap-3 text-sm"
                     >
-                      <div className="min-w-0">
-                        <p className="font-semibold text-gray-900">
-                          {item.ticketType.name || "Ingresso"}
+                      <div>
+                        <p className="font-semibold text-slate-900">
+                          {getTicketLabel(item.ticketType)}
                         </p>
-                        <p className="mt-1 text-sm text-gray-500">
-                          {item.ticketType.lotLabel || "Lote padrão"} • Qty{" "}
-                          {item.quantity}
+                        <p className="text-slate-500">
+                          {item.quantity} x {formatMoney(item.unitTotal)}
                         </p>
                       </div>
 
-                      <p className="shrink-0 font-bold text-gray-900">
+                      <p className="font-semibold text-slate-900">
                         {formatMoney(item.totalPrice)}
                       </p>
                     </div>
@@ -1165,69 +1214,97 @@ export default function CustomerCheckoutPage() {
                 </div>
               </div>
 
-              <div className="rounded-[24px] border border-gray-200 bg-white p-5">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-gray-500">Total de ingressos</p>
-                    <p className="font-semibold text-gray-900">{totalTickets}</p>
-                  </div>
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500">Ingressos</span>
+                  <span className="font-semibold text-slate-900">
+                    {totalTickets}
+                  </span>
+                </div>
 
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-gray-500">Subtotal</p>
-                    <p className="font-semibold text-gray-900">
-                      {formatMoney(subtotal)}
-                    </p>
-                  </div>
+                <div className="mt-3 flex items-center justify-between text-sm">
+                  <span className="text-slate-500">Subtotal</span>
+                  <span className="font-semibold text-slate-900">
+                    {formatMoney(subtotal)}
+                  </span>
+                </div>
 
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm text-gray-500">Wallet aplicada</p>
-                    <p className="font-semibold text-violet-700">
-                      {formatMoney(walletApplied)}
-                    </p>
-                  </div>
+                <div className="mt-3 flex items-center justify-between text-sm">
+                  <span className="text-slate-500">Wallet</span>
+                  <span className="font-semibold text-emerald-700">
+                    - {formatMoney(walletApplied)}
+                  </span>
+                </div>
 
-                  <div className="border-t border-gray-200 pt-3">
-                    <div className="flex items-center justify-between gap-4">
-                      <p className="text-sm font-medium text-gray-700">
-                        Valor restante
-                      </p>
-                      <p className="text-2xl font-black text-gray-900">
-                        {formatMoney(remainingAmount)}
-                      </p>
-                    </div>
+                <div className="mt-4 border-t border-slate-200 pt-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Total final
+                    </span>
+                    <span className="text-2xl font-black text-slate-950">
+                      {formatMoney(remainingAmount)}
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {purchaseWillBePaid ? (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
-                  Este pedido ficará pago automaticamente com a wallet.
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-                  Após criar o pedido, restará um valor pendente para pagar.
-                </div>
-              )}
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const form = document.querySelector("form");
+                    if (form) {
+                      form.requestSubmit();
+                    }
+                  }}
+                  disabled={creatingOrder}
+                  className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {creatingOrder ? "Criando pedido..." : "Finalizar pedido"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => goTo(`/customer/events/${event.id}`)}
+                  className="w-full rounded-2xl border border-slate-200 px-5 py-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Voltar para o evento
+                </button>
+              </div>
             </div>
           </div>
-
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-900">Próximo passo</h2>
-
-            <div className="mt-5 space-y-3">
-              <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                Criar um pedido com vários setores e lotes
-              </div>
-              <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                Definir titular diferente para cada ingresso
-              </div>
-              <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                Fazer o ingresso cair na conta correta pelo CPF
-              </div>
-            </div>
-          </div>
-        </div>
+        </aside>
       </section>
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur xl:hidden">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Total final
+            </p>
+            <p className="text-sm font-semibold text-slate-900">
+              {totalTickets} ingresso(s)
+            </p>
+            <p className="text-lg font-black text-slate-950">
+              {formatMoney(remainingAmount)}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const form = document.querySelector("form");
+              if (form) {
+                form.requestSubmit();
+              }
+            }}
+            disabled={creatingOrder}
+            className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {creatingOrder ? "Enviando..." : "Finalizar"}
+          </button>
+        </div>
+      </div>
     </main>
   );
 }

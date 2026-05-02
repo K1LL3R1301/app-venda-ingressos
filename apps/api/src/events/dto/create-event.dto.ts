@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsDateString,
   IsInt,
+  IsNotEmpty,
   IsNumberString,
   IsOptional,
   IsString,
@@ -127,9 +128,9 @@ export class CreateEventLocationDto {
   @IsString()
   mode?: string;
 
-  @IsOptional()
   @IsString()
-  venueName?: string;
+  @IsNotEmpty()
+  venueName: string;
 
   @IsOptional()
   @IsString()
@@ -143,13 +144,13 @@ export class CreateEventLocationDto {
   @IsString()
   neighborhood?: string;
 
-  @IsOptional()
   @IsString()
-  city?: string;
+  @IsNotEmpty()
+  city: string;
 
-  @IsOptional()
   @IsString()
-  state?: string;
+  @IsNotEmpty()
+  state: string;
 
   @IsOptional()
   @IsString()
@@ -314,10 +315,9 @@ export class CreateEventDto {
   @Type(() => CreateEventContentDto)
   content?: CreateEventContentDto;
 
-  @IsOptional()
   @ValidateNested()
   @Type(() => CreateEventLocationDto)
-  location?: CreateEventLocationDto;
+  location: CreateEventLocationDto;
 
   @IsOptional()
   @ValidateNested()

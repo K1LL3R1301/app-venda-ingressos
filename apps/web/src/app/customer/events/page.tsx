@@ -21,6 +21,8 @@ type EventLocation = {
   venueName?: string;
   city?: string;
   state?: string;
+  latitude?: number | string;
+  longitude?: number | string;
 };
 
 type EventItem = {
@@ -56,6 +58,11 @@ type CollectionItem = {
   eyebrow: string;
   keywords: string[];
   fallbackGradient: string;
+};
+
+type Coordinates = {
+  latitude: number;
+  longitude: number;
 };
 
 const collections: CollectionItem[] = [
@@ -203,6 +210,14 @@ function previewText(value?: string, max = 120) {
 
 function normalizeText(value?: string) {
   return (value || "").toLowerCase();
+}
+
+function normalizePlainText(value?: string) {
+  return (value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function getEventTimestamp(value?: string) {
@@ -384,6 +399,104 @@ function isValidCollection(id: string) {
   return id === "all" || collections.some((item) => item.id === id);
 }
 
+function parseCoordinate(value?: number | string | null) {
+  if (value === null || value === undefined || value === "") return null;
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getEventCoordinates(event?: EventItem | null) {
+  const latitude = parseCoordinate(event?.location?.latitude);
+  const longitude = parseCoordinate(event?.location?.longitude);
+
+  if (latitude === null || longitude === null) return null;
+
+  return { latitude, longitude };
+}
+
+function getDistanceInKm(origin: Coordinates, destination: Coordinates) {
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+
+  const earthRadiusKm = 6371;
+  const deltaLat = toRadians(destination.latitude - origin.latitude);
+  const deltaLon = toRadians(destination.longitude - origin.longitude);
+
+  const lat1 = toRadians(origin.latitude);
+  const lat2 = toRadians(destination.latitude);
+
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.sin(deltaLon / 2) *
+      Math.sin(deltaLon / 2) *
+      Math.cos(lat1) *
+      Math.cos(lat2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusKm * c;
+}
+
+function getManualLocationScore(event: EventItem, city?: string, state?: string) {
+  const normalizedCity = normalizePlainText(city);
+  const normalizedState = normalizePlainText(state);
+  const eventCity = normalizePlainText(event.location?.city);
+  const eventState = normalizePlainText(event.location?.state);
+
+  if (!normalizedCity && !normalizedState) return 99;
+  if (normalizedCity && normalizedState && eventCity === normalizedCity && eventState === normalizedState) {
+    return 0;
+  }
+  if (normalizedCity && eventCity === normalizedCity) {
+    return 1;
+  }
+  if (normalizedState && eventState === normalizedState) {
+    return 2;
+  }
+
+  return 3;
+}
+
+function compareByLocation(
+  first: EventItem,
+  second: EventItem,
+  mode: "none" | "current" | "manual",
+  currentCoords: Coordinates | null,
+  manualCity: string,
+  manualState: string,
+) {
+  if (mode === "current" && currentCoords) {
+    const firstCoords = getEventCoordinates(first);
+    const secondCoords = getEventCoordinates(second);
+
+    const firstDistance = firstCoords
+      ? getDistanceInKm(currentCoords, firstCoords)
+      : null;
+    const secondDistance = secondCoords
+      ? getDistanceInKm(currentCoords, secondCoords)
+      : null;
+
+    if (firstDistance !== null && secondDistance !== null && firstDistance !== secondDistance) {
+      return firstDistance - secondDistance;
+    }
+
+    if (firstDistance !== null && secondDistance === null) return -1;
+    if (firstDistance === null && secondDistance !== null) return 1;
+  }
+
+  if (mode === "manual") {
+    const firstScore = getManualLocationScore(first, manualCity, manualState);
+    const secondScore = getManualLocationScore(second, manualCity, manualState);
+
+    if (firstScore !== secondScore) {
+      return firstScore - secondScore;
+    }
+  }
+
+  return 0;
+}
+
 function sectionMatchesEvent(
   event: EventItem,
   index: number,
@@ -411,24 +524,28 @@ function sectionMatchesEvent(
   return true;
 }
 
-function sortEventsBySection(events: EventItem[], section?: string) {
+function sortEventsForPage(
+  events: EventItem[],
+  section: string,
+  mode: "none" | "current" | "manual",
+  currentCoords: Coordinates | null,
+  manualCity: string,
+  manualState: string,
+) {
   const currentTime = Date.now();
   const list = [...events];
 
-  if (section === "organizers") {
-    return list.sort((a, b) =>
-      getOrganizerName(a).localeCompare(getOrganizerName(b), "pt-BR"),
-    );
-  }
+  return list.sort((a, b) => {
+    if (section === "organizers") {
+      const organizerCompare = getOrganizerName(a).localeCompare(
+        getOrganizerName(b),
+        "pt-BR",
+      );
 
-  if (section === "urgency" || section === "week" || section === "upcoming") {
-    return list.sort(
-      (a, b) => getEventTimestamp(a.eventDate) - getEventTimestamp(b.eventDate),
-    );
-  }
+      if (organizerCompare !== 0) return organizerCompare;
+    }
 
-  if (section === "hot") {
-    return list.sort((a, b) => {
+    if (section === "hot") {
       const aScore =
         (normalizeText(a.status).includes("published") ? 2 : 0) +
         (getEventTimestamp(a.eventDate) >= currentTime ? 1 : 0);
@@ -437,13 +554,9 @@ function sortEventsBySection(events: EventItem[], section?: string) {
         (getEventTimestamp(b.eventDate) >= currentTime ? 1 : 0);
 
       if (bScore !== aScore) return bScore - aScore;
+    }
 
-      return getEventTimestamp(a.eventDate) - getEventTimestamp(b.eventDate);
-    });
-  }
-
-  if (section === "culture") {
-    return list.sort((a, b) => {
+    if (section === "culture") {
       const aCulture = ["teatro", "tours", "business"].includes(matchCollection(a).id)
         ? 1
         : 0;
@@ -452,14 +565,21 @@ function sortEventsBySection(events: EventItem[], section?: string) {
         : 0;
 
       if (bCulture !== aCulture) return bCulture - aCulture;
+    }
 
-      return getEventTimestamp(a.eventDate) - getEventTimestamp(b.eventDate);
-    });
-  }
+    const locationCompare = compareByLocation(
+      a,
+      b,
+      mode,
+      currentCoords,
+      manualCity,
+      manualState,
+    );
 
-  return list.sort(
-    (a, b) => getEventTimestamp(a.eventDate) - getEventTimestamp(b.eventDate),
-  );
+    if (locationCompare !== 0) return locationCompare;
+
+    return getEventTimestamp(a.eventDate) - getEventTimestamp(b.eventDate);
+  });
 }
 
 export default function CustomerEventsPage() {
@@ -469,6 +589,11 @@ export default function CustomerEventsPage() {
   const queryQuickFilter = searchParams.get("quickFilter") || "all";
   const queryCollection = searchParams.get("collection") || "all";
   const queryTitle = searchParams.get("title") || "";
+  const queryCity = searchParams.get("city") || "";
+  const queryState = searchParams.get("state") || "";
+  const queryOrigin = searchParams.get("origin") || "";
+  const queryLat = Number(searchParams.get("lat") || "");
+  const queryLng = Number(searchParams.get("lng") || "");
 
   const [events, setEvents] = useState<EventItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -522,6 +647,51 @@ export default function CustomerEventsPage() {
     setActiveCollection(isValidCollection(queryCollection) ? queryCollection : "all");
   }, [queryQuickFilter, queryCollection]);
 
+  const inheritedLocationMode = useMemo<"none" | "current" | "manual">(() => {
+    if (
+      queryOrigin === "current" &&
+      Number.isFinite(queryLat) &&
+      Number.isFinite(queryLng)
+    ) {
+      return "current";
+    }
+
+    if (queryCity || queryState) {
+      return "manual";
+    }
+
+    return "none";
+  }, [queryOrigin, queryLat, queryLng, queryCity, queryState]);
+
+  const inheritedCoords = useMemo<Coordinates | null>(() => {
+    if (
+      inheritedLocationMode === "current" &&
+      Number.isFinite(queryLat) &&
+      Number.isFinite(queryLng)
+    ) {
+      return {
+        latitude: queryLat,
+        longitude: queryLng,
+      };
+    }
+
+    return null;
+  }, [inheritedLocationMode, queryLat, queryLng]);
+
+  const inheritedLocationLabel = useMemo(() => {
+    if (inheritedLocationMode === "current" && inheritedCoords) {
+      return "Minha localização";
+    }
+
+    if (inheritedLocationMode === "manual") {
+      if (queryCity && queryState) return `${queryCity} - ${queryState}`;
+      if (queryCity) return queryCity;
+      if (queryState) return queryState;
+    }
+
+    return "";
+  }, [inheritedLocationMode, inheritedCoords, queryCity, queryState]);
+
   function goTo(path: string) {
     window.location.href = path;
   }
@@ -558,6 +728,9 @@ export default function CustomerEventsPage() {
         event.organizer?.tradeName,
         event.organizer?.legalName,
         event.status,
+        event.location?.venueName,
+        event.location?.city,
+        event.location?.state,
       ]
         .join(" ")
         .toLowerCase();
@@ -591,8 +764,22 @@ export default function CustomerEventsPage() {
   }, [sortedEvents, search, activeQuickFilter, activeCollection, querySection]);
 
   const filteredEvents = useMemo(() => {
-    return sortEventsBySection(baseFilteredEvents, querySection);
-  }, [baseFilteredEvents, querySection]);
+    return sortEventsForPage(
+      baseFilteredEvents,
+      querySection,
+      inheritedLocationMode,
+      inheritedCoords,
+      queryCity,
+      queryState,
+    );
+  }, [
+    baseFilteredEvents,
+    querySection,
+    inheritedLocationMode,
+    inheritedCoords,
+    queryCity,
+    queryState,
+  ]);
 
   const featuredEvent = filteredEvents[0] || sortedEvents[0];
 
@@ -670,7 +857,10 @@ export default function CustomerEventsPage() {
             })}
           </div>
 
-          {(querySection || activeCollection !== "all" || activeQuickFilter !== "all") && (
+          {(querySection ||
+            activeCollection !== "all" ||
+            activeQuickFilter !== "all" ||
+            inheritedLocationMode !== "none") && (
             <div className="mt-4 flex flex-wrap gap-2">
               {querySection ? (
                 <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
@@ -687,6 +877,12 @@ export default function CustomerEventsPage() {
               {activeCollection !== "all" ? (
                 <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
                   Coleção: {getCollectionLabel(activeCollection)}
+                </span>
+              ) : null}
+
+              {inheritedLocationMode !== "none" ? (
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  Localização: {inheritedLocationLabel}
                 </span>
               ) : null}
             </div>
@@ -724,6 +920,12 @@ export default function CustomerEventsPage() {
                     <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold backdrop-blur">
                       {getStatusLabel(featuredEvent.status)}
                     </span>
+
+                    {inheritedLocationMode !== "none" ? (
+                      <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold backdrop-blur">
+                        {inheritedLocationLabel}
+                      </span>
+                    ) : null}
                   </div>
 
                   <h1 className="mt-6 text-4xl font-black leading-tight md:text-6xl">

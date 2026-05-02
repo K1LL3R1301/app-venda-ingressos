@@ -92,6 +92,18 @@ function createEmptyTicketType(index: number): TicketTypeFormItem {
   };
 }
 
+function inputClass(hasError = false) {
+  return `w-full rounded-xl border p-3 outline-none transition ${
+    hasError
+      ? "border-rose-400 bg-rose-50 text-rose-900 placeholder:text-rose-300"
+      : "border-gray-300 bg-white focus:border-slate-400"
+  }`;
+}
+
+function sectionCardClass() {
+  return "rounded-2xl border border-gray-200 bg-white p-5 shadow-sm";
+}
+
 export default function NewEventPage() {
   const [organizers, setOrganizers] = useState<OrganizerItem[]>([]);
   const [loadingOrganizers, setLoadingOrganizers] = useState(true);
@@ -161,6 +173,8 @@ export default function NewEventPage() {
     createEmptyTicketType(0),
   ]);
 
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+
   useEffect(() => {
     async function loadOrganizers() {
       const token = localStorage.getItem("token");
@@ -209,7 +223,15 @@ export default function NewEventPage() {
 
   const galleryPreview = useMemo(() => parseGallery(galleryText), [galleryText]);
 
-  function updateTicketType(localId: string, field: keyof TicketTypeFormItem, value: string | boolean) {
+  const venueNameError = submitAttempted && !venueName.trim();
+  const cityError = submitAttempted && !city.trim();
+  const stateError = submitAttempted && !stateName.trim();
+
+  function updateTicketType(
+    localId: string,
+    field: keyof TicketTypeFormItem,
+    value: string | boolean,
+  ) {
     setTicketTypes((prev) =>
       prev.map((ticketType) =>
         ticketType.localId === localId
@@ -238,6 +260,7 @@ export default function NewEventPage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    setSubmitAttempted(true);
 
     const token = localStorage.getItem("token");
 
@@ -263,6 +286,21 @@ export default function NewEventPage() {
 
     if (!capacity || Number(capacity) < 1) {
       alert("Informe uma capacidade válida");
+      return;
+    }
+
+    if (!venueName.trim()) {
+      alert("Informe o nome do local");
+      return;
+    }
+
+    if (!city.trim()) {
+      alert("Informe a cidade do evento");
+      return;
+    }
+
+    if (!stateName.trim()) {
+      alert("Informe o estado do evento");
       return;
     }
 
@@ -305,13 +343,13 @@ export default function NewEventPage() {
     };
 
     const location = {
-      mode: normalizeText(mode),
-      venueName: normalizeText(venueName),
+      mode: normalizeText(mode) || "PRESENTIAL",
+      venueName: venueName.trim(),
       addressLine1: normalizeText(addressLine1),
       addressLine2: normalizeText(addressLine2),
       neighborhood: normalizeText(neighborhood),
-      city: normalizeText(city),
-      state: normalizeText(stateName),
+      city: city.trim(),
+      state: stateName.trim().toUpperCase(),
       zipCode: normalizeText(zipCode),
       reference: normalizeText(reference),
       mapUrl: normalizeText(mapUrl),
@@ -362,7 +400,7 @@ export default function NewEventPage() {
       checkoutSubtitle: normalizeText(checkoutSubtitle),
 
       content: hasDefinedValue(content) ? content : undefined,
-      location: hasDefinedValue(location) ? location : undefined,
+      location,
       media: hasDefinedValue(media) ? media : undefined,
       policy: hasDefinedValue(policy) ? policy : undefined,
       ticketTypes: validTicketTypes.length > 0 ? validTicketTypes : undefined,
@@ -417,6 +455,17 @@ export default function NewEventPage() {
         </Link>
       </div>
 
+      <div className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-4">
+        <p className="text-sm font-semibold text-sky-900">
+          A partir de agora, localização é obrigatória.
+        </p>
+        <p className="mt-1 text-sm text-sky-700">
+          Preencha pelo menos <strong>nome do local</strong>,{" "}
+          <strong>cidade</strong> e <strong>estado</strong>. Isso vai alimentar
+          a vitrine por região e a busca de eventos próximos.
+        </p>
+      </div>
+
       {loadingOrganizers ? (
         <p>Carregando organizadores...</p>
       ) : organizers.length === 0 ? (
@@ -435,7 +484,7 @@ export default function NewEventPage() {
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-8">
-          <section className="rounded-2xl border p-5">
+          <section className={sectionCardClass()}>
             <h2 className="text-xl font-semibold">1. Dados principais</h2>
             <p className="mt-1 text-sm text-gray-500">
               Informações-base do evento e da vitrine.
@@ -447,7 +496,7 @@ export default function NewEventPage() {
                   Organizador *
                 </label>
                 <select
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={organizerId}
                   onChange={(e) => setOrganizerId(e.target.value)}
                 >
@@ -466,7 +515,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Ex: Festival de Verão 2026"
@@ -477,7 +526,7 @@ export default function NewEventPage() {
                 <label className="mb-2 block text-sm font-medium">Slug</label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
                   placeholder="festival-de-verao-2026"
@@ -490,7 +539,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
                   placeholder="Show, Teatro, Esporte..."
@@ -500,7 +549,7 @@ export default function NewEventPage() {
               <div>
                 <label className="mb-2 block text-sm font-medium">Status</label>
                 <select
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={status}
                   onChange={(e) => setStatus(e.target.value)}
                 >
@@ -516,7 +565,7 @@ export default function NewEventPage() {
                   Visibilidade
                 </label>
                 <select
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={visibility}
                   onChange={(e) => setVisibility(e.target.value)}
                 >
@@ -530,7 +579,7 @@ export default function NewEventPage() {
                 <label className="mb-2 block text-sm font-medium">Timezone</label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={timezone}
                   onChange={(e) => setTimezone(e.target.value)}
                   placeholder="America/Sao_Paulo"
@@ -543,7 +592,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="number"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={capacity}
                   onChange={(e) => setCapacity(e.target.value)}
                   min={1}
@@ -556,7 +605,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={eventDate}
                   onChange={(e) => setEventDate(e.target.value)}
                 />
@@ -568,7 +617,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
                 />
@@ -580,7 +629,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
                 />
@@ -592,7 +641,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={saleStartAt}
                   onChange={(e) => setSaleStartAt(e.target.value)}
                 />
@@ -604,7 +653,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={saleEndAt}
                   onChange={(e) => setSaleEndAt(e.target.value)}
                 />
@@ -616,7 +665,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={shortDescription}
                   onChange={(e) => setShortDescription(e.target.value)}
                   placeholder="Resumo rápido que aparece na vitrine"
@@ -628,7 +677,7 @@ export default function NewEventPage() {
                   Descrição base
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Descrição principal do evento"
@@ -641,14 +690,14 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={highlightTag}
                   onChange={(e) => setHighlightTag(e.target.value)}
                   placeholder="Ex: Últimos ingressos"
                 />
               </div>
 
-              <div className="flex items-center gap-3 rounded border p-3">
+              <div className="flex items-center gap-3 rounded-xl border border-gray-300 p-3">
                 <input
                   id="featured"
                   type="checkbox"
@@ -666,7 +715,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={checkoutTitle}
                   onChange={(e) => setCheckoutTitle(e.target.value)}
                   placeholder="Escolha seu ingresso"
@@ -679,7 +728,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={checkoutSubtitle}
                   onChange={(e) => setCheckoutSubtitle(e.target.value)}
                   placeholder="Selecione o lote ideal"
@@ -688,7 +737,7 @@ export default function NewEventPage() {
             </div>
           </section>
 
-          <section className="rounded-2xl border p-5">
+          <section className={sectionCardClass()}>
             <h2 className="text-xl font-semibold">2. Conteúdo da página</h2>
             <p className="mt-1 text-sm text-gray-500">
               Textos que vão montar a landing page do evento.
@@ -699,7 +748,7 @@ export default function NewEventPage() {
                 <label className="mb-2 block text-sm font-medium">Headline</label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={headline}
                   onChange={(e) => setHeadline(e.target.value)}
                   placeholder="Uma chamada forte para vender o evento"
@@ -709,7 +758,7 @@ export default function NewEventPage() {
               <div>
                 <label className="mb-2 block text-sm font-medium">Resumo</label>
                 <textarea
-                  className="min-h-[100px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[100px]`}
                   value={summary}
                   onChange={(e) => setSummary(e.target.value)}
                   placeholder="Resumo do evento para o topo da página"
@@ -721,7 +770,7 @@ export default function NewEventPage() {
                   Descrição completa
                 </label>
                 <textarea
-                  className="min-h-[180px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[180px]`}
                   value={fullDescription}
                   onChange={(e) => setFullDescription(e.target.value)}
                   placeholder="Conteúdo principal da página de compra"
@@ -733,7 +782,7 @@ export default function NewEventPage() {
                   Atrações
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={attractions}
                   onChange={(e) => setAttractions(e.target.value)}
                   placeholder="Line-up, artistas, convidados, atividades..."
@@ -745,7 +794,7 @@ export default function NewEventPage() {
                   Programação
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={schedule}
                   onChange={(e) => setSchedule(e.target.value)}
                   placeholder="Horários, abertura, shows, intervalos..."
@@ -757,7 +806,7 @@ export default function NewEventPage() {
                   Detalhes de setores
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={sectorDetails}
                   onChange={(e) => setSectorDetails(e.target.value)}
                   placeholder="Informações sobre pistas, camarotes, mesas..."
@@ -769,7 +818,7 @@ export default function NewEventPage() {
                   Informações importantes
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={importantInfo}
                   onChange={(e) => setImportantInfo(e.target.value)}
                   placeholder="Regras de acesso, horários, abertura dos portões..."
@@ -779,7 +828,7 @@ export default function NewEventPage() {
               <div>
                 <label className="mb-2 block text-sm font-medium">FAQ</label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={faq}
                   onChange={(e) => setFaq(e.target.value)}
                   placeholder="Dúvidas frequentes"
@@ -791,7 +840,7 @@ export default function NewEventPage() {
                   Sobre o produtor
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={producerDescription}
                   onChange={(e) => setProducerDescription(e.target.value)}
                   placeholder="Descrição do organizador/produtor para a página"
@@ -803,7 +852,7 @@ export default function NewEventPage() {
                   Instruções de compra
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={purchaseInstructions}
                   onChange={(e) => setPurchaseInstructions(e.target.value)}
                   placeholder="Mensagens para orientar o comprador"
@@ -812,17 +861,25 @@ export default function NewEventPage() {
             </div>
           </section>
 
-          <section className="rounded-2xl border p-5">
-            <h2 className="text-xl font-semibold">3. Local e acesso</h2>
-            <p className="mt-1 text-sm text-gray-500">
-              Dados do local que aparecem na página pública.
-            </p>
+          <section className={sectionCardClass()}>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">3. Local e acesso</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Dados do local que aparecem na página pública.
+                </p>
+              </div>
+
+              <div className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
+                Obrigatório para a vitrine por localização
+              </div>
+            </div>
 
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium">Modo</label>
                 <select
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={mode}
                   onChange={(e) => setMode(e.target.value)}
                 >
@@ -834,15 +891,20 @@ export default function NewEventPage() {
 
               <div>
                 <label className="mb-2 block text-sm font-medium">
-                  Nome do local
+                  Nome do local *
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass(venueNameError)}
                   value={venueName}
                   onChange={(e) => setVenueName(e.target.value)}
                   placeholder="Ex: Arena Central"
                 />
+                {venueNameError ? (
+                  <p className="mt-2 text-xs font-medium text-rose-600">
+                    Preencha o nome do local.
+                  </p>
+                ) : null}
               </div>
 
               <div className="md:col-span-2">
@@ -851,7 +913,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={addressLine1}
                   onChange={(e) => setAddressLine1(e.target.value)}
                   placeholder="Rua, número"
@@ -864,7 +926,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={addressLine2}
                   onChange={(e) => setAddressLine2(e.target.value)}
                   placeholder="Bloco, sala, portão..."
@@ -875,7 +937,7 @@ export default function NewEventPage() {
                 <label className="mb-2 block text-sm font-medium">Bairro</label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={neighborhood}
                   onChange={(e) => setNeighborhood(e.target.value)}
                 />
@@ -885,31 +947,43 @@ export default function NewEventPage() {
                 <label className="mb-2 block text-sm font-medium">CEP</label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={zipCode}
                   onChange={(e) => setZipCode(e.target.value)}
                 />
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium">Cidade</label>
+                <label className="mb-2 block text-sm font-medium">Cidade *</label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass(cityError)}
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
+                  placeholder="Ex: São Paulo"
                 />
+                {cityError ? (
+                  <p className="mt-2 text-xs font-medium text-rose-600">
+                    Preencha a cidade.
+                  </p>
+                ) : null}
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium">Estado</label>
+                <label className="mb-2 block text-sm font-medium">Estado *</label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass(stateError)}
                   value={stateName}
-                  onChange={(e) => setStateName(e.target.value)}
+                  onChange={(e) => setStateName(e.target.value.toUpperCase())}
                   placeholder="Ex: SP"
+                  maxLength={2}
                 />
+                {stateError ? (
+                  <p className="mt-2 text-xs font-medium text-rose-600">
+                    Preencha o estado.
+                  </p>
+                ) : null}
               </div>
 
               <div>
@@ -918,7 +992,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={latitude}
                   onChange={(e) => setLatitude(e.target.value)}
                   placeholder="-23.550520"
@@ -931,7 +1005,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={longitude}
                   onChange={(e) => setLongitude(e.target.value)}
                   placeholder="-46.633308"
@@ -944,7 +1018,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="url"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={mapUrl}
                   onChange={(e) => setMapUrl(e.target.value)}
                   placeholder="https://maps.google.com/..."
@@ -957,41 +1031,41 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={reference}
                   onChange={(e) => setReference(e.target.value)}
-                  placeholder="Próximo ao metrô / entrada pelo portão B"
+                  placeholder="Ex: Em frente ao shopping"
                 />
               </div>
 
               <div className="md:col-span-2">
                 <label className="mb-2 block text-sm font-medium">
-                  Instruções de chegada
+                  Instruções de acesso
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[120px]`}
                   value={instructions}
                   onChange={(e) => setInstructions(e.target.value)}
-                  placeholder="Estacionamento, portões, transporte, acesso..."
+                  placeholder="Portões, entrada, estacionamento, observações..."
                 />
               </div>
             </div>
           </section>
 
-          <section className="rounded-2xl border p-5">
+          <section className={sectionCardClass()}>
             <h2 className="text-xl font-semibold">4. Mídia</h2>
             <p className="mt-1 text-sm text-gray-500">
-              Imagens e banners usados na vitrine do evento.
+              Imagens usadas na home, vitrine e detalhe do evento.
             </p>
 
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <div>
                 <label className="mb-2 block text-sm font-medium">
-                  Capa do evento
+                  URL da capa
                 </label>
                 <input
                   type="url"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={coverImageUrl}
                   onChange={(e) => setCoverImageUrl(e.target.value)}
                   placeholder="https://..."
@@ -999,10 +1073,12 @@ export default function NewEventPage() {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium">Banner</label>
+                <label className="mb-2 block text-sm font-medium">
+                  URL do banner
+                </label>
                 <input
                   type="url"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={bannerImageUrl}
                   onChange={(e) => setBannerImageUrl(e.target.value)}
                   placeholder="https://..."
@@ -1011,11 +1087,11 @@ export default function NewEventPage() {
 
               <div>
                 <label className="mb-2 block text-sm font-medium">
-                  Thumbnail
+                  URL da thumbnail
                 </label>
                 <input
                   type="url"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={thumbnailUrl}
                   onChange={(e) => setThumbnailUrl(e.target.value)}
                   placeholder="https://..."
@@ -1024,11 +1100,11 @@ export default function NewEventPage() {
 
               <div>
                 <label className="mb-2 block text-sm font-medium">
-                  Banner mobile
+                  URL do banner mobile
                 </label>
                 <input
                   type="url"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={mobileBannerUrl}
                   onChange={(e) => setMobileBannerUrl(e.target.value)}
                   placeholder="https://..."
@@ -1037,11 +1113,11 @@ export default function NewEventPage() {
 
               <div className="md:col-span-2">
                 <label className="mb-2 block text-sm font-medium">
-                  Imagem do mapa/setores
+                  URL do mapa/setores
                 </label>
                 <input
                   type="url"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={sectorMapImageUrl}
                   onChange={(e) => setSectorMapImageUrl(e.target.value)}
                   placeholder="https://..."
@@ -1053,24 +1129,24 @@ export default function NewEventPage() {
                   Galeria
                 </label>
                 <textarea
-                  className="min-h-[140px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[140px]`}
                   value={galleryText}
                   onChange={(e) => setGalleryText(e.target.value)}
-                  placeholder={"Cole 1 URL por linha\nhttps://...\nhttps://..."}
+                  placeholder="Uma URL por linha"
                 />
                 {galleryPreview.length > 0 ? (
-                  <p className="mt-2 text-sm text-gray-500">
-                    {galleryPreview.length} imagem(ns) detectada(s)
+                  <p className="mt-2 text-xs text-gray-500">
+                    {galleryPreview.length} imagem(ns) identificada(s).
                   </p>
                 ) : null}
               </div>
             </div>
           </section>
 
-          <section className="rounded-2xl border p-5">
-            <h2 className="text-xl font-semibold">5. Políticas e regras</h2>
+          <section className={sectionCardClass()}>
+            <h2 className="text-xl font-semibold">5. Políticas</h2>
             <p className="mt-1 text-sm text-gray-500">
-              Regras que aparecem na página de compra e no evento.
+              Regras que aparecem no detalhe do evento.
             </p>
 
             <div className="mt-5 grid gap-4">
@@ -1080,7 +1156,7 @@ export default function NewEventPage() {
                 </label>
                 <input
                   type="text"
-                  className="w-full rounded border p-3"
+                  className={inputClass()}
                   value={ageRating}
                   onChange={(e) => setAgeRating(e.target.value)}
                   placeholder="Ex: 18 anos"
@@ -1089,13 +1165,12 @@ export default function NewEventPage() {
 
               <div>
                 <label className="mb-2 block text-sm font-medium">
-                  Política de cancelamento
+                  Política de reembolso
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[100px]`}
                   value={refundPolicy}
                   onChange={(e) => setRefundPolicy(e.target.value)}
-                  placeholder="Descreva cancelamento, estorno, prazos..."
                 />
               </div>
 
@@ -1104,10 +1179,9 @@ export default function NewEventPage() {
                   Política de meia-entrada
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[100px]`}
                   value={halfEntryPolicy}
                   onChange={(e) => setHalfEntryPolicy(e.target.value)}
-                  placeholder="Regras e documentos exigidos"
                 />
               </div>
 
@@ -1116,10 +1190,9 @@ export default function NewEventPage() {
                   Política de transferência
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[100px]`}
                   value={transferPolicy}
                   onChange={(e) => setTransferPolicy(e.target.value)}
-                  placeholder="Pode transferir? Até quando? Como?"
                 />
               </div>
 
@@ -1128,10 +1201,9 @@ export default function NewEventPage() {
                   Regras de entrada
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[100px]`}
                   value={entryRules}
                   onChange={(e) => setEntryRules(e.target.value)}
-                  placeholder="Abertura dos portões, itens proibidos, acesso..."
                 />
               </div>
 
@@ -1140,40 +1212,38 @@ export default function NewEventPage() {
                   Regras de documentos
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[100px]`}
                   value={documentRules}
                   onChange={(e) => setDocumentRules(e.target.value)}
-                  placeholder="Documento oficial, comprovante de meia..."
                 />
               </div>
 
               <div>
                 <label className="mb-2 block text-sm font-medium">
-                  Observações e termos
+                  Observações / termos
                 </label>
                 <textarea
-                  className="min-h-[120px] w-full rounded border p-3"
+                  className={`${inputClass()} min-h-[100px]`}
                   value={termsNotes}
                   onChange={(e) => setTermsNotes(e.target.value)}
-                  placeholder="Observações finais, termos e avisos"
                 />
               </div>
             </div>
           </section>
 
-          <section className="rounded-2xl border p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <section className={sectionCardClass()}>
+            <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl font-semibold">6. Lotes e ingressos</h2>
                 <p className="mt-1 text-sm text-gray-500">
-                  Defina todos os lotes agora, no mesmo cadastro do evento.
+                  Configure quantidades, preços e restrições por lote.
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={handleAddTicketType}
-                className="rounded bg-black px-4 py-2 text-white"
+                className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold hover:bg-gray-50"
               >
                 + Adicionar lote
               </button>
@@ -1183,22 +1253,22 @@ export default function NewEventPage() {
               {ticketTypes.map((ticketType, index) => (
                 <div
                   key={ticketType.localId}
-                  className="rounded-2xl border border-gray-200 bg-gray-50 p-5"
+                  className="rounded-2xl border border-gray-200 p-4"
                 >
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="mb-4 flex items-center justify-between gap-4">
                     <div>
-                      <h3 className="text-lg font-semibold text-gray-900">
+                      <h3 className="text-lg font-semibold">
                         Lote {index + 1}
                       </h3>
                       <p className="text-sm text-gray-500">
-                        Configure nome, preço, quantidade e regras de venda.
+                        Configure nome, valor, quantidade e regras.
                       </p>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => handleRemoveTicketType(ticketType.localId)}
-                      className="rounded border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600"
+                      className="rounded-xl border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50"
                     >
                       Remover
                     </button>
@@ -1207,30 +1277,26 @@ export default function NewEventPage() {
                   <div className="grid gap-4 md:grid-cols-2">
                     <div>
                       <label className="mb-2 block text-sm font-medium">
-                        Nome do ingresso *
+                        Nome *
                       </label>
                       <input
                         type="text"
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.name}
                         onChange={(e) =>
-                          updateTicketType(
-                            ticketType.localId,
-                            "name",
-                            e.target.value,
-                          )
+                          updateTicketType(ticketType.localId, "name", e.target.value)
                         }
-                        placeholder="Ex: Ingresso VIP"
+                        placeholder="Ex: Ingresso Inteira"
                       />
                     </div>
 
                     <div>
                       <label className="mb-2 block text-sm font-medium">
-                        Nome do lote
+                        Rótulo do lote
                       </label>
                       <input
                         type="text"
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.lotLabel}
                         onChange={(e) =>
                           updateTicketType(
@@ -1248,7 +1314,7 @@ export default function NewEventPage() {
                         Descrição
                       </label>
                       <textarea
-                        className="min-h-[100px] w-full rounded border p-3"
+                        className={`${inputClass()} min-h-[90px]`}
                         value={ticketType.description}
                         onChange={(e) =>
                           updateTicketType(
@@ -1257,7 +1323,6 @@ export default function NewEventPage() {
                             e.target.value,
                           )
                         }
-                        placeholder="Descreva este ingresso/lote"
                       />
                     </div>
 
@@ -1267,14 +1332,10 @@ export default function NewEventPage() {
                       </label>
                       <input
                         type="text"
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.price}
                         onChange={(e) =>
-                          updateTicketType(
-                            ticketType.localId,
-                            "price",
-                            e.target.value,
-                          )
+                          updateTicketType(ticketType.localId, "price", e.target.value)
                         }
                         placeholder="Ex: 120.00"
                       />
@@ -1287,7 +1348,7 @@ export default function NewEventPage() {
                       <input
                         type="number"
                         min={1}
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.quantity}
                         onChange={(e) =>
                           updateTicketType(
@@ -1305,7 +1366,7 @@ export default function NewEventPage() {
                       </label>
                       <input
                         type="datetime-local"
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.salesStartAt}
                         onChange={(e) =>
                           updateTicketType(
@@ -1323,7 +1384,7 @@ export default function NewEventPage() {
                       </label>
                       <input
                         type="datetime-local"
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.salesEndAt}
                         onChange={(e) =>
                           updateTicketType(
@@ -1342,7 +1403,7 @@ export default function NewEventPage() {
                       <input
                         type="number"
                         min={1}
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.minPerOrder}
                         onChange={(e) =>
                           updateTicketType(
@@ -1361,7 +1422,7 @@ export default function NewEventPage() {
                       <input
                         type="number"
                         min={1}
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.maxPerOrder}
                         onChange={(e) =>
                           updateTicketType(
@@ -1380,7 +1441,7 @@ export default function NewEventPage() {
                       <input
                         type="number"
                         min={0}
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.displayOrder}
                         onChange={(e) =>
                           updateTicketType(
@@ -1397,7 +1458,7 @@ export default function NewEventPage() {
                         Status
                       </label>
                       <select
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.status}
                         onChange={(e) =>
                           updateTicketType(
@@ -1419,7 +1480,7 @@ export default function NewEventPage() {
                       </label>
                       <input
                         type="text"
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.feeAmount}
                         onChange={(e) =>
                           updateTicketType(
@@ -1428,7 +1489,7 @@ export default function NewEventPage() {
                             e.target.value,
                           )
                         }
-                        placeholder="Ex: 12.00"
+                        placeholder="Ex: 12.50"
                       />
                     </div>
 
@@ -1438,7 +1499,7 @@ export default function NewEventPage() {
                       </label>
                       <input
                         type="text"
-                        className="w-full rounded border p-3"
+                        className={inputClass()}
                         value={ticketType.feeDescription}
                         onChange={(e) =>
                           updateTicketType(
@@ -1447,16 +1508,15 @@ export default function NewEventPage() {
                             e.target.value,
                           )
                         }
-                        placeholder="Ex: Taxa de serviço"
                       />
                     </div>
 
                     <div className="md:col-span-2">
                       <label className="mb-2 block text-sm font-medium">
-                        Benefícios
+                        Benefício / observação do lote
                       </label>
                       <textarea
-                        className="min-h-[100px] w-full rounded border p-3"
+                        className={`${inputClass()} min-h-[90px]`}
                         value={ticketType.benefitDescription}
                         onChange={(e) =>
                           updateTicketType(
@@ -1465,13 +1525,12 @@ export default function NewEventPage() {
                             e.target.value,
                           )
                         }
-                        placeholder="Ex: Área VIP + fila preferencial"
                       />
                     </div>
 
-                    <div className="flex items-center gap-3 rounded border bg-white p-3">
+                    <div className="md:col-span-2 flex items-center gap-3 rounded-xl border border-gray-300 p-3">
                       <input
-                        id={`isHidden-${ticketType.localId}`}
+                        id={`hidden-${ticketType.localId}`}
                         type="checkbox"
                         checked={ticketType.isHidden}
                         onChange={(e) =>
@@ -1483,10 +1542,10 @@ export default function NewEventPage() {
                         }
                       />
                       <label
-                        htmlFor={`isHidden-${ticketType.localId}`}
+                        htmlFor={`hidden-${ticketType.localId}`}
                         className="text-sm font-medium"
                       >
-                        Ocultar lote na vitrine
+                        Ocultar lote da vitrine
                       </label>
                     </div>
                   </div>
@@ -1495,18 +1554,21 @@ export default function NewEventPage() {
             </div>
           </section>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <Link
+              href="/events"
+              className="rounded-xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+            >
+              Cancelar
+            </Link>
+
             <button
               type="submit"
               disabled={saving}
-              className="rounded bg-black px-5 py-3 text-white"
+              className="rounded-xl bg-black px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? "Salvando..." : "Criar evento"}
             </button>
-
-            <Link href="/events" className="rounded border px-5 py-3">
-              Cancelar
-            </Link>
           </div>
         </form>
       )}

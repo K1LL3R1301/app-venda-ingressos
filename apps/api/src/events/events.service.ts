@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -6,6 +10,11 @@ import { UpdateEventDto } from './dto/update-event.dto';
 @Injectable()
 export class EventsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private normalizeString(value?: string | null) {
+    const normalized = value?.trim();
+    return normalized ? normalized : undefined;
+  }
 
   private hasContentData(data?: CreateEventDto['content']) {
     if (!data) return false;
@@ -84,32 +93,32 @@ export class EventsService {
 
   private buildContentPayload(data?: CreateEventDto['content']) {
     return {
-      headline: data?.headline,
-      summary: data?.summary,
-      fullDescription: data?.fullDescription,
-      attractions: data?.attractions,
-      schedule: data?.schedule,
-      sectorDetails: data?.sectorDetails,
-      importantInfo: data?.importantInfo,
-      faq: data?.faq,
-      producerDescription: data?.producerDescription,
-      purchaseInstructions: data?.purchaseInstructions,
+      headline: this.normalizeString(data?.headline),
+      summary: this.normalizeString(data?.summary),
+      fullDescription: this.normalizeString(data?.fullDescription),
+      attractions: this.normalizeString(data?.attractions),
+      schedule: this.normalizeString(data?.schedule),
+      sectorDetails: this.normalizeString(data?.sectorDetails),
+      importantInfo: this.normalizeString(data?.importantInfo),
+      faq: this.normalizeString(data?.faq),
+      producerDescription: this.normalizeString(data?.producerDescription),
+      purchaseInstructions: this.normalizeString(data?.purchaseInstructions),
     };
   }
 
   private buildLocationPayload(data?: CreateEventDto['location']) {
     return {
-      mode: data?.mode,
-      venueName: data?.venueName,
-      addressLine1: data?.addressLine1,
-      addressLine2: data?.addressLine2,
-      neighborhood: data?.neighborhood,
-      city: data?.city,
-      state: data?.state,
-      zipCode: data?.zipCode,
-      reference: data?.reference,
-      mapUrl: data?.mapUrl,
-      instructions: data?.instructions,
+      mode: this.normalizeString(data?.mode),
+      venueName: this.normalizeString(data?.venueName),
+      addressLine1: this.normalizeString(data?.addressLine1),
+      addressLine2: this.normalizeString(data?.addressLine2),
+      neighborhood: this.normalizeString(data?.neighborhood),
+      city: this.normalizeString(data?.city),
+      state: this.normalizeString(data?.state)?.toUpperCase(),
+      zipCode: this.normalizeString(data?.zipCode),
+      reference: this.normalizeString(data?.reference),
+      mapUrl: this.normalizeString(data?.mapUrl),
+      instructions: this.normalizeString(data?.instructions),
       latitude: data?.latitude ? Number(data.latitude) : undefined,
       longitude: data?.longitude ? Number(data.longitude) : undefined,
     };
@@ -117,24 +126,24 @@ export class EventsService {
 
   private buildMediaPayload(data?: CreateEventDto['media']) {
     return {
-      coverImageUrl: data?.coverImageUrl,
-      bannerImageUrl: data?.bannerImageUrl,
-      thumbnailUrl: data?.thumbnailUrl,
-      mobileBannerUrl: data?.mobileBannerUrl,
-      sectorMapImageUrl: data?.sectorMapImageUrl,
+      coverImageUrl: this.normalizeString(data?.coverImageUrl),
+      bannerImageUrl: this.normalizeString(data?.bannerImageUrl),
+      thumbnailUrl: this.normalizeString(data?.thumbnailUrl),
+      mobileBannerUrl: this.normalizeString(data?.mobileBannerUrl),
+      sectorMapImageUrl: this.normalizeString(data?.sectorMapImageUrl),
       gallery: data?.gallery ?? undefined,
     };
   }
 
   private buildPolicyPayload(data?: CreateEventDto['policy']) {
     return {
-      ageRating: data?.ageRating,
-      refundPolicy: data?.refundPolicy,
-      halfEntryPolicy: data?.halfEntryPolicy,
-      transferPolicy: data?.transferPolicy,
-      termsNotes: data?.termsNotes,
-      entryRules: data?.entryRules,
-      documentRules: data?.documentRules,
+      ageRating: this.normalizeString(data?.ageRating),
+      refundPolicy: this.normalizeString(data?.refundPolicy),
+      halfEntryPolicy: this.normalizeString(data?.halfEntryPolicy),
+      transferPolicy: this.normalizeString(data?.transferPolicy),
+      termsNotes: this.normalizeString(data?.termsNotes),
+      entryRules: this.normalizeString(data?.entryRules),
+      documentRules: this.normalizeString(data?.documentRules),
     };
   }
 
@@ -149,8 +158,8 @@ export class EventsService {
         )
         .map((ticketType, index) => ({
           name: ticketType.name.trim(),
-          lotLabel: ticketType.lotLabel,
-          description: ticketType.description,
+          lotLabel: this.normalizeString(ticketType.lotLabel),
+          description: this.normalizeString(ticketType.description),
           price: ticketType.price,
           quantity: ticketType.quantity,
           salesStartAt: ticketType.salesStartAt
@@ -162,13 +171,81 @@ export class EventsService {
           minPerOrder: ticketType.minPerOrder,
           maxPerOrder: ticketType.maxPerOrder,
           displayOrder: ticketType.displayOrder ?? index,
-          feeAmount: ticketType.feeAmount,
-          feeDescription: ticketType.feeDescription,
-          benefitDescription: ticketType.benefitDescription,
+          feeAmount: this.normalizeString(ticketType.feeAmount),
+          feeDescription: this.normalizeString(ticketType.feeDescription),
+          benefitDescription: this.normalizeString(
+            ticketType.benefitDescription,
+          ),
           isHidden: ticketType.isHidden,
           status: ticketType.status ?? 'ACTIVE',
         })) || []
     );
+  }
+
+  private ensureRequiredLocationForCreate(location?: CreateEventDto['location']) {
+    if (!location) {
+      throw new BadRequestException(
+        'A localização do evento é obrigatória.',
+      );
+    }
+
+    const venueName = this.normalizeString(location.venueName);
+    const city = this.normalizeString(location.city);
+    const state = this.normalizeString(location.state);
+
+    if (!venueName) {
+      throw new BadRequestException(
+        'O nome do local do evento é obrigatório.',
+      );
+    }
+
+    if (!city) {
+      throw new BadRequestException('A cidade do evento é obrigatória.');
+    }
+
+    if (!state) {
+      throw new BadRequestException('O estado do evento é obrigatório.');
+    }
+  }
+
+  private ensureRequiredLocationForUpdate(
+    existingLocation:
+      | {
+          venueName?: string | null;
+          city?: string | null;
+          state?: string | null;
+        }
+      | null
+      | undefined,
+    incomingLocation?: UpdateEventDto['location'],
+  ) {
+    if (!incomingLocation) {
+      return;
+    }
+
+    const venueName = this.normalizeString(
+      incomingLocation.venueName ?? existingLocation?.venueName ?? undefined,
+    );
+    const city = this.normalizeString(
+      incomingLocation.city ?? existingLocation?.city ?? undefined,
+    );
+    const state = this.normalizeString(
+      incomingLocation.state ?? existingLocation?.state ?? undefined,
+    );
+
+    if (!venueName) {
+      throw new BadRequestException(
+        'O nome do local do evento é obrigatório.',
+      );
+    }
+
+    if (!city) {
+      throw new BadRequestException('A cidade do evento é obrigatória.');
+    }
+
+    if (!state) {
+      throw new BadRequestException('O estado do evento é obrigatório.');
+    }
   }
 
   async create(data: CreateEventDto) {
@@ -180,28 +257,30 @@ export class EventsService {
       throw new NotFoundException('Organizer não encontrado');
     }
 
+    this.ensureRequiredLocationForCreate(data.location);
+
     return this.prisma.event.create({
       data: {
         organizerId: data.organizerId,
-        name: data.name,
-        description: data.description,
+        name: data.name.trim(),
+        description: this.normalizeString(data.description),
         eventDate: new Date(data.eventDate),
         capacity: data.capacity,
         status: data.status,
 
-        slug: data.slug,
-        shortDescription: data.shortDescription,
-        category: data.category,
-        visibility: data.visibility,
-        timezone: data.timezone,
+        slug: this.normalizeString(data.slug),
+        shortDescription: this.normalizeString(data.shortDescription),
+        category: this.normalizeString(data.category),
+        visibility: this.normalizeString(data.visibility),
+        timezone: this.normalizeString(data.timezone),
         startDate: data.startDate ? new Date(data.startDate) : undefined,
         endDate: data.endDate ? new Date(data.endDate) : undefined,
         saleStartAt: data.saleStartAt ? new Date(data.saleStartAt) : undefined,
         saleEndAt: data.saleEndAt ? new Date(data.saleEndAt) : undefined,
         featured: data.featured,
-        highlightTag: data.highlightTag,
-        checkoutTitle: data.checkoutTitle,
-        checkoutSubtitle: data.checkoutSubtitle,
+        highlightTag: this.normalizeString(data.highlightTag),
+        checkoutTitle: this.normalizeString(data.checkoutTitle),
+        checkoutSubtitle: this.normalizeString(data.checkoutSubtitle),
 
         content: this.hasContentData(data.content)
           ? {
@@ -209,11 +288,9 @@ export class EventsService {
             }
           : undefined,
 
-        location: this.hasLocationData(data.location)
-          ? {
-              create: this.buildLocationPayload(data.location),
-            }
-          : undefined,
+        location: {
+          create: this.buildLocationPayload(data.location),
+        },
 
         media: this.hasMediaData(data.media)
           ? {
@@ -310,29 +387,31 @@ export class EventsService {
       }
     }
 
+    this.ensureRequiredLocationForUpdate(existingEvent.location, data.location);
+
     return this.prisma.event.update({
       where: { id },
       data: {
         organizerId: data.organizerId,
-        name: data.name,
-        description: data.description,
+        name: data.name?.trim(),
+        description: this.normalizeString(data.description),
         eventDate: data.eventDate ? new Date(data.eventDate) : undefined,
         capacity: data.capacity,
         status: data.status,
 
-        slug: data.slug,
-        shortDescription: data.shortDescription,
-        category: data.category,
-        visibility: data.visibility,
-        timezone: data.timezone,
+        slug: this.normalizeString(data.slug),
+        shortDescription: this.normalizeString(data.shortDescription),
+        category: this.normalizeString(data.category),
+        visibility: this.normalizeString(data.visibility),
+        timezone: this.normalizeString(data.timezone),
         startDate: data.startDate ? new Date(data.startDate) : undefined,
         endDate: data.endDate ? new Date(data.endDate) : undefined,
         saleStartAt: data.saleStartAt ? new Date(data.saleStartAt) : undefined,
         saleEndAt: data.saleEndAt ? new Date(data.saleEndAt) : undefined,
         featured: data.featured,
-        highlightTag: data.highlightTag,
-        checkoutTitle: data.checkoutTitle,
-        checkoutSubtitle: data.checkoutSubtitle,
+        highlightTag: this.normalizeString(data.highlightTag),
+        checkoutTitle: this.normalizeString(data.checkoutTitle),
+        checkoutSubtitle: this.normalizeString(data.checkoutSubtitle),
 
         content: this.hasContentData(data.content)
           ? existingEvent.content
