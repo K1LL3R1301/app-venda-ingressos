@@ -79,6 +79,13 @@ type Coordinates = {
   longitude: number;
 };
 
+type CityOption = {
+  key: string;
+  city: string;
+  state: string;
+  label: string;
+};
+
 const collections: CollectionItem[] = [
   {
     id: "shows",
@@ -100,7 +107,7 @@ const collections: CollectionItem[] = [
     id: "comedy",
     label: "Stand up comedy",
     icon: "🎤",
-    eyebrow: "Rir alto",
+    eyebrow: "Humor",
     fallbackGradient: "from-amber-400 via-orange-500 to-rose-500",
     keywords: ["stand up", "comedy", "humor", "comédia", "comediante"],
   },
@@ -214,6 +221,61 @@ function normalizePlainText(value?: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+}
+
+function escapeXml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function getCollectionPoster(collection: CollectionItem) {
+  const palettes: Record<string, { start: string; end: string; accent: string }> = {
+    shows: { start: "#1d4ed8", end: "#4338ca", accent: "#93c5fd" },
+    teatro: { start: "#9333ea", end: "#3730a3", accent: "#f0abfc" },
+    comedy: { start: "#f59e0b", end: "#b45309", accent: "#fde68a" },
+    sports: { start: "#059669", end: "#155e75", accent: "#6ee7b7" },
+    tours: { start: "#0891b2", end: "#1d4ed8", accent: "#67e8f9" },
+    business: { start: "#1f2937", end: "#0f172a", accent: "#cbd5e1" },
+    kids: { start: "#e11d48", end: "#a21caf", accent: "#f9a8d4" },
+    food: { start: "#ea580c", end: "#92400e", accent: "#fdba74" },
+  };
+
+  const palette = palettes[collection.id] || palettes.shows;
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" fill="none">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="700" gradientUnits="userSpaceOnUse">
+          <stop stop-color="${palette.start}" />
+          <stop offset="1" stop-color="${palette.end}" />
+        </linearGradient>
+      </defs>
+
+      <rect width="1200" height="700" rx="36" fill="url(#bg)" />
+      <circle cx="1030" cy="120" r="170" fill="${palette.accent}" opacity="0.14" />
+      <circle cx="920" cy="590" r="220" fill="#ffffff" opacity="0.08" />
+      <circle cx="180" cy="90" r="120" fill="#ffffff" opacity="0.07" />
+
+      <rect x="72" y="74" width="220" height="56" rx="28" fill="#000000" fill-opacity="0.22" />
+      <text x="102" y="111" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#ffffff" letter-spacing="3">${escapeXml(
+        collection.eyebrow.toUpperCase(),
+      )}</text>
+
+      <text x="72" y="258" font-family="Arial, Helvetica, sans-serif" font-size="88" font-weight="700" fill="#ffffff">${escapeXml(
+        collection.icon,
+      )}</text>
+      <text x="72" y="360" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="800" fill="#ffffff">${escapeXml(
+        collection.label,
+      )}</text>
+      <text x="72" y="420" font-family="Arial, Helvetica, sans-serif" font-size="28" fill="#ffffff" fill-opacity="0.84">Descubra experiências desta coleção</text>
+    </svg>
+  `;
+
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
 function getOrganizerName(event: EventItem) {
@@ -498,18 +560,80 @@ function SectionHeader({
   );
 }
 
+function CollectionFilterCard({
+  collection,
+  active,
+  onSelect,
+}: {
+  collection: CollectionItem;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`min-w-[300px] overflow-hidden rounded-[28px] border bg-white text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${
+        active ? "border-slate-900 ring-2 ring-slate-900/10" : "border-slate-200"
+      }`}
+    >
+      <div className="relative h-48 overflow-hidden">
+        <img
+          src={getCollectionPoster(collection)}
+          alt={collection.label}
+          className="h-full w-full object-cover"
+        />
+
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/10" />
+
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between p-4 text-white">
+          <p className="rounded-full border border-white/20 bg-black/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] backdrop-blur">
+            {collection.eyebrow}
+          </p>
+
+          <span className="rounded-full border border-white/20 bg-black/20 px-3 py-1 text-[11px] font-semibold backdrop-blur">
+            filtro
+          </span>
+        </div>
+
+        <div className="absolute inset-x-0 bottom-0 p-5 text-white">
+          <h3 className="text-2xl font-black leading-tight">{collection.label}</h3>
+          <p className="mt-2 text-sm text-white/85">
+            Toque para filtrar a vitrine por esse clima.
+          </p>
+        </div>
+      </div>
+
+      <div className="p-5">
+        <span
+          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+            active
+              ? "bg-slate-900 text-white"
+              : "border border-slate-200 bg-white text-slate-700"
+          }`}
+        >
+          {active ? "Filtro ativo" : "Aplicar filtro"}
+        </span>
+      </div>
+    </button>
+  );
+}
+
 function EventCarouselCard({
   event,
   fallbackGradient,
   eyebrow,
+  posterCollection,
   onOpen,
 }: {
   event: EventItem;
   fallbackGradient: string;
   eyebrow: string;
+  posterCollection: CollectionItem;
   onOpen: () => void;
 }) {
   const image = getCardImage(event);
+  const fallbackPoster = getCollectionPoster(posterCollection);
 
   return (
     <button
@@ -525,14 +649,21 @@ function EventCarouselCard({
             className="h-full w-full object-cover"
           />
         ) : (
-          <div className={`h-full w-full bg-gradient-to-br ${fallbackGradient}`} />
+          <>
+            <img
+              src={fallbackPoster}
+              alt={posterCollection.label}
+              className="h-full w-full object-cover"
+            />
+            <div className={`absolute inset-0 bg-gradient-to-br ${fallbackGradient} opacity-20`} />
+          </>
         )}
 
         <div
           className={`absolute inset-0 ${
             image
               ? "bg-gradient-to-t from-black/80 via-black/35 to-black/10"
-              : "bg-black/15"
+              : "bg-gradient-to-t from-black/72 via-black/28 to-black/10"
           }`}
         />
 
@@ -593,14 +724,13 @@ export default function CustomerDashboardPage() {
   const [activeHeroIndex, setActiveHeroIndex] = useState(0);
   const [activeCollection, setActiveCollection] = useState("all");
 
-  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const [locationModalOpen, setLocationModalOpen] = useState(false);
   const [locationMode, setLocationMode] = useState<"none" | "current" | "manual">("none");
   const [currentCoords, setCurrentCoords] = useState<Coordinates | null>(null);
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState("");
+  const [locationSearch, setLocationSearch] = useState("");
 
-  const [manualCityInput, setManualCityInput] = useState("");
-  const [manualStateInput, setManualStateInput] = useState("");
   const [manualCity, setManualCity] = useState("");
   const [manualState, setManualState] = useState("");
 
@@ -645,10 +775,19 @@ export default function CustomerDashboardPage() {
     loadDashboard();
   }, []);
 
-  function requestCurrentLocation(closePicker = false) {
+  function openLocationModal() {
+    setLocationError("");
+    setLocationModalOpen(true);
+  }
+
+  function closeLocationModal() {
+    setLocationModalOpen(false);
+    setLocationSearch("");
+  }
+
+  function requestCurrentLocation() {
     if (typeof window === "undefined" || !navigator.geolocation) {
       setLocationError("Seu navegador não suporta geolocalização.");
-      setLocationMode("none");
       return;
     }
 
@@ -663,16 +802,12 @@ export default function CustomerDashboardPage() {
         });
         setLocationMode("current");
         setIsLocating(false);
-
-        if (closePicker) {
-          setLocationPickerOpen(false);
-        }
+        closeLocationModal();
       },
       () => {
         setIsLocating(false);
-        setLocationMode("none");
         setLocationError(
-          "Não consegui acessar sua localização atual. Você pode escolher cidade e estado manualmente.",
+          "Não consegui acessar sua localização atual. Escolha uma cidade ou continue em qualquer lugar.",
         );
       },
       {
@@ -683,34 +818,21 @@ export default function CustomerDashboardPage() {
     );
   }
 
-  useEffect(() => {
-    requestCurrentLocation(false);
-  }, []);
-
-  function applyManualLocation() {
-    const trimmedCity = manualCityInput.trim();
-    const trimmedState = manualStateInput.trim();
-
-    if (!trimmedCity && !trimmedState) {
-      setLocationError("Informe pelo menos a cidade ou o estado.");
-      return;
-    }
-
-    setManualCity(trimmedCity);
-    setManualState(trimmedState);
-    setLocationMode("manual");
-    setLocationError("");
-    setLocationPickerOpen(false);
-  }
-
-  function clearLocationPreference() {
+  function chooseGeneralMode() {
+    setLocationMode("none");
+    setCurrentCoords(null);
     setManualCity("");
     setManualState("");
-    setManualCityInput("");
-    setManualStateInput("");
-    setLocationMode("none");
     setLocationError("");
-    setLocationPickerOpen(false);
+    closeLocationModal();
+  }
+
+  function chooseManualLocation(city: string, state: string) {
+    setManualCity(city);
+    setManualState(state);
+    setLocationMode("manual");
+    setLocationError("");
+    closeLocationModal();
   }
 
   function goTo(path: string) {
@@ -735,6 +857,12 @@ export default function CustomerDashboardPage() {
       if (manualState) query.set("state", manualState);
     }
 
+    if (locationMode === "current" && currentCoords) {
+      query.set("origin", "current");
+      query.set("lat", String(currentCoords.latitude));
+      query.set("lng", String(currentCoords.longitude));
+    }
+
     const queryString = query.toString();
 
     window.location.href = queryString
@@ -743,44 +871,38 @@ export default function CustomerDashboardPage() {
   }
 
   const locationButtonLabel = useMemo(() => {
+    if (locationMode === "current" && currentCoords) {
+      return "Minha localização";
+    }
+
     if (locationMode === "manual") {
       if (manualCity && manualState) return `${manualCity} - ${manualState}`;
       if (manualCity) return manualCity;
       if (manualState) return manualState;
     }
 
-    if (locationMode === "current" && currentCoords) {
-      return "Minha localização";
-    }
-
-    if (isLocating) {
-      return "Buscando localização...";
-    }
-
-    return "Escolher local";
-  }, [locationMode, manualCity, manualState, currentCoords, isLocating]);
+    return "Qualquer lugar";
+  }, [locationMode, currentCoords, manualCity, manualState]);
 
   const locationDescription = useMemo(() => {
+    if (locationMode === "current" && currentCoords) {
+      return "Mostrando primeiro os eventos mais próximos da sua localização atual.";
+    }
+
     if (locationMode === "manual") {
       if (manualCity && manualState) {
         return `Mostrando primeiro os eventos de ${manualCity} - ${manualState}.`;
       }
-
       if (manualCity) {
         return `Mostrando primeiro os eventos de ${manualCity}.`;
       }
-
       if (manualState) {
         return `Mostrando primeiro os eventos do estado ${manualState}.`;
       }
     }
 
-    if (locationMode === "current" && currentCoords) {
-      return "Mostrando primeiro os eventos mais próximos da sua localização atual.";
-    }
-
-    return "Defina um local para priorizar eventos mais próximos de você.";
-  }, [locationMode, manualCity, manualState, currentCoords]);
+    return "Você está vendo a home em modo geral, sem filtro de localização.";
+  }, [locationMode, currentCoords, manualCity, manualState]);
 
   const dateSortedEvents = useMemo(() => {
     return [...events].sort(
@@ -798,6 +920,42 @@ export default function CustomerDashboardPage() {
       manualState,
     );
   }, [dateSortedEvents, locationMode, currentCoords, manualCity, manualState]);
+
+  const cityOptions = useMemo<CityOption[]>(() => {
+    const map = new Map<string, CityOption>();
+
+    dateSortedEvents.forEach((event) => {
+      const city = (event.location?.city || "").trim();
+      const state = (event.location?.state || "").trim();
+
+      if (!city) return;
+
+      const key = `${normalizePlainText(city)}-${normalizePlainText(state)}`;
+
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          city,
+          state,
+          label: state ? `${city} - ${state}` : city,
+        });
+      }
+    });
+
+    return Array.from(map.values()).sort((first, second) =>
+      first.label.localeCompare(second.label, "pt-BR"),
+    );
+  }, [dateSortedEvents]);
+
+  const filteredCityOptions = useMemo(() => {
+    const term = normalizePlainText(locationSearch);
+
+    if (!term) return cityOptions;
+
+    return cityOptions.filter((option) =>
+      normalizePlainText(`${option.city} ${option.state} ${option.label}`).includes(term),
+    );
+  }, [cityOptions, locationSearch]);
 
   const filteredEvents = useMemo(() => {
     return locationAwareEvents.filter((event, index) => {
@@ -858,10 +1016,6 @@ export default function CustomerDashboardPage() {
     (event) => getEventTimestamp(event.eventDate) >= Date.now(),
   );
 
-  const publishedCount = dateSortedEvents.filter((event) =>
-    normalizeText(event.status).includes("published"),
-  ).length;
-
   const hotNowSection = buildRepeatingSection(showcasedEvents, 0, 8);
   const weekendSection = buildRepeatingSection(showcasedEvents, 2, 8);
 
@@ -915,20 +1069,6 @@ export default function CustomerDashboardPage() {
     return Array.from(map.values())
       .sort((first, second) => second.totalEvents - first.totalEvents)
       .slice(0, 6);
-  }, [locationAwareEvents]);
-
-  const collectionCounts = useMemo(() => {
-    return collections.map((collection) => {
-      const matchingEvents = locationAwareEvents.filter(
-        (event, index) => matchCollection(event, index).id === collection.id,
-      );
-
-      return {
-        ...collection,
-        total: matchingEvents.length,
-        sampleEvent: matchingEvents[0],
-      };
-    });
   }, [locationAwareEvents]);
 
   if (loading) {
@@ -988,303 +1128,481 @@ export default function CustomerDashboardPage() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
-      <section className="rounded-[34px] border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="rounded-[28px] bg-gradient-to-r from-slate-50 via-white to-sky-50 p-4 md:p-5">
-          <div className="flex flex-col gap-3 xl:flex-row">
-            <div className="flex h-14 flex-1 items-center rounded-2xl border border-slate-200 bg-white px-4 shadow-sm">
-              <span className="mr-3 text-lg text-slate-400">🔎</span>
+    <>
+      <main className="mx-auto max-w-7xl px-4 py-8">
+        <section className="rounded-[34px] border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-[28px] bg-gradient-to-r from-slate-50 via-white to-sky-50 p-4 md:p-5">
+            <div className="flex flex-col gap-3 xl:flex-row">
+              <div className="flex h-14 flex-1 items-center rounded-2xl border border-slate-200 bg-white px-4 shadow-sm">
+                <span className="mr-3 text-lg text-slate-400">🔎</span>
 
-              <input
-                type="text"
-                placeholder="Buscar experiências, festivais, tours, esportes..."
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-              />
+                <input
+                  type="text"
+                  placeholder="Buscar experiências, festivais, tours, esportes..."
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={openLocationModal}
+                className="flex h-14 items-center justify-center gap-2 rounded-2xl border border-sky-100 bg-sky-50 px-5 text-sm font-semibold text-sky-700 transition hover:bg-sky-100"
+              >
+                <span>📍</span>
+                <span>{locationButtonLabel}</span>
+                <span className="text-xs">▾</span>
+              </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setLocationPickerOpen((previous) => !previous)}
-              className="h-14 rounded-2xl border border-sky-100 bg-sky-50 px-5 text-sm font-semibold text-sky-700 transition hover:bg-sky-100"
-            >
-              📍 {locationButtonLabel}
-            </button>
-          </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                {locationDescription}
+              </span>
 
-          <p className="mt-4 text-sm text-slate-500">{locationDescription}</p>
-
-          {locationPickerOpen ? (
-            <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-base font-black text-slate-950">
-                    Escolher localização
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Use sua localização atual ou informe cidade e estado para priorizar os eventos mais próximos.
-                  </p>
-                </div>
-
+              {locationMode !== "none" ? (
                 <button
                   type="button"
-                  onClick={() => setLocationPickerOpen(false)}
-                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+                  onClick={chooseGeneralMode}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-50"
                 >
-                  Fechar
+                  Voltar para qualquer lugar
                 </button>
-              </div>
-
-              <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
-                <input
-                  type="text"
-                  placeholder="Cidade"
-                  value={manualCityInput}
-                  onChange={(event) => setManualCityInput(event.target.value)}
-                  className="h-12 rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none focus:border-slate-400"
-                />
-
-                <input
-                  type="text"
-                  placeholder="Estado"
-                  value={manualStateInput}
-                  onChange={(event) => setManualStateInput(event.target.value)}
-                  className="h-12 rounded-2xl border border-slate-200 px-4 text-sm text-slate-700 outline-none focus:border-slate-400"
-                />
-
-                <button
-                  type="button"
-                  onClick={applyManualLocation}
-                  className="h-12 rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  Aplicar local
-                </button>
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => requestCurrentLocation(true)}
-                  className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-                >
-                  {isLocating ? "Buscando sua localização..." : "Usar minha localização atual"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={clearLocationPreference}
-                  className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
-                >
-                  Limpar
-                </button>
-              </div>
-
-              {locationError ? (
-                <p className="mt-3 text-sm leading-6 text-rose-600">
-                  {locationError}
-                </p>
               ) : null}
             </div>
-          ) : null}
-        </div>
-      </section>
-
-      {hasActiveFilters && filteredEvents.length === 0 ? (
-        <section className="mt-6 rounded-[28px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm">
-          Nenhum evento encontrou esses filtros por enquanto. Estou exibindo os
-          destaques gerais para a home não ficar vazia.
+          </div>
         </section>
-      ) : null}
 
-      {featuredEvent ? (
-        <section className="mt-8">
-          <div className="relative overflow-hidden rounded-[36px] border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="relative min-h-[520px] overflow-hidden rounded-[30px]">
-              {getEventImage(featuredEvent) ? (
-                <img
-                  src={getEventImage(featuredEvent)}
-                  alt={featuredEvent.name || "Evento"}
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-              ) : (
-                <div
-                  className={`absolute inset-0 bg-gradient-to-br ${
-                    fallbackGradients[activeHeroIndex % fallbackGradients.length]
-                  }`}
-                />
-              )}
+        {hasActiveFilters && filteredEvents.length === 0 ? (
+          <section className="mt-6 rounded-[28px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm">
+            Nenhum evento encontrou esses filtros por enquanto. Estou exibindo os
+            destaques gerais para a home não ficar vazia.
+          </section>
+        ) : null}
 
-              <div className="absolute inset-0 bg-gradient-to-r from-black/88 via-black/62 to-black/38" />
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.14),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(255,255,255,0.12),transparent_30%)]" />
+        {featuredEvent ? (
+          <section className="mt-8">
+            <div className="relative overflow-hidden rounded-[36px] border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="relative min-h-[520px] overflow-hidden rounded-[30px]">
+                {getEventImage(featuredEvent) ? (
+                  <img
+                    src={getEventImage(featuredEvent)}
+                    alt={featuredEvent.name || "Evento"}
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                ) : (
+                  <img
+                    src={getCollectionPoster(matchCollection(featuredEvent))}
+                    alt={matchCollection(featuredEvent).label}
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                )}
 
-              <div className="relative z-10 grid gap-8 p-8 text-white md:p-10 xl:grid-cols-[1.25fr_0.75fr]">
-                <div className="flex flex-col justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] backdrop-blur">
-                        Evento em destaque
-                      </span>
+                <div className="absolute inset-0 bg-gradient-to-r from-black/88 via-black/62 to-black/38" />
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.14),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(255,255,255,0.12),transparent_30%)]" />
 
-                      <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold backdrop-blur">
-                        {getRelativeLabel(featuredEvent.eventDate)}
-                      </span>
-
-                      <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold backdrop-blur">
-                        {getStatusLabel(featuredEvent.status)}
-                      </span>
-
-                      {featuredEvent.highlightTag ? (
-                        <span className="rounded-full bg-emerald-500/90 px-4 py-2 text-xs font-semibold text-white shadow-sm">
-                          {featuredEvent.highlightTag}
+                <div className="relative z-10 grid gap-8 p-8 text-white md:p-10 xl:grid-cols-[1.25fr_0.75fr]">
+                  <div className="flex flex-col justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] backdrop-blur">
+                          Evento em destaque
                         </span>
-                      ) : null}
-                    </div>
 
-                    <h1 className="mt-6 max-w-4xl text-4xl font-black leading-tight md:text-6xl">
-                      {featuredEvent.name || "Evento sem nome"}
-                    </h1>
+                        <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold backdrop-blur">
+                          {getRelativeLabel(featuredEvent.eventDate)}
+                        </span>
 
-                    <p className="mt-5 max-w-2xl text-sm leading-7 text-white/85 md:text-base">
-                      {previewText(
-                        featuredEvent.content?.summary ||
-                          featuredEvent.shortDescription ||
-                          featuredEvent.description,
-                        220,
-                      )}
-                    </p>
+                        <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold backdrop-blur">
+                          {getStatusLabel(featuredEvent.status)}
+                        </span>
 
-                    <div className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                      <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
-                        <p className="text-xs uppercase tracking-[0.18em] text-white/70">
-                          Quando
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-white">
-                          {formatDate(featuredEvent.startDate || featuredEvent.eventDate)}
-                        </p>
+                        {featuredEvent.highlightTag ? (
+                          <span className="rounded-full bg-emerald-500/90 px-4 py-2 text-xs font-semibold text-white shadow-sm">
+                            {featuredEvent.highlightTag}
+                          </span>
+                        ) : null}
                       </div>
 
-                      <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
-                        <p className="text-xs uppercase tracking-[0.18em] text-white/70">
-                          Organizador
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-white">
-                          {getOrganizerName(featuredEvent)}
-                        </p>
+                      <h1 className="mt-6 max-w-4xl text-4xl font-black leading-tight md:text-6xl">
+                        {featuredEvent.name || "Evento sem nome"}
+                      </h1>
+
+                      <p className="mt-5 max-w-2xl text-sm leading-7 text-white/85 md:text-base">
+                        {previewText(
+                          featuredEvent.content?.summary ||
+                            featuredEvent.shortDescription ||
+                            featuredEvent.description,
+                          220,
+                        )}
+                      </p>
+
+                      <div className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
+                          <p className="text-xs uppercase tracking-[0.18em] text-white/70">
+                            Quando
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-white">
+                            {formatDate(featuredEvent.startDate || featuredEvent.eventDate)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
+                          <p className="text-xs uppercase tracking-[0.18em] text-white/70">
+                            Organizador
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-white">
+                            {getOrganizerName(featuredEvent)}
+                          </p>
+                        </div>
+
+                        <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
+                          <p className="text-xs uppercase tracking-[0.18em] text-white/70">
+                            Local
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-white">
+                            {getLocationLabel(featuredEvent)}
+                          </p>
+                        </div>
                       </div>
 
-                      <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
-                        <p className="text-xs uppercase tracking-[0.18em] text-white/70">
-                          Local
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-white">
-                          {getLocationLabel(featuredEvent)}
-                        </p>
+                      <div className="mt-8 flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={() => goTo(`/customer/events/${featuredEvent.id}`)}
+                          className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-sky-700 shadow-sm hover:bg-sky-50"
+                        >
+                          Ver evento
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => goTo(`/customer/events/${featuredEvent.id}`)}
+                          className="rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white hover:bg-white/15"
+                        >
+                          Comprar ingresso
+                        </button>
                       </div>
                     </div>
 
-                    <div className="mt-8 flex flex-wrap gap-3">
-                      <button
-                        type="button"
-                        onClick={() => goTo(`/customer/events/${featuredEvent.id}`)}
-                        className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-sky-700 shadow-sm hover:bg-sky-50"
-                      >
-                        Ver evento
-                      </button>
+                    {heroEvents.length > 1 ? (
+                      <div className="mt-8 flex flex-wrap items-center gap-3">
+                        {heroEvents.map((event, index) => {
+                          const active = event.id === featuredEvent.id;
 
-                      <button
-                        type="button"
-                        onClick={() => goTo(`/customer/events/${featuredEvent.id}`)}
-                        className="rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white hover:bg-white/15"
-                      >
-                        Comprar ingresso
-                      </button>
-                    </div>
+                          return (
+                            <button
+                              key={event.id}
+                              type="button"
+                              onClick={() => setActiveHeroIndex(index)}
+                              className={`h-3 rounded-full transition ${
+                                active
+                                  ? "w-12 bg-white"
+                                  : "w-3 bg-white/45 hover:bg-white/70"
+                              }`}
+                              aria-label={`Abrir slide ${index + 1}`}
+                            />
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
 
-                  {heroEvents.length > 1 ? (
-                    <div className="mt-8 flex flex-wrap items-center gap-3">
-                      {heroEvents.map((event, index) => {
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveHeroIndex((previous) =>
+                            heroEvents.length === 0
+                              ? 0
+                              : (previous - 1 + heroEvents.length) % heroEvents.length,
+                          )
+                        }
+                        className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-lg font-bold backdrop-blur hover:bg-white/20"
+                      >
+                        ‹
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveHeroIndex((previous) =>
+                            heroEvents.length === 0
+                              ? 0
+                              : (previous + 1) % heroEvents.length,
+                          )
+                        }
+                        className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-lg font-bold backdrop-blur hover:bg-white/20"
+                      >
+                        ›
+                      </button>
+                    </div>
+
+                    <div className="grid gap-3">
+                      {heroEvents.slice(0, 4).map((event, index) => {
                         const active = event.id === featuredEvent.id;
+                        const thumb = getCardImage(event);
+                        const collection = matchCollection(event, index);
 
                         return (
                           <button
                             key={event.id}
                             type="button"
                             onClick={() => setActiveHeroIndex(index)}
-                            className={`h-3 rounded-full transition ${
+                            className={`overflow-hidden rounded-[24px] border text-left backdrop-blur transition ${
                               active
-                                ? "w-12 bg-white"
-                                : "w-3 bg-white/45 hover:bg-white/70"
+                                ? "border-white/35 bg-white/14"
+                                : "border-white/15 bg-white/8 hover:bg-white/14"
                             }`}
-                            aria-label={`Abrir slide ${index + 1}`}
-                          />
+                          >
+                            <div className="flex items-stretch">
+                              <div className="relative h-[108px] w-[108px] shrink-0 overflow-hidden">
+                                {thumb ? (
+                                  <img
+                                    src={thumb}
+                                    alt={event.name || "Evento"}
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <img
+                                    src={getCollectionPoster(collection)}
+                                    alt={collection.label}
+                                    className="h-full w-full object-cover"
+                                  />
+                                )}
+
+                                <div className="absolute inset-0 bg-black/20" />
+                              </div>
+
+                              <div className="flex-1 p-4 text-white">
+                                <p className="text-[11px] uppercase tracking-[0.2em] text-white/65">
+                                  Destaque
+                                </p>
+                                <p className="mt-2 text-base font-bold leading-tight">
+                                  {event.name || "Evento"}
+                                </p>
+                                <p className="mt-2 text-sm text-white/75">
+                                  {formatDate(event.eventDate)}
+                                </p>
+                              </div>
+                            </div>
+                          </button>
                         );
                       })}
                     </div>
-                  ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="mt-12">
+          <SectionHeader
+            eyebrow="Descobrir"
+            title="Explore por coleção"
+            description="Agora essa faixa funciona como filtro visual da vitrine."
+          />
+
+          <div className="flex gap-5 overflow-x-auto pb-2">
+            <button
+              type="button"
+              onClick={() => setActiveCollection("all")}
+              className={`min-w-[300px] overflow-hidden rounded-[28px] border bg-white text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${
+                activeCollection === "all"
+                  ? "border-slate-900 ring-2 ring-slate-900/10"
+                  : "border-slate-200"
+              }`}
+            >
+              <div className="relative h-48 overflow-hidden">
+                <img
+                  src={getCollectionPoster({
+                    id: "all",
+                    label: "Todas as experiências",
+                    icon: "✨",
+                    eyebrow: "Geral",
+                    keywords: [],
+                    fallbackGradient: "",
+                  })}
+                  alt="Todas as experiências"
+                  className="h-full w-full object-cover"
+                />
+
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/10" />
+
+                <div className="absolute inset-x-0 top-0 flex items-start justify-between p-4 text-white">
+                  <p className="rounded-full border border-white/20 bg-black/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] backdrop-blur">
+                    geral
+                  </p>
+
+                  <span className="rounded-full border border-white/20 bg-black/20 px-3 py-1 text-[11px] font-semibold backdrop-blur">
+                    filtro
+                  </span>
                 </div>
 
-                <div className="flex flex-col gap-4">
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActiveHeroIndex((previous) =>
-                          heroEvents.length === 0
-                            ? 0
-                            : (previous - 1 + heroEvents.length) % heroEvents.length,
-                        )
-                      }
-                      className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-lg font-bold backdrop-blur hover:bg-white/20"
-                    >
-                      ‹
-                    </button>
+                <div className="absolute inset-x-0 bottom-0 p-5 text-white">
+                  <h3 className="text-2xl font-black leading-tight">
+                    Todas as experiências
+                  </h3>
+                  <p className="mt-2 text-sm text-white/85">
+                    Mistura completa da vitrine.
+                  </p>
+                </div>
+              </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActiveHeroIndex((previous) =>
-                          heroEvents.length === 0
-                            ? 0
-                            : (previous + 1) % heroEvents.length,
-                        )
-                      }
-                      className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-lg font-bold backdrop-blur hover:bg-white/20"
-                    >
-                      ›
-                    </button>
+              <div className="p-5">
+                <span
+                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                    activeCollection === "all"
+                      ? "bg-slate-900 text-white"
+                      : "border border-slate-200 bg-white text-slate-700"
+                  }`}
+                >
+                  {activeCollection === "all" ? "Filtro ativo" : "Aplicar filtro"}
+                </span>
+              </div>
+            </button>
+
+            {collections.map((collection) => (
+              <CollectionFilterCard
+                key={collection.id}
+                collection={collection}
+                active={activeCollection === collection.id}
+                onSelect={() => setActiveCollection(collection.id)}
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-12">
+          <SectionHeader
+            eyebrow="Em alta"
+            title="Bombando agora"
+            description="Uma faixa mais comercial, agora com cara de vitrine real."
+            actionLabel="Ver todos"
+            onAction={() =>
+              goToEventsWithContext({
+                section: "hot",
+                title: "Bombando agora",
+              })
+            }
+          />
+
+          <div className="flex gap-5 overflow-x-auto pb-2">
+            {hotNowSection.map((event, index) => {
+              const collection = matchCollection(event, index);
+
+              return (
+                <EventCarouselCard
+                  key={`${event.id}-hot-${index}`}
+                  event={event}
+                  fallbackGradient={fallbackGradients[index % fallbackGradients.length]}
+                  eyebrow="Em alta"
+                  posterCollection={collection}
+                  onOpen={() => goTo(`/customer/events/${event.id}`)}
+                />
+              );
+            })}
+          </div>
+        </section>
+
+        {nextEvent ? (
+          <section className="mt-12">
+            <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+              <div className="relative min-h-[340px]">
+                {getEventImage(nextEvent) ? (
+                  <img
+                    src={getEventImage(nextEvent)}
+                    alt={nextEvent.name || "Evento"}
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                ) : (
+                  <img
+                    src={getCollectionPoster(matchCollection(nextEvent))}
+                    alt={matchCollection(nextEvent).label}
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                )}
+
+                <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/60 to-black/30" />
+
+                <div className="relative z-10 grid gap-6 p-8 text-white lg:grid-cols-[1.15fr_0.85fr] lg:p-10">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.26em] text-white/70">
+                      Próxima experiência
+                    </p>
+
+                    <h2 className="mt-4 max-w-3xl text-3xl font-black leading-tight md:text-5xl">
+                      {nextEvent.name || "Evento em destaque"}
+                    </h2>
+
+                    <p className="mt-4 max-w-2xl text-sm leading-7 text-white/85 md:text-base">
+                      {previewText(
+                        nextEvent.content?.summary ||
+                          nextEvent.shortDescription ||
+                          nextEvent.description,
+                        180,
+                      )}
+                    </p>
+
+                    <div className="mt-6 flex flex-wrap gap-4 text-sm text-white/85">
+                      <span>📅 {formatDate(nextEvent.eventDate)}</span>
+                      <span>📍 {getLocationLabel(nextEvent)}</span>
+                      <span>👤 {getOrganizerName(nextEvent)}</span>
+                    </div>
+
+                    <div className="mt-7 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => goTo(`/customer/events/${nextEvent.id}`)}
+                        className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+                      >
+                        Ver evento
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          goToEventsWithContext({
+                            section: "upcoming",
+                            quickFilter: "week",
+                            title: "Próxima experiência",
+                          })
+                        }
+                        className="rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white hover:bg-white/15"
+                      >
+                        Explorar agenda completa
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="grid gap-3">
-                    {heroEvents.slice(0, 4).map((event, index) => {
-                      const active = event.id === featuredEvent.id;
-                      const thumb = getCardImage(event);
+                  <div className="grid gap-3 self-end">
+                    {heroEvents.slice(0, 3).map((event, index) => {
+                      const image = getCardImage(event);
+                      const collection = matchCollection(event, index);
 
                       return (
                         <button
-                          key={event.id}
+                          key={`${event.id}-mini-highlight`}
                           type="button"
-                          onClick={() => setActiveHeroIndex(index)}
-                          className={`overflow-hidden rounded-[24px] border text-left backdrop-blur transition ${
-                            active
-                              ? "border-white/35 bg-white/14"
-                              : "border-white/15 bg-white/8 hover:bg-white/14"
-                          }`}
+                          onClick={() => goTo(`/customer/events/${event.id}`)}
+                          className="overflow-hidden rounded-[24px] border border-white/15 bg-white/8 text-left backdrop-blur transition hover:bg-white/14"
                         >
                           <div className="flex items-stretch">
-                            <div className="relative h-[108px] w-[108px] shrink-0 overflow-hidden">
-                              {thumb ? (
+                            <div className="relative h-[96px] w-[96px] shrink-0 overflow-hidden">
+                              {image ? (
                                 <img
-                                  src={thumb}
+                                  src={image}
                                   alt={event.name || "Evento"}
                                   className="h-full w-full object-cover"
                                 />
                               ) : (
-                                <div
-                                  className={`h-full w-full bg-gradient-to-br ${
-                                    fallbackGradients[index % fallbackGradients.length]
-                                  }`}
+                                <img
+                                  src={getCollectionPoster(collection)}
+                                  alt={collection.label}
+                                  className="h-full w-full object-cover"
                                 />
                               )}
 
@@ -1293,12 +1611,12 @@ export default function CustomerDashboardPage() {
 
                             <div className="flex-1 p-4 text-white">
                               <p className="text-[11px] uppercase tracking-[0.2em] text-white/65">
-                                Destaque
+                                Descobrir
                               </p>
-                              <p className="mt-2 text-base font-bold leading-tight">
+                              <p className="mt-2 text-sm font-bold leading-tight">
                                 {event.name || "Evento"}
                               </p>
-                              <p className="mt-2 text-sm text-white/75">
+                              <p className="mt-2 text-xs text-white/75">
                                 {formatDate(event.eventDate)}
                               </p>
                             </div>
@@ -1310,505 +1628,332 @@ export default function CustomerDashboardPage() {
                 </div>
               </div>
             </div>
-          </div>
-        </section>
-      ) : null}
+          </section>
+        ) : null}
 
-      <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Eventos no radar
-          </p>
-          <p className="mt-3 text-3xl font-black text-slate-950">
-            {dateSortedEvents.length}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            Sua home agora usa localização para puxar a descoberta para perto do cliente.
-          </p>
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Organizadores
-          </p>
-          <p className="mt-3 text-3xl font-black text-slate-950">
-            {organizerSpotlights.length}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            Marcas e produtores aparecendo com mais força na descoberta.
-          </p>
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Publicados
-          </p>
-          <p className="mt-3 text-3xl font-black text-slate-950">
-            {publishedCount}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            Eventos prontos para venda e navegação do cliente.
-          </p>
-        </div>
-
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Próximo destaque
-          </p>
-          <p className="mt-3 text-base font-black text-slate-950">
-            {nextEvent?.name || "Sem próximos eventos"}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            {nextEvent
-              ? formatDate(nextEvent.eventDate)
-              : "Cadastre mais eventos para alimentar a agenda."}
-          </p>
-        </div>
-      </section>
-
-      <section className="mt-12">
-        <SectionHeader
-          eyebrow="Descobrir"
-          title="Explore por coleção"
-          description="Agora as coleções também usam fotos reais como referência visual."
-          actionLabel={activeCollection === "all" ? "Ver tudo" : "Limpar filtro"}
-          onAction={() => setActiveCollection("all")}
-        />
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
-          <button
-            type="button"
-            onClick={() => setActiveCollection("all")}
-            className={`overflow-hidden rounded-[26px] border text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${
-              activeCollection === "all"
-                ? "border-slate-900 bg-slate-900 text-white"
-                : "border-slate-200 bg-white text-slate-900"
-            }`}
-          >
-            <div className="p-5">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-2xl">✨</span>
-                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">
-                  geral
-                </span>
-              </div>
-
-              <h3 className="mt-5 text-xl font-black">Todas as experiências</h3>
-              <p
-                className={`mt-2 text-sm ${
-                  activeCollection === "all" ? "text-white/75" : "text-slate-500"
-                }`}
-              >
-                Mistura completa da vitrine para o cliente explorar sem barreira.
-              </p>
-            </div>
-          </button>
-
-          {collectionCounts.map((collection) => {
-            const active = activeCollection === collection.id;
-            const image = getCardImage(collection.sampleEvent);
-
-            return (
-              <button
-                key={collection.id}
-                type="button"
-                onClick={() => setActiveCollection(collection.id)}
-                className="overflow-hidden rounded-[26px] border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
-              >
-                <div className="relative h-[220px]">
-                  {image ? (
-                    <img
-                      src={image}
-                      alt={collection.label}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div
-                      className={`h-full w-full bg-gradient-to-br ${collection.fallbackGradient}`}
-                    />
-                  )}
-
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/10" />
-
-                  <div className="absolute inset-x-0 top-0 flex items-center justify-between p-4 text-white">
-                    <span className="rounded-full border border-white/20 bg-black/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] backdrop-blur">
-                      {collection.eyebrow}
-                    </span>
-
-                    <span className="rounded-full border border-white/20 bg-black/20 px-3 py-1 text-[11px] font-semibold backdrop-blur">
-                      {collection.total} eventos
-                    </span>
-                  </div>
-
-                  <div className="absolute inset-x-0 bottom-0 p-5 text-white">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{collection.icon}</span>
-                      <h3 className="text-xl font-black">{collection.label}</h3>
-                    </div>
-
-                    <p className="mt-2 text-sm text-white/80">
-                      {collection.sampleEvent
-                        ? previewText(
-                            collection.sampleEvent.shortDescription ||
-                              collection.sampleEvent.description,
-                            72,
-                          )
-                        : "Descubra eventos desta coleção."}
-                    </p>
-
-                    {active ? (
-                      <span className="mt-4 inline-flex rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-900">
-                        Filtro ativo
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="mt-12">
-        <SectionHeader
-          eyebrow="Em alta"
-          title="Bombando agora"
-          description="Uma faixa mais comercial, agora com cara de vitrine real."
-          actionLabel="Ver todos"
-          onAction={() =>
-            goToEventsWithContext({
-              section: "hot",
-              title: "Bombando agora",
-            })
-          }
-        />
-
-        <div className="flex gap-5 overflow-x-auto pb-2">
-          {hotNowSection.map((event, index) => (
-            <EventCarouselCard
-              key={`${event.id}-hot-${index}`}
-              event={event}
-              fallbackGradient={fallbackGradients[index % fallbackGradients.length]}
-              eyebrow="Em alta"
-              onOpen={() => goTo(`/customer/events/${event.id}`)}
-            />
-          ))}
-        </div>
-      </section>
-
-      {nextEvent ? (
         <section className="mt-12">
-          <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-            <div className="relative min-h-[340px]">
-              {getEventImage(nextEvent) ? (
-                <img
-                  src={getEventImage(nextEvent)}
-                  alt={nextEvent.name || "Evento"}
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-              ) : (
-                <div className="absolute inset-0 bg-gradient-to-r from-slate-800 via-slate-900 to-slate-950" />
-              )}
+          <SectionHeader
+            eyebrow="Urgência"
+            title="Última chance para garantir"
+            description="Eventos mais próximos para criar decisão rápida sem perder o visual premium."
+            actionLabel="Ver agenda"
+            onAction={() =>
+              goToEventsWithContext({
+                section: "urgency",
+                quickFilter: "soon",
+                title: "Última chance para garantir",
+              })
+            }
+          />
 
-              <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/60 to-black/30" />
+          {urgencySection.length === 0 ? (
+            <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500 shadow-sm">
+              Nenhum evento próximo por enquanto.
+            </div>
+          ) : (
+            <div className="flex gap-5 overflow-x-auto pb-2">
+              {urgencySection.map((event, index) => {
+                const collection = matchCollection(event, index);
 
-              <div className="relative z-10 grid gap-6 p-8 text-white lg:grid-cols-[1.15fr_0.85fr] lg:p-10">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.26em] text-white/70">
-                    Próxima experiência
-                  </p>
+                return (
+                  <EventCarouselCard
+                    key={`${event.id}-urgency-${index}`}
+                    event={event}
+                    fallbackGradient={fallbackGradients[(index + 2) % fallbackGradients.length]}
+                    eyebrow="Última chance"
+                    posterCollection={collection}
+                    onOpen={() => goTo(`/customer/events/${event.id}`)}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </section>
 
-                  <h2 className="mt-4 max-w-3xl text-3xl font-black leading-tight md:text-5xl">
-                    {nextEvent.name || "Evento em destaque"}
-                  </h2>
+        <section className="mt-12">
+          <SectionHeader
+            eyebrow="Organizadores"
+            title="Quem está brilhando na plataforma"
+            description="Agora com foto real do universo do evento, em vez de bloco chapado."
+            actionLabel="Explorar eventos"
+            onAction={() =>
+              goToEventsWithContext({
+                section: "organizers",
+                title: "Quem está brilhando na plataforma",
+              })
+            }
+          />
 
-                  <p className="mt-4 max-w-2xl text-sm leading-7 text-white/85 md:text-base">
-                    {previewText(
-                      nextEvent.content?.summary ||
-                        nextEvent.shortDescription ||
-                        nextEvent.description,
-                      180,
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {organizerSpotlights.map((organizer, index) => {
+              const image = getEventImage(organizer.eventSample);
+              const collection = organizer.eventSample
+                ? matchCollection(organizer.eventSample, index)
+                : collections[index % collections.length];
+
+              return (
+                <div
+                  key={organizer.id}
+                  className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm"
+                >
+                  <div className="relative h-48">
+                    {image ? (
+                      <img
+                        src={image}
+                        alt={organizer.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <img
+                        src={getCollectionPoster(collection)}
+                        alt={collection.label}
+                        className="h-full w-full object-cover"
+                      />
                     )}
-                  </p>
 
-                  <div className="mt-6 flex flex-wrap gap-4 text-sm text-white/85">
-                    <span>📅 {formatDate(nextEvent.eventDate)}</span>
-                    <span>📍 {getLocationLabel(nextEvent)}</span>
-                    <span>👤 {getOrganizerName(nextEvent)}</span>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-black/10" />
+
+                    <div className="absolute inset-x-0 bottom-0 p-5 text-white">
+                      <p className="text-xs uppercase tracking-[0.22em] text-white/70">
+                        Organizador em destaque
+                      </p>
+                      <h3 className="mt-2 text-2xl font-black">{organizer.name}</h3>
+                    </div>
                   </div>
 
-                  <div className="mt-7 flex flex-wrap gap-3">
-                    <button
-                      type="button"
-                      onClick={() => goTo(`/customer/events/${nextEvent.id}`)}
-                      className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-900 hover:bg-slate-100"
-                    >
-                      Ver evento
-                    </button>
+                  <div className="p-5">
+                    <p className="text-sm leading-6 text-slate-500">
+                      {organizer.totalEvents} evento
+                      {organizer.totalEvents > 1 ? "s" : ""} abastecendo a vitrine do
+                      cliente agora.
+                    </p>
 
                     <button
                       type="button"
                       onClick={() =>
                         goToEventsWithContext({
-                          section: "upcoming",
-                          quickFilter: "week",
-                          title: "Próxima experiência",
+                          section: "organizers",
+                          title: "Quem está brilhando na plataforma",
                         })
                       }
-                      className="rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white hover:bg-white/15"
+                      className="mt-5 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                     >
-                      Explorar agenda completa
+                      Ver eventos desse parceiro
                     </button>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        </section>
 
-                <div className="grid gap-3 self-end">
-                  {heroEvents.slice(0, 3).map((event, index) => {
-                    const image = getCardImage(event);
+        <section className="mt-12">
+          <SectionHeader
+            eyebrow="Curadoria"
+            title="Hoje e nos próximos dias"
+            description="Mais uma faixa com fotos reais para reforçar navegação e descoberta."
+            actionLabel="Ver agenda"
+            onAction={() =>
+              goToEventsWithContext({
+                section: "week",
+                quickFilter: "week",
+                title: "Hoje e nos próximos dias",
+              })
+            }
+          />
 
-                    return (
-                      <button
-                        key={`${event.id}-mini-highlight`}
-                        type="button"
-                        onClick={() => goTo(`/customer/events/${event.id}`)}
-                        className="overflow-hidden rounded-[24px] border border-white/15 bg-white/8 text-left backdrop-blur transition hover:bg-white/14"
-                      >
-                        <div className="flex items-stretch">
-                          <div className="relative h-[96px] w-[96px] shrink-0 overflow-hidden">
-                            {image ? (
-                              <img
-                                src={image}
-                                alt={event.name || "Evento"}
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <div
-                                className={`h-full w-full bg-gradient-to-br ${
-                                  fallbackGradients[(index + 2) % fallbackGradients.length]
-                                }`}
-                              />
-                            )}
+          <div className="flex gap-5 overflow-x-auto pb-2">
+            {weekendSection.map((event, index) => {
+              const collection = matchCollection(event, index);
 
-                            <div className="absolute inset-0 bg-black/20" />
-                          </div>
+              return (
+                <EventCarouselCard
+                  key={`${event.id}-week-${index}`}
+                  event={event}
+                  fallbackGradient={fallbackGradients[(index + 3) % fallbackGradients.length]}
+                  eyebrow="Curadoria"
+                  posterCollection={collection}
+                  onOpen={() => goTo(`/customer/events/${event.id}`)}
+                />
+              );
+            })}
+          </div>
+        </section>
 
-                          <div className="flex-1 p-4 text-white">
-                            <p className="text-[11px] uppercase tracking-[0.2em] text-white/65">
-                              Descobrir
-                            </p>
-                            <p className="mt-2 text-sm font-bold leading-tight">
-                              {event.name || "Evento"}
-                            </p>
-                            <p className="mt-2 text-xs text-white/75">
-                              {formatDate(event.eventDate)}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+        <section className="mt-12">
+          <SectionHeader
+            eyebrow="Descobrir"
+            title="Passeios, cultura e experiências"
+            description="Uma segunda vitrine para dar variedade visual sem cair em repetição."
+            actionLabel="Ver tudo"
+            onAction={() =>
+              goToEventsWithContext({
+                section: "culture",
+                collection: "tours",
+                title: "Passeios, cultura e experiências",
+              })
+            }
+          />
+
+          <div className="flex gap-5 overflow-x-auto pb-2">
+            {cultureSection.map((event, index) => {
+              const collection = matchCollection(event, index);
+
+              return (
+                <EventCarouselCard
+                  key={`${event.id}-culture-${index}`}
+                  event={event}
+                  fallbackGradient={fallbackGradients[(index + 4) % fallbackGradients.length]}
+                  eyebrow="Cultura"
+                  posterCollection={collection}
+                  onOpen={() => goTo(`/customer/events/${event.id}`)}
+                />
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="mt-12">
+          <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-2xl font-black text-slate-950">
+              Tire suas dúvidas aqui
+            </h2>
+
+            <p className="mt-2 text-sm text-slate-500">
+              Deixei esse bloco sozinho para a home respirar melhor e não competir com atalhos.
+            </p>
+
+            <div className="mt-5 space-y-3">
+              {faqItems.map((item) => (
+                <details
+                  key={item.question}
+                  className="group rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-left text-sm font-semibold text-slate-800">
+                    <span>{item.question}</span>
+                    <span className="text-lg text-slate-400 transition group-open:rotate-45">
+                      +
+                    </span>
+                  </summary>
+
+                  <p className="mt-4 text-sm leading-6 text-slate-500">
+                    {item.answer}
+                  </p>
+                </details>
+              ))}
             </div>
           </div>
         </section>
-      ) : null}
+      </main>
 
-      <section className="mt-12">
-        <SectionHeader
-          eyebrow="Urgência"
-          title="Última chance para garantir"
-          description="Eventos mais próximos para criar decisão rápida sem perder o visual premium."
-          actionLabel="Ver agenda"
-          onAction={() =>
-            goToEventsWithContext({
-              section: "urgency",
-              quickFilter: "soon",
-              title: "Última chance para garantir",
-            })
-          }
-        />
-
-        {urgencySection.length === 0 ? (
-          <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500 shadow-sm">
-            Nenhum evento próximo por enquanto.
-          </div>
-        ) : (
-          <div className="flex gap-5 overflow-x-auto pb-2">
-            {urgencySection.map((event, index) => (
-              <EventCarouselCard
-                key={`${event.id}-urgency-${index}`}
-                event={event}
-                fallbackGradient={fallbackGradients[(index + 2) % fallbackGradients.length]}
-                eyebrow="Última chance"
-                onOpen={() => goTo(`/customer/events/${event.id}`)}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="mt-12">
-        <SectionHeader
-          eyebrow="Organizadores"
-          title="Quem está brilhando na plataforma"
-          description="Agora com foto real do universo do evento, em vez de bloco chapado."
-          actionLabel="Explorar eventos"
-          onAction={() =>
-            goToEventsWithContext({
-              section: "organizers",
-              title: "Quem está brilhando na plataforma",
-            })
-          }
-        />
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {organizerSpotlights.map((organizer, index) => {
-            const image = getEventImage(organizer.eventSample);
-
-            return (
-              <div
-                key={organizer.id}
-                className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm"
-              >
-                <div className="relative h-48">
-                  {image ? (
-                    <img
-                      src={image}
-                      alt={organizer.name}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div
-                      className={`h-full w-full bg-gradient-to-br ${
-                        fallbackGradients[index % fallbackGradients.length]
-                      }`}
-                    />
-                  )}
-
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-black/10" />
-
-                  <div className="absolute inset-x-0 bottom-0 p-5 text-white">
-                    <p className="text-xs uppercase tracking-[0.22em] text-white/70">
-                      Organizador em destaque
-                    </p>
-                    <h3 className="mt-2 text-2xl font-black">{organizer.name}</h3>
-                  </div>
-                </div>
-
-                <div className="p-5">
-                  <p className="text-sm leading-6 text-slate-500">
-                    {organizer.totalEvents} evento
-                    {organizer.totalEvents > 1 ? "s" : ""} abastecendo a vitrine do
-                    cliente agora.
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      goToEventsWithContext({
-                        section: "organizers",
-                        title: "Quem está brilhando na plataforma",
-                      })
-                    }
-                    className="mt-5 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                  >
-                    Ver eventos desse parceiro
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="mt-12">
-        <SectionHeader
-          eyebrow="Curadoria"
-          title="Hoje e nos próximos dias"
-          description="Mais uma faixa com fotos reais para reforçar navegação e descoberta."
-          actionLabel="Ver agenda"
-          onAction={() =>
-            goToEventsWithContext({
-              section: "week",
-              quickFilter: "week",
-              title: "Hoje e nos próximos dias",
-            })
-          }
-        />
-
-        <div className="flex gap-5 overflow-x-auto pb-2">
-          {weekendSection.map((event, index) => (
-            <EventCarouselCard
-              key={`${event.id}-week-${index}`}
-              event={event}
-              fallbackGradient={fallbackGradients[(index + 3) % fallbackGradients.length]}
-              eyebrow="Curadoria"
-              onOpen={() => goTo(`/customer/events/${event.id}`)}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="mt-12">
-        <SectionHeader
-          eyebrow="Descobrir"
-          title="Passeios, cultura e experiências"
-          description="Uma segunda vitrine para dar variedade visual sem cair em repetição."
-          actionLabel="Ver tudo"
-          onAction={() =>
-            goToEventsWithContext({
-              section: "culture",
-              collection: "tours",
-              title: "Passeios, cultura e experiências",
-            })
-          }
-        />
-
-        <div className="flex gap-5 overflow-x-auto pb-2">
-          {cultureSection.map((event, index) => (
-            <EventCarouselCard
-              key={`${event.id}-culture-${index}`}
-              event={event}
-              fallbackGradient={fallbackGradients[(index + 4) % fallbackGradients.length]}
-              eyebrow="Cultura"
-              onOpen={() => goTo(`/customer/events/${event.id}`)}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="mt-12">
-        <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-black text-slate-950">
-            Tire suas dúvidas aqui
-          </h2>
-
-          <p className="mt-2 text-sm text-slate-500">
-            Deixei esse bloco sozinho para a home respirar melhor e não competir com atalhos.
-          </p>
-
-          <div className="mt-5 space-y-3">
-            {faqItems.map((item) => (
-              <details
-                key={item.question}
-                className="group rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-left text-sm font-semibold text-slate-800">
-                  <span>{item.question}</span>
-                  <span className="text-lg text-slate-400 transition group-open:rotate-45">
-                    +
-                  </span>
-                </summary>
-
-                <p className="mt-4 text-sm leading-6 text-slate-500">
-                  {item.answer}
+      {locationModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 px-4 py-12">
+          <div className="w-full max-w-[560px] rounded-[28px] bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div>
+                <h3 className="text-[32px] font-black leading-tight text-slate-950">
+                  Localização
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Escolha uma cidade ou use sua localização atual.
                 </p>
-              </details>
-            ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={closeLocationModal}
+                className="rounded-full border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="px-6 py-5">
+              <div className="flex h-14 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4">
+                <span className="mr-3 text-lg text-slate-400">🔎</span>
+                <input
+                  type="text"
+                  placeholder="Onde?"
+                  value={locationSearch}
+                  onChange={(event) => setLocationSearch(event.target.value)}
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={requestCurrentLocation}
+                className={`mt-4 flex w-full items-start gap-4 rounded-2xl border px-4 py-4 text-left transition ${
+                  locationMode === "current"
+                    ? "border-sky-200 bg-sky-50"
+                    : "border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                <span className="mt-1 text-xl text-sky-600">📍</span>
+
+                <div className="flex-1">
+                  <p className="text-base font-semibold text-slate-900">
+                    {isLocating ? "Buscando sua localização..." : "Usar minha localização atual"}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Encontre eventos perto de você
+                  </p>
+                </div>
+              </button>
+
+              <div className="mt-4 max-h-[340px] overflow-y-auto rounded-2xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={chooseGeneralMode}
+                  className={`flex w-full items-center gap-3 border-b border-slate-200 px-4 py-4 text-left transition ${
+                    locationMode === "none" ? "bg-slate-100" : "hover:bg-slate-50"
+                  }`}
+                >
+                  <span className="text-sky-600">📍</span>
+                  <span className="text-base font-medium text-slate-800">
+                    Qualquer lugar
+                  </span>
+                </button>
+
+                {filteredCityOptions.length === 0 ? (
+                  <div className="px-4 py-6 text-sm text-slate-500">
+                    Nenhuma cidade encontrada.
+                  </div>
+                ) : (
+                  filteredCityOptions.map((option) => {
+                    const active =
+                      locationMode === "manual" &&
+                      normalizePlainText(manualCity) === normalizePlainText(option.city) &&
+                      normalizePlainText(manualState) === normalizePlainText(option.state);
+
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => chooseManualLocation(option.city, option.state)}
+                        className={`flex w-full items-center gap-3 border-b border-slate-200 px-4 py-4 text-left transition last:border-b-0 ${
+                          active ? "bg-slate-100" : "hover:bg-slate-50"
+                        }`}
+                      >
+                        <span className="text-sky-600">📍</span>
+                        <span className="text-base font-medium text-slate-800">
+                          {option.label}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {locationError ? (
+                <p className="mt-4 text-sm leading-6 text-rose-600">
+                  {locationError}
+                </p>
+              ) : null}
+            </div>
           </div>
         </div>
-      </section>
-    </main>
+      ) : null}
+    </>
   );
 }
