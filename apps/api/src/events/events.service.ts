@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventCollection } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -14,6 +15,62 @@ export class EventsService {
   private normalizeString(value?: string | null) {
     const normalized = value?.trim();
     return normalized ? normalized : undefined;
+  }
+
+  private normalizeEventCollection(
+    value?: string | null,
+  ): EventCollection | undefined {
+    const normalized = this.normalizeString(value);
+
+    if (!normalized) return undefined;
+
+    const key = normalized
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/&/g, 'E')
+      .replace(/\//g, '_')
+      .replace(/-/g, '_')
+      .replace(/\s+/g, '_')
+      .toUpperCase();
+
+    const directMatch = EventCollection[key as keyof typeof EventCollection];
+    if (directMatch) {
+      return directMatch;
+    }
+
+    const aliases: Record<string, EventCollection> = {
+      FESTAS_E_SHOWS: EventCollection.FESTAS_SHOWS,
+      FESTAS_SHOWS: EventCollection.FESTAS_SHOWS,
+      SHOWS: EventCollection.FESTAS_SHOWS,
+
+      TEATRO: EventCollection.TEATROS_ESPETACULOS,
+      TEATROS: EventCollection.TEATROS_ESPETACULOS,
+      TEATRO_E_ESPETACULOS: EventCollection.TEATROS_ESPETACULOS,
+      TEATROS_E_ESPETACULOS: EventCollection.TEATROS_ESPETACULOS,
+      ESPETACULOS: EventCollection.TEATROS_ESPETACULOS,
+
+      STAND_UP: EventCollection.STAND_UP_COMEDY,
+      COMEDY: EventCollection.STAND_UP_COMEDY,
+      STAND_UP_COMEDY: EventCollection.STAND_UP_COMEDY,
+
+      ESPORTE: EventCollection.ESPORTES,
+      ESPORTES: EventCollection.ESPORTES,
+
+      PASSEIO: EventCollection.PASSEIOS_TOURS,
+      PASSEIOS: EventCollection.PASSEIOS_TOURS,
+      TOUR: EventCollection.PASSEIOS_TOURS,
+      TOURS: EventCollection.PASSEIOS_TOURS,
+      PASSEIOS_E_TOURS: EventCollection.PASSEIOS_TOURS,
+
+      CONGRESSO: EventCollection.CONGRESSOS,
+      CONGRESSOS: EventCollection.CONGRESSOS,
+
+      INFANTIL: EventCollection.INFANTIL,
+
+      GASTRONOMIA: EventCollection.GASTRONOMIA,
+    };
+
+    return aliases[key];
   }
 
   private hasContentData(data?: CreateEventDto['content']) {
@@ -270,7 +327,7 @@ export class EventsService {
 
         slug: this.normalizeString(data.slug),
         shortDescription: this.normalizeString(data.shortDescription),
-        category: this.normalizeString(data.category),
+        category: this.normalizeEventCollection(data.category),
         visibility: this.normalizeString(data.visibility),
         timezone: this.normalizeString(data.timezone),
         startDate: data.startDate ? new Date(data.startDate) : undefined,
@@ -401,7 +458,7 @@ export class EventsService {
 
         slug: this.normalizeString(data.slug),
         shortDescription: this.normalizeString(data.shortDescription),
-        category: this.normalizeString(data.category),
+        category: this.normalizeEventCollection(data.category),
         visibility: this.normalizeString(data.visibility),
         timezone: this.normalizeString(data.timezone),
         startDate: data.startDate ? new Date(data.startDate) : undefined,

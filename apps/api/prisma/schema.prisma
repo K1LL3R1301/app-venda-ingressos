@@ -213,6 +213,7 @@ model Order {
   customerCpf    String?
   status         String   @default("PENDING")
   totalAmount    Decimal  @db.Decimal(10, 2)
+  expiresAt      DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -228,6 +229,8 @@ model Order {
   @@index([customerUserId])
   @@index([customerEmail])
   @@index([customerCpf])
+  @@index([status])
+  @@index([expiresAt])
 }
 
 model OrderItem {
@@ -248,17 +251,19 @@ model OrderItem {
 }
 
 model Ticket {
-  id                 String    @id @default(uuid())
-  orderItemId        String
-  currentOwnerUserId String?
-  code               String    @unique
-  status             String    @default("AVAILABLE")
-  holderName         String?
-  holderEmail        String?
-  holderCpf          String?
-  usedAt             DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id                          String    @id @default(uuid())
+  orderItemId                 String
+  currentOwnerUserId          String?
+  receivedViaTransferRequestId String?
+  receivedViaTransferLocked   Boolean   @default(false)
+  code                        String    @unique
+  status                      String    @default("AVAILABLE")
+  holderName                  String?
+  holderEmail                 String?
+  holderCpf                   String?
+  usedAt                      DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
   orderItem        OrderItem               @relation(fields: [orderItemId], references: [id])
   currentOwnerUser User?                   @relation("TicketCurrentOwner", fields: [currentOwnerUserId], references: [id])
@@ -270,15 +275,19 @@ model Ticket {
   @@index([currentOwnerUserId])
   @@index([holderEmail])
   @@index([holderCpf])
+  @@index([receivedViaTransferRequestId])
+  @@index([receivedViaTransferLocked])
 }
 
 model TicketTransferRequest {
-  id                String @id @default(uuid())
-  ticketId          String
-  orderId           String
-  requestedByUserId String
-  fromUserId        String
-  toUserId          String
+  id                        String   @id @default(uuid())
+  ticketId                  String
+  orderId                   String
+  requestedByUserId         String
+  fromUserId                String
+  toUserId                  String
+  mode                      String   @default("FORWARD")
+  returnOfTransferRequestId String?
 
   requestedByName  String?
   requestedByEmail String?
@@ -312,6 +321,9 @@ model TicketTransferRequest {
   @@index([status])
   @@index([requestedAt])
   @@index([respondedAt])
+  @@index([mode])
+  @@index([returnOfTransferRequestId])
+  @@index([expiresAt])
 }
 
 model Checkin {

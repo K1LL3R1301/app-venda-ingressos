@@ -101,6 +101,27 @@ export class TicketsService {
     return normalized || null;
   }
 
+  private getTransferMode(mode?: string | null) {
+    return mode === 'RETURN' ? 'RETURN' : 'FORWARD';
+  }
+
+  private getTransferAcceptanceExpiresAt() {
+    return new Date(Date.now() + 24 * 60 * 60 * 1000);
+  }
+
+  private isExpiredTransfer(transferRequest: {
+    status?: string | null;
+    expiresAt?: Date | string | null;
+  }) {
+    if (transferRequest.status !== 'PENDING_ACCEPTANCE') return false;
+    if (!transferRequest.expiresAt) return false;
+
+    const expiresAt = new Date(transferRequest.expiresAt).getTime();
+    if (Number.isNaN(expiresAt)) return false;
+
+    return expiresAt < Date.now();
+  }
+
   private async findUserByCpfOrEmail(params: {
     cpf?: string | null;
     email?: string | null;
@@ -185,6 +206,182 @@ export class TicketsService {
     }
   }
 
+  private async getOriginTransferForLockedTicket(ticket: {
+    receivedViaTransferLocked?: boolean | null;
+    receivedViaTransferRequestId?: string | null;
+  }) {
+    if (!ticket.receivedViaTransferLocked) {
+      return null;
+    }
+
+    if (!ticket.receivedViaTransferRequestId) {
+      throw new BadRequestException(
+        'Este ingresso está travado para devolução, mas não possui vínculo de transferência de origem',
+      );
+    }
+
+    const originTransfer = await this.prisma.ticketTransferRequest.findUnique({
+      where: { id: ticket.receivedViaTransferRequestId },
+      include: {
+        requestedByUser: true,
+        fromUser: true,
+        toUser: true,
+        order: {
+          include: {
+            event: true,
+            customerUser: true,
+          },
+        },
+        ticket: true,
+      },
+    });
+
+    if (!originTransfer) {
+      throw new NotFoundException(
+        'Transferência de origem não encontrada para este ingresso',
+      );
+    }
+
+    return originTransfer;
+  }
+
+  private buildLockedReturnFallbackData(originTransfer: {
+    id: string;
+    fromName?: string | null;
+    fromEmail?: string | null;
+    fromCpf?: string | null;
+    fromUser?: {
+      name?: string | null;
+      email?: string | null;
+      cpfNormalized?: string | null;
+    } | null;
+    ticket: {
+      holderName?: string | null;
+      holderEmail?: string | null;
+      holderCpf?: string | null;
+    };
+  }) {
+    return {
+      holderName:
+        originTransfer.fromName ||
+        originTransfer.fromUser?.name ||
+        originTransfer.ticket.holderName ||
+        null,
+      holderEmail:
+        originTransfer.fromEmail ||
+        originTransfer.fromUser?.email ||
+        originTransfer.ticket.holderEmail ||
+        null,
+      holderCpf:
+        originTransfer.fromCpf ||
+        originTransfer.fromUser?.cpfNormalized ||
+        originTransfer.ticket.holderCpf ||
+        null,
+      receivedViaTransferRequestId: originTransfer.id,
+      receivedViaTransferLocked: true,
+    };
+  }
+
+  private async restoreTicketFromTransfer(
+    tx: Parameters<Parameters<typeof this.prisma.$transaction>[0]>[0],
+    transferRequest: Awaited<ReturnType<TicketsService['getTransferRequestWithRelations']>>,
+  ) {
+    const transferMode = this.getTransferMode(transferRequest.mode);
+
+    const lockedReturnData =
+      transferMode === 'RETURN' && transferRequest.returnOfTransferRequestId
+        ? this.buildLockedReturnFallbackData({
+            id: transferRequest.returnOfTransferRequestId,
+            fromName: transferRequest.fromName,
+            fromEmail: transferRequest.fromEmail,
+            fromCpf: transferRequest.fromCpf,
+            fromUser: transferRequest.fromUser,
+            ticket: transferRequest.ticket,
+          })
+        : null;
+
+    await tx.ticket.update({
+      where: { id: transferRequest.ticketId },
+      data: {
+        currentOwnerUserId: transferRequest.fromUserId,
+        holderName:
+          transferMode === 'RETURN'
+            ? lockedReturnData?.holderName || null
+            : transferRequest.fromName ||
+              transferRequest.fromUser?.name ||
+              transferRequest.ticket.holderName ||
+              null,
+        holderEmail:
+          transferMode === 'RETURN'
+            ? lockedReturnData?.holderEmail || null
+            : transferRequest.fromEmail ||
+              transferRequest.fromUser?.email ||
+              transferRequest.ticket.holderEmail ||
+              null,
+        holderCpf:
+          transferMode === 'RETURN'
+            ? lockedReturnData?.holderCpf || null
+            : transferRequest.fromCpf ||
+              transferRequest.fromUser?.cpfNormalized ||
+              transferRequest.ticket.holderCpf ||
+              null,
+        status: 'AVAILABLE',
+        receivedViaTransferRequestId:
+          transferMode === 'RETURN'
+            ? lockedReturnData?.receivedViaTransferRequestId || null
+            : null,
+        receivedViaTransferLocked:
+          transferMode === 'RETURN'
+            ? lockedReturnData?.receivedViaTransferLocked || false
+            : false,
+      },
+    });
+  }
+
+  private async expireTransferIfNeeded(
+    transferRequest: Awaited<ReturnType<TicketsService['getTransferRequestWithRelations']>>,
+  ) {
+    if (!this.isExpiredTransfer(transferRequest)) {
+      return transferRequest;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.restoreTicketFromTransfer(tx, transferRequest);
+
+      await tx.ticketTransferRequest.update({
+        where: { id: transferRequest.id },
+        data: {
+          status: 'CANCELED',
+          respondedAt: new Date(),
+          responseReason: 'Prazo de aceite expirado automaticamente',
+        },
+      });
+    });
+
+    return this.getTransferRequestWithRelations(transferRequest.id);
+  }
+
+  private async expirePendingTransfersForUser(userId: string) {
+    const expiredTransfers = await this.prisma.ticketTransferRequest.findMany({
+      where: {
+        status: 'PENDING_ACCEPTANCE',
+        expiresAt: {
+          lt: new Date(),
+        },
+        OR: [
+          { toUserId: userId },
+          { fromUserId: userId },
+          { requestedByUserId: userId },
+        ],
+      },
+      include: this.transferRequestInclude,
+    });
+
+    for (const transferRequest of expiredTransfers) {
+      await this.expireTransferIfNeeded(transferRequest);
+    }
+  }
+
   async findAll() {
     return this.prisma.ticket.findMany({
       include: this.ticketInclude,
@@ -212,6 +409,8 @@ export class TicketsService {
   }
 
   async findCustomerTickets(userId: string) {
+    await this.expirePendingTransfersForUser(userId);
+
     return this.prisma.ticket.findMany({
       where: {
         OR: [
@@ -223,6 +422,7 @@ export class TicketsService {
               some: {
                 toUserId: userId,
                 status: 'PENDING_ACCEPTANCE',
+                OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
               },
             },
           },
@@ -236,10 +436,13 @@ export class TicketsService {
   }
 
   async findIncomingTransferRequests(userId: string) {
+    await this.expirePendingTransfersForUser(userId);
+
     return this.prisma.ticketTransferRequest.findMany({
       where: {
         toUserId: userId,
         status: 'PENDING_ACCEPTANCE',
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
       include: this.transferRequestInclude,
       orderBy: {
@@ -249,6 +452,8 @@ export class TicketsService {
   }
 
   async findOutgoingTransferRequests(userId: string) {
+    await this.expirePendingTransfersForUser(userId);
+
     return this.prisma.ticketTransferRequest.findMany({
       where: {
         OR: [
@@ -268,7 +473,7 @@ export class TicketsService {
   }
 
   async findTransferRequestById(transferRequestId: string, userId?: string) {
-    const transferRequest = await this.getTransferRequestWithRelations(
+    let transferRequest = await this.getTransferRequestWithRelations(
       transferRequestId,
     );
 
@@ -287,6 +492,7 @@ export class TicketsService {
       }
     }
 
+    transferRequest = await this.expireTransferIfNeeded(transferRequest);
     return transferRequest;
   }
 
@@ -300,10 +506,6 @@ export class TicketsService {
   ) {
     const normalizedCpf = this.normalizeCpf(body?.targetCpf);
     const normalizedEmail = this.normalizeEmail(body?.targetEmail);
-
-    if (!normalizedCpf && !normalizedEmail) {
-      throw new BadRequestException('Informe o CPF do destinatário');
-    }
 
     const ticket = await this.getTicketWithRelations(ticketId);
 
@@ -349,6 +551,107 @@ export class TicketsService {
       throw new NotFoundException('Usuário remetente não encontrado');
     }
 
+    const originTransfer = await this.getOriginTransferForLockedTicket(ticket);
+    const isReturnOnlyTicket = !!originTransfer;
+
+    if (isReturnOnlyTicket) {
+      const originTargetCpf =
+        originTransfer.fromUser?.cpfNormalized ||
+        this.normalizeCpf(originTransfer.fromCpf);
+      const originTargetEmail =
+        originTransfer.fromUser?.email ||
+        this.normalizeEmail(originTransfer.fromEmail);
+
+      if (
+        normalizedCpf &&
+        originTargetCpf &&
+        normalizedCpf !== originTargetCpf
+      ) {
+        throw new BadRequestException(
+          'Este ingresso só pode ser devolvido para quem enviou originalmente',
+        );
+      }
+
+      if (
+        normalizedEmail &&
+        originTargetEmail &&
+        normalizedEmail !== originTargetEmail
+      ) {
+        throw new BadRequestException(
+          'Este ingresso só pode ser devolvido para quem enviou originalmente',
+        );
+      }
+
+      const returnTransfer = await this.prisma.$transaction(async (tx) => {
+        await tx.ticket.update({
+          where: { id: ticket.id },
+          data: {
+            currentOwnerUserId: originTransfer.fromUserId,
+            holderName:
+              originTransfer.fromName ||
+              originTransfer.fromUser?.name ||
+              ticket.holderName ||
+              null,
+            holderEmail:
+              originTransfer.fromEmail ||
+              originTransfer.fromUser?.email ||
+              ticket.holderEmail ||
+              null,
+            holderCpf:
+              originTransfer.fromCpf ||
+              originTransfer.fromUser?.cpfNormalized ||
+              ticket.holderCpf ||
+              null,
+            status: 'AVAILABLE',
+            receivedViaTransferRequestId: null,
+            receivedViaTransferLocked: false,
+          },
+        });
+
+        return tx.ticketTransferRequest.create({
+          data: {
+            ticketId: ticket.id,
+            orderId: ticket.orderItem.order.id,
+            requestedByUserId: currentOwner.id,
+            fromUserId: currentOwner.id,
+            toUserId: originTransfer.fromUserId,
+            mode: 'RETURN',
+            returnOfTransferRequestId: originTransfer.id,
+            requestedByName: currentOwner.name || null,
+            requestedByEmail: currentOwner.email || null,
+            requestedByCpf: currentOwner.cpfNormalized || null,
+            fromName: currentOwner.name || null,
+            fromEmail: currentOwner.email || null,
+            fromCpf: currentOwner.cpfNormalized || null,
+            toName:
+              originTransfer.fromName ||
+              originTransfer.fromUser?.name ||
+              null,
+            toEmail:
+              originTransfer.fromEmail ||
+              originTransfer.fromUser?.email ||
+              null,
+            toCpf:
+              originTransfer.fromCpf ||
+              originTransfer.fromUser?.cpfNormalized ||
+              null,
+            status: 'RETURNED',
+            requestedAt: new Date(),
+            respondedAt: new Date(),
+            expiresAt: null,
+            responseReason:
+              'Ingresso devolvido automaticamente ao remetente original',
+          },
+        });
+      });
+
+      return this.findTransferRequestById(returnTransfer.id, userId);
+    }
+
+    if (!normalizedCpf && !normalizedEmail) {
+      throw new BadRequestException('Informe o CPF do destinatário');
+    }
+
     const targetUser = await this.findUserByCpfOrEmail({
       cpf: normalizedCpf,
       email: normalizedEmail,
@@ -366,6 +669,8 @@ export class TicketsService {
       );
     }
 
+    const transferExpiresAt = this.getTransferAcceptanceExpiresAt();
+
     const transferRequest = await this.prisma.$transaction(async (tx) => {
       await tx.ticket.update({
         where: { id: ticket.id },
@@ -381,6 +686,8 @@ export class TicketsService {
           requestedByUserId: currentOwner.id,
           fromUserId: currentOwner.id,
           toUserId: targetUser.id,
+          mode: 'FORWARD',
+          returnOfTransferRequestId: null,
           requestedByName: currentOwner.name || null,
           requestedByEmail: currentOwner.email || null,
           requestedByCpf: currentOwner.cpfNormalized || null,
@@ -391,6 +698,7 @@ export class TicketsService {
           toEmail: targetUser.email || null,
           toCpf: targetUser.cpfNormalized || null,
           status: 'PENDING_ACCEPTANCE',
+          expiresAt: transferExpiresAt,
         },
       });
     });
@@ -399,7 +707,7 @@ export class TicketsService {
   }
 
   async acceptTransferRequest(transferRequestId: string, userId: string) {
-    const transferRequest = await this.getTransferRequestWithRelations(
+    let transferRequest = await this.getTransferRequestWithRelations(
       transferRequestId,
     );
 
@@ -408,6 +716,8 @@ export class TicketsService {
         'Você não tem permissão para aceitar esta transferência',
       );
     }
+
+    transferRequest = await this.expireTransferIfNeeded(transferRequest);
 
     if (transferRequest.status !== 'PENDING_ACCEPTANCE') {
       throw new BadRequestException(
@@ -428,6 +738,8 @@ export class TicketsService {
     }
 
     await this.ensureNoActiveTransfer(transferRequest.ticketId, transferRequest.id);
+
+    const transferMode = this.getTransferMode(transferRequest.mode);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.ticket.update({
@@ -450,6 +762,9 @@ export class TicketsService {
             transferRequest.ticket.holderCpf ||
             null,
           status: 'AVAILABLE',
+          receivedViaTransferRequestId:
+            transferMode === 'RETURN' ? null : transferRequest.id,
+          receivedViaTransferLocked: transferMode === 'RETURN' ? false : true,
         },
       });
 
@@ -458,6 +773,7 @@ export class TicketsService {
         data: {
           status: 'ACCEPTED',
           respondedAt: new Date(),
+          expiresAt: null,
           responseReason: null,
         },
       });
@@ -488,7 +804,7 @@ export class TicketsService {
     userId: string,
     reason?: string,
   ) {
-    const transferRequest = await this.getTransferRequestWithRelations(
+    let transferRequest = await this.getTransferRequestWithRelations(
       transferRequestId,
     );
 
@@ -498,6 +814,8 @@ export class TicketsService {
       );
     }
 
+    transferRequest = await this.expireTransferIfNeeded(transferRequest);
+
     if (transferRequest.status !== 'PENDING_ACCEPTANCE') {
       throw new BadRequestException(
         'Esta transferência não está aguardando resposta',
@@ -505,34 +823,14 @@ export class TicketsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.ticket.update({
-        where: { id: transferRequest.ticketId },
-        data: {
-          currentOwnerUserId: transferRequest.fromUserId,
-          holderName:
-            transferRequest.fromName ||
-            transferRequest.fromUser?.name ||
-            transferRequest.ticket.holderName ||
-            null,
-          holderEmail:
-            transferRequest.fromEmail ||
-            transferRequest.fromUser?.email ||
-            transferRequest.ticket.holderEmail ||
-            null,
-          holderCpf:
-            transferRequest.fromCpf ||
-            transferRequest.fromUser?.cpfNormalized ||
-            transferRequest.ticket.holderCpf ||
-            null,
-          status: 'AVAILABLE',
-        },
-      });
+      await this.restoreTicketFromTransfer(tx, transferRequest);
 
       await tx.ticketTransferRequest.update({
         where: { id: transferRequest.id },
         data: {
           status: 'REJECTED',
           respondedAt: new Date(),
+          expiresAt: null,
           responseReason: reason?.trim() || 'Transferência recusada',
         },
       });
@@ -542,7 +840,7 @@ export class TicketsService {
   }
 
   async cancelTransferRequest(transferRequestId: string, userId: string) {
-    const transferRequest = await this.getTransferRequestWithRelations(
+    let transferRequest = await this.getTransferRequestWithRelations(
       transferRequestId,
     );
 
@@ -556,6 +854,8 @@ export class TicketsService {
       );
     }
 
+    transferRequest = await this.expireTransferIfNeeded(transferRequest);
+
     if (
       transferRequest.status !== 'PENDING_PAYMENT' &&
       transferRequest.status !== 'PENDING_ACCEPTANCE'
@@ -566,34 +866,14 @@ export class TicketsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.ticket.update({
-        where: { id: transferRequest.ticketId },
-        data: {
-          currentOwnerUserId: transferRequest.fromUserId,
-          holderName:
-            transferRequest.fromName ||
-            transferRequest.fromUser?.name ||
-            transferRequest.ticket.holderName ||
-            null,
-          holderEmail:
-            transferRequest.fromEmail ||
-            transferRequest.fromUser?.email ||
-            transferRequest.ticket.holderEmail ||
-            null,
-          holderCpf:
-            transferRequest.fromCpf ||
-            transferRequest.fromUser?.cpfNormalized ||
-            transferRequest.ticket.holderCpf ||
-            null,
-          status: 'AVAILABLE',
-        },
-      });
+      await this.restoreTicketFromTransfer(tx, transferRequest);
 
       await tx.ticketTransferRequest.update({
         where: { id: transferRequest.id },
         data: {
           status: 'CANCELED',
           respondedAt: new Date(),
+          expiresAt: null,
           responseReason: 'Transferência cancelada pelo solicitante',
         },
       });

@@ -59,6 +59,51 @@ export class OrdersService {
     return normalized || null;
   }
 
+  private getPendingOrderExpiresAt() {
+    return new Date(Date.now() + 10 * 60 * 1000);
+  }
+
+  private getTransferAcceptanceExpiresAt() {
+    return new Date(Date.now() + 24 * 60 * 60 * 1000);
+  }
+
+  private countRequestedTickets(data: CreateOrderDto) {
+    return data.items.reduce((sum, item) => sum + item.quantity, 0);
+  }
+
+  private ensureCustomerPurchaseRules(params: {
+    totalRequestedTickets: number;
+    buyerTicketsCount: number;
+    otherTicketsCount: number;
+  }) {
+    const { totalRequestedTickets, buyerTicketsCount, otherTicketsCount } =
+      params;
+
+    if (totalRequestedTickets > 4) {
+      throw new BadRequestException(
+        'Cada compra pode ter no máximo 4 ingressos',
+      );
+    }
+
+    if (buyerTicketsCount > 2) {
+      throw new BadRequestException(
+        'No máximo 2 ingressos podem ficar no CPF do comprador',
+      );
+    }
+
+    if (otherTicketsCount > 2) {
+      throw new BadRequestException(
+        'No máximo 2 ingressos podem ser destinados a outros CPFs',
+      );
+    }
+
+    if (totalRequestedTickets > 0 && buyerTicketsCount === 0) {
+      throw new BadRequestException(
+        'Pelo menos 1 ingresso deve permanecer no CPF do comprador',
+      );
+    }
+  }
+
   private getCancellationConfig(mode?: string) {
     const normalizedMode = mode === 'WALLET_80' ? 'WALLET_80' : 'REFUND_70';
 
@@ -72,6 +117,29 @@ export class OrdersService {
       cancellationStatus:
         normalizedMode === 'WALLET_80' ? 'CREDITED' : 'REFUND_REQUESTED',
     };
+  }
+
+  private isOrderExpired(order: {
+    status?: string | null;
+    expiresAt?: Date | string | null;
+  }) {
+    const status = String(order.status || '').toUpperCase();
+
+    if (status !== 'PENDING' && status !== 'PENDING_PAYMENT') {
+      return false;
+    }
+
+    if (!order.expiresAt) {
+      return false;
+    }
+
+    const expiresAt = new Date(order.expiresAt).getTime();
+
+    if (Number.isNaN(expiresAt)) {
+      return false;
+    }
+
+    return expiresAt < Date.now();
   }
 
   private async findUserByCpfOrEmail(
@@ -105,6 +173,35 @@ export class OrdersService {
     }
 
     return null;
+  }
+
+  private async resolveOrderOwnerUserId(
+    params: {
+      customerUserId?: string | null;
+      customerEmail?: string | null;
+      customerCpf?: string | null;
+    },
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    if (params.customerUserId) {
+      return params.customerUserId;
+    }
+
+    const user = await this.findUserByCpfOrEmail(
+      {
+        cpf: params.customerCpf,
+        email: params.customerEmail,
+      },
+      db,
+    );
+
+    if (!user) {
+      throw new BadRequestException(
+        'Não foi possível identificar o usuário responsável por este pedido',
+      );
+    }
+
+    return user.id;
   }
 
   private async prepareOrderItems(data: CreateOrderDto) {
@@ -238,6 +335,11 @@ export class OrdersService {
       purchaserUser?.cpfNormalized || this.normalizeCpf(data.customerCpf);
     const defaultOwnerUserId = purchaserUser?.id || null;
 
+    const totalRequestedTickets = this.countRequestedTickets(data);
+
+    let buyerTicketsCount = 0;
+    let otherTicketsCount = 0;
+
     const ticketsByItem: BuiltTicketCreate[][] = [];
 
     for (const item of data.items) {
@@ -261,17 +363,33 @@ export class OrdersService {
           );
         }
 
-        if (holderCpf && !targetUser) {
+        if (holderCpf && !targetUser && holderCpf !== defaultHolderCpf) {
           throw new BadRequestException(
             `O titular com CPF ${holderCpf} precisa possuir conta cadastrada para receber o ingresso`,
           );
         }
 
-        const ticketCode = crypto.randomUUID();
         const isTransferToAnotherUser =
           !!targetUser &&
           !!defaultOwnerUserId &&
           targetUser.id !== defaultOwnerUserId;
+
+        const isAnotherCpfWithoutResolvedUser =
+          !!holderCpf &&
+          !!defaultHolderCpf &&
+          holderCpf !== defaultHolderCpf &&
+          !targetUser;
+
+        const isAssignedToOtherPerson =
+          isTransferToAnotherUser || isAnotherCpfWithoutResolvedUser;
+
+        if (isAssignedToOtherPerson) {
+          otherTicketsCount += 1;
+        } else {
+          buyerTicketsCount += 1;
+        }
+
+        const ticketCode = crypto.randomUUID();
 
         if (isTransferToAnotherUser && !purchaserUser) {
           throw new BadRequestException(
@@ -283,10 +401,7 @@ export class OrdersService {
           code: ticketCode,
           currentOwnerUserId: defaultOwnerUserId,
           holderName:
-            targetUser?.name ||
-            holderName ||
-            defaultHolderName ||
-            null,
+            targetUser?.name || holderName || defaultHolderName || null,
           holderEmail:
             targetUser?.email || holderEmail || defaultHolderEmail || null,
           holderCpf:
@@ -317,6 +432,12 @@ export class OrdersService {
       ticketsByItem.push(itemTickets);
     }
 
+    this.ensureCustomerPurchaseRules({
+      totalRequestedTickets,
+      buyerTicketsCount,
+      otherTicketsCount,
+    });
+
     return {
       purchaserUser,
       ticketsByItem,
@@ -327,6 +448,7 @@ export class OrdersService {
     orderId: string,
     ticketPlans: BuiltTicketCreate[][],
     db: Prisma.TransactionClient,
+    pendingPaymentExpiresAt?: Date | null,
   ) {
     const tickets = ticketPlans.flat();
     const transferPlansByCode = new Map(
@@ -379,6 +501,7 @@ export class OrdersService {
             toEmail: transferPlan.toEmail,
             toCpf: transferPlan.toCpf,
             status: 'PENDING_PAYMENT',
+            expiresAt: pendingPaymentExpiresAt || null,
           },
         });
       }
@@ -404,6 +527,8 @@ export class OrdersService {
       return;
     }
 
+    const acceptanceExpiresAt = this.getTransferAcceptanceExpiresAt();
+
     await db.ticketTransferRequest.updateMany({
       where: {
         id: {
@@ -412,6 +537,7 @@ export class OrdersService {
       },
       data: {
         status: 'PENDING_ACCEPTANCE',
+        expiresAt: acceptanceExpiresAt,
       },
     });
 
@@ -425,6 +551,143 @@ export class OrdersService {
         status: 'TRANSFER_PENDING',
       },
     });
+  }
+
+  private async expireOrderNow(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: {
+          include: {
+            tickets: true,
+          },
+        },
+        payments: true,
+      },
+    });
+
+    if (!order || !this.isOrderExpired(order)) {
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const freshOrder = await tx.order.findUnique({
+        where: { id: orderId },
+        include: {
+          items: {
+            include: {
+              tickets: true,
+            },
+          },
+          payments: true,
+        },
+      });
+
+      if (!freshOrder || !this.isOrderExpired(freshOrder)) {
+        return;
+      }
+
+      for (const item of freshOrder.items) {
+        const restockableTickets = item.tickets.filter(
+          (ticket) => ticket.status !== 'CANCELED',
+        );
+
+        if (restockableTickets.length > 0) {
+          await tx.ticket.updateMany({
+            where: {
+              id: {
+                in: restockableTickets.map((ticket) => ticket.id),
+              },
+            },
+            data: {
+              status: 'CANCELED',
+            },
+          });
+
+          await tx.ticketType.update({
+            where: { id: item.ticketTypeId },
+            data: {
+              quantity: {
+                increment: restockableTickets.length,
+              },
+            },
+          });
+        }
+      }
+
+      await tx.ticketTransferRequest.updateMany({
+        where: {
+          orderId: freshOrder.id,
+          status: {
+            in: ['PENDING_PAYMENT', 'PENDING_ACCEPTANCE'],
+          },
+        },
+        data: {
+          status: 'CANCELED',
+          respondedAt: new Date(),
+          responseReason: 'Pedido expirado automaticamente',
+        },
+      });
+
+      if (freshOrder.customerUserId) {
+        const walletDebits = await tx.walletTransaction.findMany({
+          where: {
+            userId: freshOrder.customerUserId,
+            type: 'DEBIT',
+            source: 'ORDER_PAYMENT',
+            sourceId: freshOrder.id,
+          },
+        });
+
+        const refundedAmount = walletDebits.reduce(
+          (sum, transaction) => sum.add(transaction.amount),
+          new Prisma.Decimal(0),
+        );
+
+        if (refundedAmount.gt(0)) {
+          await tx.walletTransaction.create({
+            data: {
+              userId: freshOrder.customerUserId,
+              type: 'CREDIT',
+              source: 'ORDER_EXPIRATION',
+              sourceId: freshOrder.id,
+              amount: refundedAmount,
+              description: `Crédito automático por expiração do pedido ${freshOrder.id}`,
+            },
+          });
+        }
+      }
+
+      await tx.order.update({
+        where: { id: freshOrder.id },
+        data: {
+          status: 'CANCELED',
+          totalAmount: new Prisma.Decimal(0),
+          expiresAt: null,
+        },
+      });
+    });
+  }
+
+  private async expirePendingOrders(where?: Prisma.OrderWhereInput) {
+    const expiredOrders = await this.prisma.order.findMany({
+      where: {
+        status: {
+          in: ['PENDING', 'PENDING_PAYMENT'],
+        },
+        expiresAt: {
+          lt: new Date(),
+        },
+        ...(where || {}),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    for (const order of expiredOrders) {
+      await this.expireOrderNow(order.id);
+    }
   }
 
   async create(data: CreateOrderDto) {
@@ -443,6 +706,7 @@ export class OrdersService {
     };
 
     const { itemsData, totalAmount } = await this.prepareOrderItems(mergedData);
+    const pendingExpiresAt = this.getPendingOrderExpiresAt();
 
     return this.prisma.$transaction(async (tx) => {
       const { purchaserUser, ticketsByItem } = await this.buildTicketCreates(
@@ -461,6 +725,7 @@ export class OrdersService {
             purchaserUser?.cpfNormalized || normalizedCustomerCpf || null,
           totalAmount,
           status: 'PENDING',
+          expiresAt: pendingExpiresAt,
           items: {
             create: itemsData.map((item, index) => ({
               ticketTypeId: item.ticketTypeId,
@@ -494,7 +759,12 @@ export class OrdersService {
         });
       }
 
-      await this.createTransferRequestsForOrder(order.id, ticketsByItem, tx);
+      await this.createTransferRequestsForOrder(
+        order.id,
+        ticketsByItem,
+        tx,
+        pendingExpiresAt,
+      );
 
       return tx.order.findUnique({
         where: { id: order.id },
@@ -540,6 +810,8 @@ export class OrdersService {
 
     const remainingAmount = totalAmount.sub(walletAppliedAmount);
     const orderStatus = remainingAmount.lte(0) ? 'PAID' : 'PENDING';
+    const pendingExpiresAt =
+      orderStatus === 'PAID' ? null : this.getPendingOrderExpiresAt();
 
     return this.prisma.$transaction(async (tx) => {
       const { ticketsByItem } = await this.buildTicketCreates(
@@ -557,6 +829,7 @@ export class OrdersService {
           customerCpf: purchaserUser.cpfNormalized || null,
           totalAmount,
           status: orderStatus,
+          expiresAt: pendingExpiresAt,
           items: {
             create: itemsData.map((item, index) => ({
               ticketTypeId: item.ticketTypeId,
@@ -590,7 +863,12 @@ export class OrdersService {
         });
       }
 
-      await this.createTransferRequestsForOrder(order.id, ticketsByItem, tx);
+      await this.createTransferRequestsForOrder(
+        order.id,
+        ticketsByItem,
+        tx,
+        pendingExpiresAt,
+      );
 
       if (walletAppliedAmount.gt(0)) {
         await tx.walletTransaction.create({
@@ -633,6 +911,8 @@ export class OrdersService {
   }
 
   async findAll() {
+    await this.expirePendingOrders();
+
     return this.prisma.order.findMany({
       include: this.orderInclude,
       orderBy: {
@@ -642,6 +922,8 @@ export class OrdersService {
   }
 
   async findById(id: string) {
+    await this.expireOrderNow(id);
+
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: this.orderInclude,
@@ -663,6 +945,8 @@ export class OrdersService {
       throw new NotFoundException('Evento não encontrado');
     }
 
+    await this.expirePendingOrders({ eventId });
+
     return this.prisma.order.findMany({
       where: { eventId },
       include: this.orderInclude,
@@ -673,6 +957,8 @@ export class OrdersService {
   }
 
   async findCustomerOrders(customerEmail: string) {
+    await this.expirePendingOrders({ customerEmail });
+
     return this.prisma.order.findMany({
       where: {
         customerEmail,
@@ -685,6 +971,8 @@ export class OrdersService {
   }
 
   async findCustomerOrderById(orderId: string, customerEmail: string) {
+    await this.expireOrderNow(orderId);
+
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: this.orderInclude,
@@ -817,6 +1105,7 @@ export class OrdersService {
           data: {
             totalAmount: safeTotalAmount,
             status: remainingTickets === 0 ? 'CANCELED' : 'PENDING',
+            expiresAt: remainingTickets === 0 ? null : order.expiresAt,
           },
         });
 
@@ -908,6 +1197,7 @@ export class OrdersService {
           where: { id: order.id },
           data: {
             status: 'CANCELED',
+            expiresAt: null,
           },
         });
       }
@@ -1031,6 +1321,7 @@ export class OrdersService {
           data: {
             status: 'CANCELED',
             totalAmount: new Prisma.Decimal(0),
+            expiresAt: null,
           },
         });
 
@@ -1125,6 +1416,8 @@ export class OrdersService {
         where: { id: order.id },
         data: {
           status: 'CANCELED',
+          totalAmount: new Prisma.Decimal(0),
+          expiresAt: null,
         },
       });
 
@@ -1149,9 +1442,11 @@ export class OrdersService {
     });
   }
 
-  async cancel(orderId: string, _data?: CancelOrderDto) {
+  async cancel(id: string, body?: CancelOrderDto) {
+    await this.expireOrderNow(id);
+
     const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
+      where: { id },
       include: this.orderInclude,
     });
 
@@ -1159,77 +1454,17 @@ export class OrdersService {
       throw new NotFoundException('Pedido não encontrado');
     }
 
-    if (order.status === 'CANCELED') {
-      throw new BadRequestException('Pedido já está cancelado');
-    }
-
-    const usedTicket = order.items.some((item) =>
-      item.tickets.some((ticket) => ticket.status === 'USED'),
-    );
-
-    if (usedTicket) {
-      throw new BadRequestException(
-        'Não é possível cancelar um pedido com ingresso já utilizado',
-      );
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      for (const item of order.items) {
-        const ticketsToCancel = item.tickets.filter(
-          (ticket) => ticket.status !== 'CANCELED',
-        );
-
-        if (ticketsToCancel.length > 0) {
-          await tx.ticketType.update({
-            where: { id: item.ticketTypeId },
-            data: {
-              quantity: {
-                increment: ticketsToCancel.length,
-              },
-            },
-          });
-
-          await tx.ticket.updateMany({
-            where: {
-              id: {
-                in: ticketsToCancel.map((ticket) => ticket.id),
-              },
-            },
-            data: {
-              status: 'CANCELED',
-            },
-          });
-
-          await tx.ticketTransferRequest.updateMany({
-            where: {
-              ticketId: {
-                in: ticketsToCancel.map((ticket) => ticket.id),
-              },
-              status: {
-                in: ['PENDING_PAYMENT', 'PENDING_ACCEPTANCE'],
-              },
-            },
-            data: {
-              status: 'CANCELED',
-              respondedAt: new Date(),
-              responseReason: 'Pedido cancelado administrativamente',
-            },
-          });
-        }
-      }
-
-      const canceledOrder = await tx.order.update({
-        where: { id: orderId },
-        data: {
-          status: 'CANCELED',
-        },
-        include: this.orderInclude,
-      });
-
-      return {
-        message: 'Pedido cancelado com sucesso',
-        order: canceledOrder,
-      };
+    const actingUserId = await this.resolveOrderOwnerUserId({
+      customerUserId: order.customerUserId,
+      customerEmail: order.customerEmail,
+      customerCpf: order.customerCpf,
     });
+
+    return this.cancelCustomerOrder(
+      order.id,
+      actingUserId,
+      order.customerEmail,
+      body,
+    );
   }
 }

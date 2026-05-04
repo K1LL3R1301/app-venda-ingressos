@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useParams } from "next/navigation";
 
 type StoredUser = {
@@ -26,10 +32,13 @@ type TicketTransferRequest = {
   requestedByUserId?: string | null;
   fromUserId?: string | null;
   toUserId?: string | null;
+  mode?: string | null;
+  returnOfTransferRequestId?: string | null;
   status?: string;
   responseReason?: string | null;
   requestedAt?: string;
   respondedAt?: string | null;
+  expiresAt?: string | null;
   requestedByName?: string | null;
   requestedByEmail?: string | null;
   requestedByCpf?: string | null;
@@ -52,6 +61,8 @@ type TicketItem = {
   holderEmail?: string | null;
   holderCpf?: string | null;
   currentOwnerUserId?: string | null;
+  receivedViaTransferRequestId?: string | null;
+  receivedViaTransferLocked?: boolean | null;
   createdAt?: string;
   transferRequests?: TicketTransferRequest[];
 };
@@ -96,6 +107,7 @@ type OrderDetail = {
   totalAmount?: string | number;
   status?: string;
   createdAt?: string;
+  expiresAt?: string | null;
   event?: {
     id?: string;
     name?: string;
@@ -115,10 +127,13 @@ type TransferDetail = {
   requestedByUserId?: string | null;
   fromUserId?: string | null;
   toUserId?: string | null;
+  mode?: string | null;
+  returnOfTransferRequestId?: string | null;
   status?: string;
   responseReason?: string | null;
   requestedAt?: string;
   respondedAt?: string | null;
+  expiresAt?: string | null;
   requestedByName?: string | null;
   requestedByEmail?: string | null;
   requestedByCpf?: string | null;
@@ -152,6 +167,8 @@ type TransferDetail = {
     holderEmail?: string | null;
     holderCpf?: string | null;
     currentOwnerUserId?: string | null;
+    receivedViaTransferRequestId?: string | null;
+    receivedViaTransferLocked?: boolean | null;
     orderItem?: {
       id?: string;
       ticketType?: {
@@ -218,6 +235,40 @@ function formatCpf(value?: string | null) {
   )}-${digits.slice(9, 11)}`;
 }
 
+function formatCountdown(ms?: number | null) {
+  if (ms === null || ms === undefined) return "--:--";
+
+  const safeMs = Math.max(0, ms);
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(
+    2,
+    "0",
+  )}`;
+}
+
+function getCountdownTone(ms?: number | null) {
+  if (ms === null || ms === undefined) {
+    return "border-slate-200 bg-slate-50 text-slate-700";
+  }
+
+  if (ms <= 0) {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+
+  if (ms <= 2 * 60 * 1000) {
+    return "border-orange-200 bg-orange-50 text-orange-700";
+  }
+
+  if (ms <= 5 * 60 * 1000) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  return "border-emerald-200 bg-emerald-50 text-emerald-700";
+}
+
 function getStatusLabel(status?: string) {
   const normalized = (status || "").toUpperCase();
 
@@ -229,6 +280,8 @@ function getStatusLabel(status?: string) {
   if (normalized === "TRANSFER_PENDING") return "Transferência pendente";
   if (normalized === "PENDING_ACCEPTANCE") return "Aguardando aceite";
   if (normalized === "ACCEPTED") return "Aceita";
+  if (normalized === "RETURNED") return "Devolvido";
+  if (normalized === "UNAVAILABLE") return "Indisponível";
   if (normalized === "REJECTED") return "Recusada";
   if (normalized === "TRANSFERRED") return "Transferido";
   if (normalized === "USED") return "Utilizado";
@@ -262,6 +315,14 @@ function getStatusClasses(status?: string) {
 
   if (normalized === "PENDING_PAYMENT") {
     return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+
+  if (normalized === "RETURNED") {
+    return "border-violet-200 bg-violet-50 text-violet-700";
+  }
+
+  if (normalized === "UNAVAILABLE") {
+    return "border-slate-200 bg-slate-100 text-slate-700";
   }
 
   if (normalized === "TRANSFERRED" || normalized === "TRANSFERIDO") {
@@ -323,10 +384,14 @@ export default function CustomerOrderDetailPage() {
   const [transferSubmitting, setTransferSubmitting] = useState(false);
   const [transferSourceTicket, setTransferSourceTicket] =
     useState<TicketItem | null>(null);
+  const [returningTicket, setReturningTicket] = useState(false);
 
   const [transferActionLoading, setTransferActionLoading] = useState<
     "" | "ACCEPT" | "REJECT" | "CANCEL"
   >("");
+
+  const [timeLeftMs, setTimeLeftMs] = useState<number | null>(null);
+  const orderExpiredRefreshRef = useRef(false);
 
   const isTransferPage = rawRouteId.startsWith("transfer_");
   const entityId = isTransferPage ? rawRouteId.replace("transfer_", "") : rawRouteId;
@@ -339,6 +404,8 @@ export default function CustomerOrderDetailPage() {
     (order?.status === "PENDING" || order?.status === "PENDING_PAYMENT");
 
   const isPaidOrder = !isTransferPage && order?.status === "PAID";
+  const isPendingCountdownExpired =
+    isPendingOrder && timeLeftMs !== null && timeLeftMs <= 0;
 
   const showReleasedTickets = isTransferPage || isPaidOrder;
 
@@ -399,6 +466,7 @@ export default function CustomerOrderDetailPage() {
       if (isTransferPage) {
         setTransfer(data as TransferDetail);
         setOrder(null);
+        setTimeLeftMs(null);
       } else {
         setOrder(data as OrderDetail);
         setTransfer(null);
@@ -416,13 +484,50 @@ export default function CustomerOrderDetailPage() {
     loadData();
   }, [entityId, isTransferPage]);
 
+  useEffect(() => {
+    orderExpiredRefreshRef.current = false;
+  }, [order?.id, order?.expiresAt, order?.status, isTransferPage]);
+
+  useEffect(() => {
+    if (isTransferPage || !isPendingOrder || !order?.expiresAt) {
+      setTimeLeftMs(null);
+      return;
+    }
+
+    const updateCountdown = () => {
+      const expiresAt = new Date(order.expiresAt || "").getTime();
+
+      if (Number.isNaN(expiresAt)) {
+        setTimeLeftMs(null);
+        return;
+      }
+
+      const remaining = Math.max(0, expiresAt - Date.now());
+      setTimeLeftMs(remaining);
+
+      if (remaining <= 0 && !orderExpiredRefreshRef.current) {
+        orderExpiredRefreshRef.current = true;
+        window.setTimeout(() => {
+          loadData();
+        }, 1200);
+      }
+    };
+
+    updateCountdown();
+
+    const interval = window.setInterval(() => {
+      updateCountdown();
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [isTransferPage, isPendingOrder, order?.expiresAt]);
+
   function isTicketCanceled(ticket?: TicketItem | null) {
     return ticket?.status === "CANCELED";
   }
 
   function isTicketTransferredAway(ticket?: TicketItem | null) {
-    if (!ticket || isTransferPage) return false;
-    if (!currentUserId) return false;
+    if (!ticket || !currentUserId) return false;
 
     return !!ticket.currentOwnerUserId && ticket.currentOwnerUserId !== currentUserId;
   }
@@ -430,6 +535,14 @@ export default function CustomerOrderDetailPage() {
   function isTicketTransferPending(ticket?: TicketItem | null) {
     if (!ticket) return false;
     return ticket.status === "TRANSFER_PENDING";
+  }
+
+  function isReturnOnlyTicket(ticket?: TicketItem | null) {
+    return ticket?.receivedViaTransferLocked === true;
+  }
+
+  function isReturnedTransferRecord() {
+    return isTransferPage && (transfer?.status || "").toUpperCase() === "RETURNED";
   }
 
   function canTransferTicket(ticket?: TicketItem | null) {
@@ -445,6 +558,14 @@ export default function CustomerOrderDetailPage() {
     if (!ticket) return "SEM STATUS";
     if (isTicketTransferredAway(ticket)) return "TRANSFERRED";
     return ticket.status || "SEM STATUS";
+  }
+
+  function getDisplayedTicketStatus(ticket?: TicketItem | null) {
+    if (isReturnedTransferRecord()) {
+      return "UNAVAILABLE";
+    }
+
+    return getTicketVisualStatus(ticket);
   }
 
   function getEventName() {
@@ -494,6 +615,8 @@ export default function CustomerOrderDetailPage() {
       holderEmail: transfer.ticket.holderEmail,
       holderCpf: transfer.ticket.holderCpf,
       currentOwnerUserId: transfer.ticket.currentOwnerUserId,
+      receivedViaTransferRequestId: transfer.ticket.receivedViaTransferRequestId,
+      receivedViaTransferLocked: transfer.ticket.receivedViaTransferLocked,
       transferRequests: [
         {
           id: transfer.id,
@@ -502,10 +625,13 @@ export default function CustomerOrderDetailPage() {
           requestedByUserId: transfer.requestedByUserId,
           fromUserId: transfer.fromUserId,
           toUserId: transfer.toUserId,
+          mode: transfer.mode,
+          returnOfTransferRequestId: transfer.returnOfTransferRequestId,
           status: transfer.status,
           responseReason: transfer.responseReason,
           requestedAt: transfer.requestedAt,
           respondedAt: transfer.respondedAt,
+          expiresAt: transfer.expiresAt,
           requestedByName: transfer.requestedByName,
           requestedByEmail: transfer.requestedByEmail,
           requestedByCpf: transfer.requestedByCpf,
@@ -580,6 +706,11 @@ export default function CustomerOrderDetailPage() {
   function handleOpenTicket(ticket: TicketItem) {
     if (!showReleasedTickets) {
       alert("Os ingressos serão liberados depois da confirmação do pagamento.");
+      return;
+    }
+
+    if (isReturnedTransferRecord()) {
+      alert("Este ingresso foi devolvido e está indisponível nesta conta.");
       return;
     }
 
@@ -684,6 +815,62 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
+  async function handleReturnTicket(ticket: TicketItem) {
+    const token = localStorage.getItem("token");
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    if (!ticket.id) {
+      alert("Ingresso inválido");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Deseja devolver este ingresso para quem enviou originalmente?",
+    );
+
+    if (!confirmed) return;
+
+    setReturningTicket(true);
+
+    try {
+      const res = await fetch(
+        `http://localhost:3001/v1/tickets/customer/${ticket.id}/transfer`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({}),
+        },
+      );
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(
+          typeof data?.message === "string"
+            ? data.message
+            : "Erro ao devolver ingresso",
+        );
+        return;
+      }
+
+      alert("Ingresso devolvido com sucesso");
+      setSelectedTicket(null);
+      await loadData();
+    } catch (error) {
+      console.error("RETURN TICKET ERROR:", error);
+      alert("Erro ao conectar com a API");
+    } finally {
+      setReturningTicket(false);
+    }
+  }
+
   async function handleAcceptTransfer() {
     const token = localStorage.getItem("token");
 
@@ -778,7 +965,7 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-  async function handleCancelTransfer() {
+    async function handleCancelTransfer() {
     const token = localStorage.getItem("token");
 
     if (!token || token === "undefined" || !transfer?.id) {
@@ -835,6 +1022,12 @@ export default function CustomerOrderDetailPage() {
 
     if (!order?.id) {
       alert("Pedido inválido");
+      return;
+    }
+
+    if (isPendingCountdownExpired) {
+      alert("O tempo deste pedido acabou. Atualizando o status...");
+      await loadData();
       return;
     }
 
@@ -1222,6 +1415,7 @@ export default function CustomerOrderDetailPage() {
   const heroDescription = getEventDescription();
   const eventName = getEventName();
   const eventDate = getEventDate();
+  const countdownTone = getCountdownTone(timeLeftMs);
 
   return (
     <>
@@ -1250,6 +1444,24 @@ export default function CustomerOrderDetailPage() {
               <p className="mt-5 max-w-3xl text-sm leading-7 text-white/85 md:text-base">
                 {heroDescription}
               </p>
+
+              {isPendingOrder ? (
+                <div
+                  className={`mt-6 rounded-[24px] border px-5 py-4 ${countdownTone}`}
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em]">
+                    Tempo para pagamento
+                  </p>
+                  <p className="mt-2 text-3xl font-black">
+                    {formatCountdown(timeLeftMs)}
+                  </p>
+                  <p className="mt-2 text-sm opacity-90">
+                    {isPendingCountdownExpired
+                      ? "Tempo encerrado. Atualizando o status do pedido..."
+                      : "Finalize a compra antes do relógio zerar."}
+                  </p>
+                </div>
+              ) : null}
 
               <div className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
@@ -1329,6 +1541,24 @@ export default function CustomerOrderDetailPage() {
                     : `Criado em ${formatDate(order?.createdAt)}`}
                 </p>
               </div>
+
+              {isPendingOrder ? (
+                <div
+                  className={`rounded-[28px] border p-5 backdrop-blur ${countdownTone}`}
+                >
+                  <p className="text-xs uppercase tracking-[0.18em]">
+                    Restante
+                  </p>
+                  <p className="mt-3 text-3xl font-black">
+                    {formatCountdown(timeLeftMs)}
+                  </p>
+                  <p className="mt-1 text-sm opacity-90">
+                    {isPendingCountdownExpired
+                      ? "Aguardando atualização"
+                      : "Esse pedido expira automaticamente"}
+                  </p>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>
@@ -1367,10 +1597,12 @@ export default function CustomerOrderDetailPage() {
 
           <div className={cardClass()}>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-              Criado em
+              {isPendingOrder ? "Tempo restante" : "Criado em"}
             </p>
             <p className="mt-3 text-base font-black text-slate-950">
-              {formatDate(isTransferPage ? transfer?.requestedAt : order?.createdAt)}
+              {isPendingOrder
+                ? formatCountdown(timeLeftMs)
+                : formatDate(isTransferPage ? transfer?.requestedAt : order?.createdAt)}
             </p>
           </div>
         </section>
@@ -1433,6 +1665,11 @@ export default function CustomerOrderDetailPage() {
                                       <p className="mt-1 text-sm text-slate-500">
                                         Titular: {ticket.holderName || "Não definido"}
                                       </p>
+                                      {isReturnOnlyTicket(ticket) ? (
+                                        <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-violet-700">
+                                          Somente devolução
+                                        </p>
+                                      ) : null}
                                     </div>
 
                                     <span
@@ -1534,10 +1771,10 @@ export default function CustomerOrderDetailPage() {
 
                       <span
                         className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(
-                          transfer.ticket.status,
+                          getDisplayedTicketStatus(buildTransferTicket()),
                         )}`}
                       >
-                        {getStatusLabel(transfer.ticket.status)}
+                        {getStatusLabel(getDisplayedTicketStatus(buildTransferTicket()))}
                       </span>
                     </div>
 
@@ -1558,18 +1795,28 @@ export default function CustomerOrderDetailPage() {
                     </div>
 
                     <div className="mt-5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const transferTicket = buildTransferTicket();
-                          if (transferTicket) {
-                            handleOpenTicket(transferTicket);
-                          }
-                        }}
-                        className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
-                      >
-                        Abrir ingresso
-                      </button>
+                      {isReturnedTransferRecord() ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-500"
+                        >
+                          Ingresso indisponível
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const transferTicket = buildTransferTicket();
+                            if (transferTicket) {
+                              handleOpenTicket(transferTicket);
+                            }
+                          }}
+                          className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+                        >
+                          Abrir ingresso
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : null}
@@ -1760,20 +2007,45 @@ export default function CustomerOrderDetailPage() {
 
               <div className="space-y-3 p-5">
                 {isPendingOrder ? (
+                  <div
+                    className={`rounded-2xl border px-4 py-4 ${countdownTone}`}
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em]">
+                      Tempo restante
+                    </p>
+                    <p className="mt-2 text-2xl font-black">
+                      {formatCountdown(timeLeftMs)}
+                    </p>
+                    <p className="mt-2 text-sm opacity-90">
+                      {isPendingCountdownExpired
+                        ? "O pedido está sendo marcado como expirado."
+                        : "Pague antes do cronômetro zerar."}
+                    </p>
+                  </div>
+                ) : null}
+
+                {isPendingOrder ? (
                   <>
                     <button
                       type="button"
                       onClick={handleFinishPayment}
-                      disabled={paying}
+                      disabled={paying || isPendingCountdownExpired}
                       className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {paying ? "Finalizando..." : "Finalizar pagamento"}
+                      {isPendingCountdownExpired
+                        ? "Tempo encerrado"
+                        : paying
+                          ? "Finalizando..."
+                          : "Finalizar pagamento"}
                     </button>
 
                     <button
                       type="button"
                       onClick={handleCancelOrderPending}
-                      disabled={cancelingOrderMode === "PENDING_SIMPLE"}
+                      disabled={
+                        cancelingOrderMode === "PENDING_SIMPLE" ||
+                        isPendingCountdownExpired
+                      }
                       className="w-full rounded-2xl border border-rose-200 px-5 py-4 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {cancelingOrderMode === "PENDING_SIMPLE"
@@ -1880,9 +2152,7 @@ export default function CustomerOrderDetailPage() {
                 <h3 className="mt-2 text-2xl font-black text-slate-950">
                   {selectedTicket.code || "Código indisponível"}
                 </h3>
-                <p className="mt-2 text-sm text-slate-500">
-                  {eventName}
-                </p>
+                <p className="mt-2 text-sm text-slate-500">{eventName}</p>
               </div>
 
               <button
@@ -1922,14 +2192,22 @@ export default function CustomerOrderDetailPage() {
                   <div className="mt-2">
                     <span
                       className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(
-                        getTicketVisualStatus(selectedTicket),
+                        getDisplayedTicketStatus(selectedTicket),
                       )}`}
                     >
-                      {getStatusLabel(getTicketVisualStatus(selectedTicket))}
+                      {getStatusLabel(getDisplayedTicketStatus(selectedTicket))}
                     </span>
                   </div>
                 </div>
               </div>
+
+              {isReturnOnlyTicket(selectedTicket) ? (
+                <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 text-sm leading-6 text-violet-800">
+                  Este ingresso foi recebido por transferência. Ele não pode ser
+                  enviado para outra pessoa, apenas devolvido para quem enviou
+                  originalmente.
+                </div>
+              ) : null}
 
               <div className="flex flex-wrap gap-3">
                 <button
@@ -1940,7 +2218,8 @@ export default function CustomerOrderDetailPage() {
                   Copiar código
                 </button>
 
-                {canTransferTicket(selectedTicket) ? (
+                {canTransferTicket(selectedTicket) &&
+                !isReturnOnlyTicket(selectedTicket) ? (
                   <button
                     type="button"
                     onClick={() => openTransferModal(selectedTicket)}
@@ -1950,11 +2229,26 @@ export default function CustomerOrderDetailPage() {
                   </button>
                 ) : null}
 
+                {canTransferTicket(selectedTicket) &&
+                isReturnOnlyTicket(selectedTicket) ? (
+                  <button
+                    type="button"
+                    onClick={() => handleReturnTicket(selectedTicket)}
+                    disabled={returningTicket}
+                    className="rounded-2xl border border-violet-200 px-4 py-3 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {returningTicket ? "Devolvendo..." : "Devolver ingresso"}
+                  </button>
+                ) : null}
+
                 {isPendingOrder ? (
                   <button
                     type="button"
                     onClick={handleCancelTicketPending}
-                    disabled={cancelingTicketMode === "PENDING_SIMPLE"}
+                    disabled={
+                      cancelingTicketMode === "PENDING_SIMPLE" ||
+                      isPendingCountdownExpired
+                    }
                     className="rounded-2xl border border-rose-200 px-4 py-3 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {cancelingTicketMode === "PENDING_SIMPLE"
