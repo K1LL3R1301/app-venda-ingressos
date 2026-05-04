@@ -38,20 +38,25 @@ export default function CustomerLayout({
     }
   }, []);
 
-  function getActiveNav():
-    | "dashboard"
-    | "orders"
-    | "wallet"
-    | "support" {
+  function getActiveNav(): "dashboard" | "orders" | "wallet" | "support" {
     if (pathname.startsWith("/customer/orders")) return "orders";
     if (pathname.startsWith("/customer/wallet")) return "wallet";
     if (pathname.startsWith("/customer/support")) return "support";
     return "dashboard";
   }
 
+  const shouldShowSearch =
+    pathname.startsWith("/customer/dashboard") ||
+    pathname.startsWith("/customer/events");
+
   return (
     <div className="min-h-screen bg-[#f6f7fb] text-gray-900">
-      <CustomerHeader user={user} activeNav={getActiveNav()} />
+      <CustomerHeader
+        user={user}
+        activeNav={getActiveNav()}
+        showSearch={shouldShowSearch}
+        searchPlaceholder="Buscar experiências"
+      />
       {children}
     </div>
   );

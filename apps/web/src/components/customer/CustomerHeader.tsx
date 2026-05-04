@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export type CustomerHeaderUser = {
   id?: string;
@@ -43,15 +43,39 @@ export default function CustomerHeader({
   user,
   activeNav = "dashboard",
   showSearch = false,
-  searchPlaceholder = "Buscar",
+  searchPlaceholder = "Buscar experiências",
   searchValue = "",
   onSearchChange,
 }: CustomerHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [localSearch, setLocalSearch] = useState(searchValue);
 
   const role = String(user?.role || "").toUpperCase();
   const canAccessAdmin = role === "ADMIN";
   const canAccessOperator = role === "OPERATOR";
+
+  useEffect(() => {
+    setLocalSearch(searchValue);
+  }, [searchValue]);
+
+  useEffect(() => {
+    function handleExternalSearchSync(event: Event) {
+      const customEvent = event as CustomEvent<string>;
+      setLocalSearch(customEvent.detail || "");
+    }
+
+    window.addEventListener(
+      "customer-header-search-sync",
+      handleExternalSearchSync as EventListener,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "customer-header-search-sync",
+        handleExternalSearchSync as EventListener,
+      );
+    };
+  }, []);
 
   function handleLogout() {
     localStorage.removeItem("token");
@@ -62,6 +86,29 @@ export default function CustomerHeader({
   function handleGo(path: string) {
     setMenuOpen(false);
     goTo(path);
+  }
+
+  function handleSearchChange(value: string) {
+    setLocalSearch(value);
+    onSearchChange?.(value);
+
+    window.dispatchEvent(
+      new CustomEvent("customer-header-search", {
+        detail: value,
+      }),
+    );
+  }
+
+  function handleSearchSubmit() {
+    window.dispatchEvent(
+      new CustomEvent("customer-header-search", {
+        detail: localSearch,
+      }),
+    );
+
+    if (!window.location.pathname.startsWith("/customer/dashboard")) {
+      window.location.href = "/customer/dashboard";
+    }
   }
 
   return (
@@ -77,13 +124,18 @@ export default function CustomerHeader({
 
         {showSearch ? (
           <div className="hidden flex-1 items-center gap-3 md:flex">
-            <div className="flex h-12 flex-1 items-center rounded-2xl border border-gray-200 bg-white px-4 shadow-sm">
+            <div className="mx-auto flex h-12 w-full max-w-xl items-center rounded-2xl border border-gray-200 bg-white px-4 shadow-sm">
               <span className="mr-3 text-gray-400">🔎</span>
               <input
                 type="text"
                 placeholder={searchPlaceholder}
-                value={searchValue}
-                onChange={(e) => onSearchChange?.(e.target.value)}
+                value={localSearch}
+                onChange={(event) => handleSearchChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    handleSearchSubmit();
+                  }
+                }}
                 className="w-full bg-transparent text-sm outline-none placeholder:text-gray-400"
               />
             </div>
@@ -98,7 +150,7 @@ export default function CustomerHeader({
             onClick={() => goTo("/customer/orders")}
             className={getTopNavClasses(activeNav === "orders")}
           >
-            Meus pedidos
+            Meus ingressos
           </button>
 
           <button
@@ -122,7 +174,7 @@ export default function CustomerHeader({
             </span>
           </button>
 
-          {menuOpen && (
+          {menuOpen ? (
             <div className="absolute right-0 mt-3 w-72 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
               <div className="border-b border-gray-100 px-4 py-4">
                 <p className="text-sm font-semibold text-gray-900">
@@ -147,10 +199,18 @@ export default function CustomerHeader({
 
                 <button
                   type="button"
+                  onClick={() => handleGo("/customer/events")}
+                  className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Eventos
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => handleGo("/customer/orders")}
                   className={getMenuItemClasses(activeNav === "orders")}
                 >
-                  Meus pedidos
+                  Meus ingressos
                 </button>
 
                 <button
@@ -198,7 +258,7 @@ export default function CustomerHeader({
                 </button>
               </div>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -209,8 +269,13 @@ export default function CustomerHeader({
             <input
               type="text"
               placeholder={searchPlaceholder}
-              value={searchValue}
-              onChange={(e) => onSearchChange?.(e.target.value)}
+              value={localSearch}
+              onChange={(event) => handleSearchChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  handleSearchSubmit();
+                }
+              }}
               className="w-full bg-transparent text-sm outline-none placeholder:text-gray-400"
             />
           </div>
