@@ -190,6 +190,10 @@ function inputClass() {
   return "w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none transition focus:border-sky-500";
 }
 
+function inputReadOnlyClass() {
+  return "w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800";
+}
+
 function cardClass() {
   return "rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm";
 }
@@ -368,11 +372,6 @@ export default function CustomerCheckoutPage() {
     }>;
   }, [cartItems, activeTicketTypes]);
 
-  const notSelectedTicketTypes = useMemo(() => {
-    const selectedIds = new Set(cartItems.map((item) => item.ticketTypeId));
-    return activeTicketTypes.filter((ticket) => !selectedIds.has(ticket.id));
-  }, [activeTicketTypes, cartItems]);
-
   const subtotal = useMemo(
     () => selectedItemsDetailed.reduce((sum, item) => sum + item.totalPrice, 0),
     [selectedItemsDetailed],
@@ -429,36 +428,53 @@ export default function CustomerCheckoutPage() {
     });
   }, [selectedItemsDetailed, customerName, customerEmail, customerCpf]);
 
-  function handleQuantityChange(ticketTypeId: string, nextQuantity: number) {
-    setCartItems((prev) =>
-      prev.map((item) =>
-        item.ticketTypeId === ticketTypeId
-          ? {
-              ...item,
-              quantity: Math.max(1, nextQuantity),
-            }
-          : item,
-      ),
-    );
-  }
+  const holderStats = useMemo(() => {
+    const buyerCpfDigits = onlyDigits(customerCpf);
+    let buyerCount = 0;
+    let otherCount = 0;
 
-  function handleAddTicketType(ticketTypeId: string) {
-    setCartItems((prev) =>
-      mergeCartItems([
-        ...prev,
-        {
-          ticketTypeId,
-          quantity: 1,
-        },
-      ]),
-    );
-  }
+    for (const item of selectedItemsDetailed) {
+      const holders = holdersByTicketType[item.ticketTypeId] || [];
 
-  function handleRemoveTicketType(ticketTypeId: string) {
-    setCartItems((prev) =>
-      prev.filter((item) => item.ticketTypeId !== ticketTypeId),
-    );
-  }
+      for (const holder of holders) {
+        const holderCpfDigits = onlyDigits(
+          holder.useBuyerData ? customerCpf : holder.cpf,
+        );
+
+        if (!holderCpfDigits || holderCpfDigits === buyerCpfDigits) {
+          buyerCount += 1;
+        } else {
+          otherCount += 1;
+        }
+      }
+    }
+
+    const total = buyerCount + otherCount;
+    const validTotal = total <= 4;
+    const validBuyer = buyerCount <= 2;
+    const validOther = otherCount <= 2;
+    const atLeastOneBuyer = total === 0 ? true : buyerCount >= 1;
+
+    let message = "Distribuição válida para continuar.";
+
+    if (!validTotal) {
+      message = "Cada compra pode ter no máximo 4 ingressos.";
+    } else if (!validBuyer) {
+      message = "No máximo 2 ingressos podem ficar no CPF do comprador.";
+    } else if (!validOther) {
+      message = "No máximo 2 ingressos podem ir para outros CPFs.";
+    } else if (!atLeastOneBuyer) {
+      message = "Pelo menos 1 ingresso deve permanecer com o comprador.";
+    }
+
+    return {
+      buyerCount,
+      otherCount,
+      total,
+      isValid: validTotal && validBuyer && validOther && atLeastOneBuyer,
+      message,
+    };
+  }, [selectedItemsDetailed, holdersByTicketType, customerCpf]);
 
   function handleHolderUseBuyerChange(
     ticketTypeId: string,
@@ -545,6 +561,11 @@ export default function CustomerCheckoutPage() {
       return;
     }
 
+    if (!holderStats.isValid) {
+      alert(holderStats.message);
+      return;
+    }
+
     for (const item of selectedItemsDetailed) {
       const availableQuantity =
         typeof item.ticketType.quantity === "number"
@@ -602,7 +623,7 @@ export default function CustomerCheckoutPage() {
           holderCpfDigits !== customerCpfDigits &&
           holderEmail.trim().length === 0
         ) {
-          // Mantido opcional.
+          // Mantido opcional, conforme sua lógica atual.
         }
       }
     }
@@ -628,7 +649,9 @@ export default function CustomerCheckoutPage() {
             holders: (holdersByTicketType[item.ticketTypeId] || []).map(
               (holder) => ({
                 name: (holder.useBuyerData ? customerName : holder.name).trim(),
-                email: (holder.useBuyerData ? customerEmail : holder.email).trim(),
+                email: (
+                  holder.useBuyerData ? customerEmail : holder.email
+                ).trim(),
                 cpf: onlyDigits(holder.useBuyerData ? customerCpf : holder.cpf),
               }),
             ),
@@ -713,19 +736,28 @@ export default function CustomerCheckoutPage() {
         </h1>
 
         <p className="mt-4 max-w-3xl text-sm leading-6 text-white/85 md:text-base">
-          Revise seus ingressos, defina os titulares e confirme o pagamento com
-          uma experiência mais clara e operacional.
+          Revise seus ingressos, defina os titulares e confirme a compra com
+          mais clareza.
         </p>
 
         <div className="mt-6 flex flex-wrap gap-3 text-sm text-white/85">
           <span>🎟️ {event.name || "Evento"}</span>
-          <span>👤 {event.organizer?.tradeName || event.organizer?.legalName || "Organizador"}</span>
+          <span>
+            👤{" "}
+            {event.organizer?.tradeName ||
+              event.organizer?.legalName ||
+              "Organizador"}
+          </span>
           <span>📅 {formatDate(event.startDate || event.eventDate)}</span>
         </div>
       </section>
 
       <section className="mt-10 grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
-        <form onSubmit={handleCreateOrder} className="space-y-6">
+        <form
+          id="customer-checkout-form"
+          onSubmit={handleCreateOrder}
+          className="space-y-6"
+        >
           <section className={cardClass()}>
             <h2 className="text-2xl font-black text-slate-950">
               Dados do comprador
@@ -780,155 +812,36 @@ export default function CustomerCheckoutPage() {
 
             <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 p-5">
               <p className="text-sm leading-6 text-amber-800">
-                Se o CPF do titular for de outra pessoa, o ingresso ficará
-                vinculado à conta dessa pessoa. Para funcionar, esse CPF precisa
-                existir na plataforma.
+                Regras da compra: no máximo <strong>4 ingressos</strong> por
+                pedido, sendo até <strong>2 no CPF do comprador</strong> e até{" "}
+                <strong>2 para outros CPFs</strong>. O prazo de 10 minutos
+                começa depois que o pedido é criado.
               </p>
             </div>
           </section>
 
           <section className={cardClass()}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h2 className="text-2xl font-black text-slate-950">
-                  Ingressos escolhidos
-                </h2>
+                <h2 className="text-2xl font-black text-slate-950">Titulares</h2>
                 <p className="mt-2 text-sm text-slate-500">
-                  Ajuste quantidades e monte o pedido final.
+                  Defina para quem cada ingresso vai ficar.
                 </p>
               </div>
-            </div>
 
-            <div className="mt-6 space-y-4">
-              {selectedItemsDetailed.map((item) => (
-                <div
-                  key={item.ticketTypeId}
-                  className="rounded-[24px] border border-slate-200 bg-white p-5"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      {item.ticketType.lotLabel ? (
-                        <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-                          {item.ticketType.lotLabel}
-                        </span>
-                      ) : null}
-
-                      <h3 className="mt-3 text-xl font-black text-slate-950">
-                        {item.ticketType.name || "Ingresso"}
-                      </h3>
-
-                      {item.ticketType.description ? (
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          {item.ticketType.description}
-                        </p>
-                      ) : null}
-
-                      {item.ticketType.benefitDescription ? (
-                        <p className="mt-2 text-sm font-medium text-emerald-700">
-                          {item.ticketType.benefitDescription}
-                        </p>
-                      ) : null}
-
-                      <div className="mt-3 space-y-1 text-sm text-slate-500">
-                        <p>Valor base: {formatMoney(item.unitPrice)}</p>
-                        {item.feeAmount > 0 ? (
-                          <p>Taxa: {formatMoney(item.feeAmount)}</p>
-                        ) : null}
-                        <p>Disponível: {item.ticketType.quantity ?? 0}</p>
-                        {item.ticketType.salesEndAt ? (
-                          <p>Vendas até {formatDate(item.ticketType.salesEndAt)}</p>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveTicketType(item.ticketTypeId)}
-                      className="rounded-2xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50"
-                    >
-                      Remover
-                    </button>
-                  </div>
-
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleQuantityChange(
-                            item.ticketTypeId,
-                            Math.max(1, item.quantity - 1),
-                          )
-                        }
-                        className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-lg font-bold text-slate-700 hover:bg-slate-50"
-                      >
-                        -
-                      </button>
-
-                      <input
-                        type="number"
-                        min={1}
-                        max={item.ticketType.quantity || undefined}
-                        value={item.quantity}
-                        onChange={(e) =>
-                          handleQuantityChange(
-                            item.ticketTypeId,
-                            Math.max(1, Number(e.target.value || 1)),
-                          )
-                        }
-                        className="w-24 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-center outline-none focus:border-sky-500"
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleQuantityChange(item.ticketTypeId, item.quantity + 1)
-                        }
-                        className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white text-lg font-bold text-slate-700 hover:bg-slate-50"
-                      >
-                        +
-                      </button>
-                    </div>
-
-                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-right">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
-                        Total deste item
-                      </p>
-                      <p className="mt-1 text-xl font-black text-slate-950">
-                        {formatMoney(item.totalPrice)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {notSelectedTicketTypes.length > 0 ? (
-              <div className="mt-6 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-5">
-                <h3 className="text-lg font-black text-slate-950">
-                  Adicionar mais ingressos
-                </h3>
-                <div className="mt-4 flex flex-wrap gap-3">
-                  {notSelectedTicketTypes.map((ticket) => (
-                    <button
-                      key={ticket.id}
-                      type="button"
-                      onClick={() => handleAddTicketType(ticket.id)}
-                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-                    >
-                      + {getTicketLabel(ticket)}
-                    </button>
-                  ))}
-                </div>
+              <div
+                className={`rounded-[22px] border px-4 py-3 text-sm ${
+                  holderStats.isValid
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                <p className="font-semibold">
+                  Comprador: {holderStats.buyerCount} · Outros: {holderStats.otherCount}
+                </p>
+                <p className="mt-1">{holderStats.message}</p>
               </div>
-            ) : null}
-          </section>
-
-          <section className={cardClass()}>
-            <h2 className="text-2xl font-black text-slate-950">Titulares</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Defina para quem cada ingresso vai ficar.
-            </p>
+            </div>
 
             <div className="mt-6 space-y-5">
               {selectedItemsDetailed.map((item) => (
@@ -975,7 +888,6 @@ export default function CustomerCheckoutPage() {
                                     e.target.checked,
                                   )
                                 }
-                                className="h-4 w-4"
                               />
                               Usar dados do comprador
                             </label>
@@ -983,35 +895,35 @@ export default function CustomerCheckoutPage() {
 
                           {holder.useBuyerData ? (
                             <div className="mt-4 grid gap-3 md:grid-cols-3">
-                              <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                              <div>
+                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                                   Nome
-                                </p>
-                                <p className="mt-1 font-semibold text-slate-900">
+                                </label>
+                                <div className={inputReadOnlyClass()}>
                                   {customerName || "-"}
-                                </p>
+                                </div>
                               </div>
 
-                              <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                              <div>
+                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                                   Email
-                                </p>
-                                <p className="mt-1 break-all font-semibold text-slate-900">
+                                </label>
+                                <div className={`${inputReadOnlyClass()} break-all`}>
                                   {customerEmail || "-"}
-                                </p>
+                                </div>
                               </div>
 
-                              <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                              <div>
+                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                                   CPF
-                                </p>
-                                <p className="mt-1 font-semibold text-slate-900">
-                                  {customerCpf || "-"}
-                                </p>
+                                </label>
+                                <div className={inputReadOnlyClass()}>
+                                  {formatCpf(customerCpf) || "-"}
+                                </div>
                               </div>
                             </div>
                           ) : (
-                            <div className="mt-4 grid gap-4 md:grid-cols-3">
+                            <div className="mt-4 grid gap-3 md:grid-cols-3">
                               <div>
                                 <label className="mb-2 block text-sm font-medium text-slate-700">
                                   Nome do titular
@@ -1028,7 +940,7 @@ export default function CustomerCheckoutPage() {
                                     )
                                   }
                                   className={inputClass()}
-                                  placeholder="Nome da pessoa"
+                                  placeholder="Nome completo"
                                 />
                               </div>
 
@@ -1060,7 +972,6 @@ export default function CustomerCheckoutPage() {
                                   type="text"
                                   inputMode="numeric"
                                   value={holder.cpf}
-                                  maxLength={14}
                                   onChange={(e) =>
                                     handleHolderFieldChange(
                                       item.ticketTypeId,
@@ -1071,6 +982,7 @@ export default function CustomerCheckoutPage() {
                                   }
                                   className={inputClass()}
                                   placeholder="000.000.000-00"
+                                  maxLength={14}
                                 />
                               </div>
                             </div>
@@ -1091,60 +1003,51 @@ export default function CustomerCheckoutPage() {
             </p>
 
             <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">
-                    Saldo disponível
-                  </p>
-                  <p className="mt-2 text-3xl font-black text-slate-950">
+                  <p className="text-sm text-slate-500">Saldo atual da wallet</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950">
                     {formatMoney(wallet?.balance)}
                   </p>
                 </div>
 
-                <label className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+                <label className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-sm font-medium text-slate-700">
                   <input
                     type="checkbox"
                     checked={useWalletBalance}
                     onChange={(e) => setUseWalletBalance(e.target.checked)}
-                    className="h-4 w-4"
                   />
-                  Usar wallet nesta compra
+                  Usar saldo da wallet nesta compra
                 </label>
               </div>
 
               <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl bg-white px-4 py-4">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
-                    Subtotal
-                  </p>
-                  <p className="mt-2 text-lg font-black text-slate-950">
+                <div className="rounded-2xl bg-white p-4">
+                  <p className="text-sm text-slate-500">Subtotal</p>
+                  <p className="mt-2 font-black text-slate-950">
                     {formatMoney(subtotal)}
                   </p>
                 </div>
 
-                <div className="rounded-2xl bg-white px-4 py-4">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
-                    Abatimento wallet
-                  </p>
-                  <p className="mt-2 text-lg font-black text-emerald-700">
-                    {formatMoney(walletApplied)}
+                <div className="rounded-2xl bg-white p-4">
+                  <p className="text-sm text-slate-500">Wallet aplicada</p>
+                  <p className="mt-2 font-black text-emerald-700">
+                    - {formatMoney(walletApplied)}
                   </p>
                 </div>
 
-                <div className="rounded-2xl bg-white px-4 py-4">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
-                    Falta pagar
-                  </p>
-                  <p className="mt-2 text-lg font-black text-slate-950">
+                <div className="rounded-2xl bg-white p-4">
+                  <p className="text-sm text-slate-500">Valor restante</p>
+                  <p className="mt-2 font-black text-slate-950">
                     {formatMoney(remainingAmount)}
                   </p>
                 </div>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-sky-100 bg-sky-50 px-4 py-4 text-sm text-sky-800">
+              <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">
                 {purchaseWillBePaid
-                  ? "Seu pedido será quitado integralmente com a wallet."
-                  : "Depois da wallet, o pedido seguirá com saldo pendente para pagamento."}
+                  ? "Seu saldo cobre 100% da compra."
+                  : "Se ainda restar valor, o pedido será criado como pendente e o contador de 10 minutos aparece depois."}
               </div>
             </div>
           </section>
@@ -1152,23 +1055,21 @@ export default function CustomerCheckoutPage() {
 
         <aside className="xl:sticky xl:top-24 xl:self-start">
           <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 bg-slate-50 px-6 py-5">
+            <div className="border-b border-slate-100 px-6 py-5">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                {event.checkoutTitle || "Resumo do pedido"}
+                Escolha seu ingresso
               </p>
               <h2 className="mt-2 text-2xl font-black text-slate-950">
-                {event.name || "Evento"}
+                {event.checkoutTitle || event.name || "Resumo do pedido"}
               </h2>
               <p className="mt-2 text-sm text-slate-500">
-                {event.checkoutSubtitle ||
-                  event.shortDescription ||
-                  "Revise tudo antes de finalizar."}
+                {event.checkoutSubtitle || "Selecione o lote ideal para continuar"}
               </p>
             </div>
 
-            <div className="space-y-4 p-5">
+            <div className="space-y-4 px-6 py-5">
               <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Quando
                 </p>
                 <p className="mt-2 font-semibold text-slate-900">
@@ -1177,31 +1078,32 @@ export default function CustomerCheckoutPage() {
               </div>
 
               <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Organizador
                 </p>
                 <p className="mt-2 font-semibold text-slate-900">
                   {event.organizer?.tradeName ||
                     event.organizer?.legalName ||
-                    "Organizador parceiro"}
+                    "-"}
                 </p>
               </div>
 
               <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                   Itens
                 </p>
+
                 <div className="mt-3 space-y-3">
                   {selectedItemsDetailed.map((item) => (
                     <div
                       key={`summary-${item.ticketTypeId}`}
-                      className="flex items-start justify-between gap-3 text-sm"
+                      className="flex items-start justify-between gap-3"
                     >
                       <div>
                         <p className="font-semibold text-slate-900">
                           {getTicketLabel(item.ticketType)}
                         </p>
-                        <p className="text-slate-500">
+                        <p className="text-sm text-slate-500">
                           {item.quantity} x {formatMoney(item.unitTotal)}
                         </p>
                       </div>
@@ -1215,96 +1117,68 @@ export default function CustomerCheckoutPage() {
               </div>
 
               <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between py-2 text-sm">
                   <span className="text-slate-500">Ingressos</span>
-                  <span className="font-semibold text-slate-900">
-                    {totalTickets}
-                  </span>
+                  <span className="font-semibold text-slate-900">{totalTickets}</span>
                 </div>
 
-                <div className="mt-3 flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between py-2 text-sm">
                   <span className="text-slate-500">Subtotal</span>
                   <span className="font-semibold text-slate-900">
                     {formatMoney(subtotal)}
                   </span>
                 </div>
 
-                <div className="mt-3 flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between py-2 text-sm">
                   <span className="text-slate-500">Wallet</span>
                   <span className="font-semibold text-emerald-700">
                     - {formatMoney(walletApplied)}
                   </span>
                 </div>
 
-                <div className="mt-4 border-t border-slate-200 pt-4">
+                <div className="mt-2 border-t border-slate-200 pt-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-700">
+                    <span className="text-base font-semibold text-slate-700">
                       Total final
                     </span>
-                    <span className="text-2xl font-black text-slate-950">
+                    <span className="text-3xl font-black text-slate-950">
                       {formatMoney(remainingAmount)}
                     </span>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const form = document.querySelector("form");
-                    if (form) {
-                      form.requestSubmit();
-                    }
-                  }}
-                  disabled={creatingOrder}
-                  className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {creatingOrder ? "Criando pedido..." : "Finalizar pedido"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => goTo(`/customer/events/${event.id}`)}
-                  className="w-full rounded-2xl border border-slate-200 px-5 py-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  Voltar para o evento
-                </button>
+              <div
+                className={`rounded-2xl border p-4 text-sm ${
+                  holderStats.isValid
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+              >
+                <p className="font-semibold">Validação da compra</p>
+                <p className="mt-2">{holderStats.message}</p>
               </div>
+
+              <button
+                type="submit"
+                form="customer-checkout-form"
+                disabled={creatingOrder || !holderStats.isValid}
+                className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creatingOrder ? "Criando pedido..." : "Finalizar pedido"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => goTo(`/customer/events/${event.id}`)}
+                className="w-full rounded-2xl border border-slate-200 px-5 py-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Voltar para o evento
+              </button>
             </div>
           </div>
         </aside>
       </section>
-
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur xl:hidden">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Total final
-            </p>
-            <p className="text-sm font-semibold text-slate-900">
-              {totalTickets} ingresso(s)
-            </p>
-            <p className="text-lg font-black text-slate-950">
-              {formatMoney(remainingAmount)}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              const form = document.querySelector("form");
-              if (form) {
-                form.requestSubmit();
-              }
-            }}
-            disabled={creatingOrder}
-            className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {creatingOrder ? "Enviando..." : "Finalizar"}
-          </button>
-        </div>
-      </div>
     </main>
   );
 }
