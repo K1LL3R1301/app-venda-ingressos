@@ -841,25 +841,17 @@ export default function CustomerDashboardPage() {
     );
   }
 
-  function scrollToSection(id?: string) {
-    if (!id) return;
-
-    window.setTimeout(() => {
-      document.getElementById(id)?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 50);
-  }
-
   function handleCategoryClick(category: CategoryItem) {
     if (category.id === "my") {
       goTo("/customer/orders");
       return;
     }
 
-    updateSearch("");
-    scrollToSection(category.targetId);
+    const params = new URLSearchParams({
+      collection: category.id,
+    });
+
+    goTo(`/customer/events?${params.toString()}`);
   }
 
   const sortedEvents = useMemo(() => {
