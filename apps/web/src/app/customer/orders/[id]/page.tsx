@@ -204,14 +204,30 @@ function formatDate(value?: string | null) {
   if (!value) return "-";
 
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return value;
 
   return date.toLocaleString("pt-BR", {
     day: "2-digit",
-    month: "2-digit",
+    month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
   });
 }
 
@@ -225,6 +241,7 @@ function formatCpf(value?: string | null) {
   if (!digits) return "-";
   if (digits.length <= 3) return digits;
   if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+
   if (digits.length <= 9) {
     return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
   }
@@ -250,19 +267,15 @@ function formatCountdown(ms?: number | null) {
 }
 
 function getCountdownNumberClass(ms?: number | null) {
-  if (ms === null || ms === undefined) {
-    return "text-slate-700";
-  }
+  if (ms === null || ms === undefined) return "text-slate-700";
 
-  if (ms <= 5 * 60 * 1000) {
-    return "text-rose-600";
-  }
+  if (ms <= 5 * 60 * 1000) return "text-rose-600";
 
   return "text-emerald-600";
 }
 
 function getStatusLabel(status?: string) {
-  const normalized = (status || "").toUpperCase();
+  const normalized = String(status || "").toUpperCase();
 
   if (normalized === "PAID") return "Pago";
   if (normalized === "PENDING") return "Pendente";
@@ -286,7 +299,7 @@ function getStatusLabel(status?: string) {
 }
 
 function getStatusClasses(status?: string) {
-  const normalized = (status || "").toUpperCase();
+  const normalized = String(status || "").toUpperCase();
 
   if (
     normalized === "PAID" ||
@@ -309,24 +322,16 @@ function getStatusClasses(status?: string) {
     return "border-sky-200 bg-sky-50 text-sky-700";
   }
 
-  if (normalized === "RETURNED") {
+  if (normalized === "RETURNED" || normalized === "TRANSFERRED") {
     return "border-violet-200 bg-violet-50 text-violet-700";
   }
 
-  if (normalized === "UNAVAILABLE") {
+  if (normalized === "UNAVAILABLE" || normalized === "USED") {
     return "border-slate-200 bg-slate-100 text-slate-700";
-  }
-
-  if (normalized === "TRANSFERRED" || normalized === "TRANSFERIDO") {
-    return "border-violet-200 bg-violet-50 text-violet-700";
   }
 
   if (normalized === "CANCELED" || normalized === "REJECTED") {
     return "border-rose-200 bg-rose-50 text-rose-700";
-  }
-
-  if (normalized === "USED") {
-    return "border-slate-200 bg-slate-100 text-slate-700";
   }
 
   if (normalized === "CREDITED") {
@@ -337,15 +342,55 @@ function getStatusClasses(status?: string) {
     return "border-orange-200 bg-orange-50 text-orange-700";
   }
 
-  if (normalized === "NO_REFUND") {
-    return "border-gray-200 bg-gray-100 text-gray-700";
-  }
-
   return "border-gray-200 bg-gray-50 text-gray-700";
 }
 
 function cardClass() {
   return "rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm";
+}
+
+function normalizeCancelMode(mode: "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80") {
+  if (mode === "PENDING_SIMPLE") {
+    return {
+      title: "Cancelar pedido pendente",
+      confirm: "Deseja cancelar este pedido pendente?",
+      description: "O pedido será cancelado sem estorno, pois ainda não foi pago.",
+    };
+  }
+
+  if (mode === "REFUND_70") {
+    return {
+      title: "Solicitar reembolso",
+      confirm: "Deseja solicitar reembolso de 70%?",
+      description: "O pedido será marcado com solicitação de reembolso.",
+    };
+  }
+
+  return {
+    title: "Receber crédito na wallet",
+    confirm: "Deseja receber 80% em crédito na wallet?",
+    description: "O valor aprovado será convertido em crédito na wallet.",
+  };
+}
+
+function SmallInfoCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+        {label}
+      </p>
+      <p className="mt-2 text-xl font-black text-slate-950">{value}</p>
+      {detail ? <p className="mt-1 text-xs text-slate-500">{detail}</p> : null}
+    </div>
+  );
 }
 
 export default function CustomerOrderDetailPage() {
@@ -356,6 +401,7 @@ export default function CustomerOrderDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [transfer, setTransfer] = useState<TransferDetail | null>(null);
   const [loading, setLoading] = useState(true);
+
   const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null);
 
   const [producerTicketOpen, setProducerTicketOpen] = useState(false);
@@ -386,16 +432,22 @@ export default function CustomerOrderDetailPage() {
   const orderExpiredRefreshRef = useRef(false);
 
   const isTransferPage = rawRouteId.startsWith("transfer_");
-  const entityId = isTransferPage ? rawRouteId.replace("transfer_", "") : rawRouteId;
+  const entityId = isTransferPage
+    ? rawRouteId.replace("transfer_", "")
+    : rawRouteId;
   const currentUserId = currentUser?.id || null;
 
   const orderItems = order?.items || [];
+  const payments = order?.payments || [];
+  const cancellations = order?.cancellations || [];
 
   const isPendingOrder =
     !isTransferPage &&
     (order?.status === "PENDING" || order?.status === "PENDING_PAYMENT");
 
   const isPaidOrder = !isTransferPage && order?.status === "PAID";
+  const isCanceledOrder = !isTransferPage && order?.status === "CANCELED";
+
   const isPendingCountdownExpired =
     isPendingOrder && timeLeftMs !== null && timeLeftMs <= 0;
 
@@ -526,6 +578,7 @@ export default function CustomerOrderDetailPage() {
 
   function isTicketTransferPending(ticket?: TicketItem | null) {
     if (!ticket) return false;
+
     return ticket.status === "TRANSFER_PENDING";
   }
 
@@ -534,28 +587,24 @@ export default function CustomerOrderDetailPage() {
   }
 
   function isReturnedTransferRecord() {
-    return isTransferPage && (transfer?.status || "").toUpperCase() === "RETURNED";
+    return isTransferPage && String(transfer?.status || "").toUpperCase() === "RETURNED";
   }
 
   function canTransferTicket(ticket?: TicketItem | null) {
     if (!ticket || !currentUserId) return false;
 
-    return (
-      ticket.currentOwnerUserId === currentUserId &&
-      ticket.status === "AVAILABLE"
-    );
+    return ticket.currentOwnerUserId === currentUserId && ticket.status === "AVAILABLE";
   }
 
   function getTicketVisualStatus(ticket?: TicketItem | null) {
     if (!ticket) return "SEM STATUS";
     if (isTicketTransferredAway(ticket)) return "TRANSFERRED";
+
     return ticket.status || "SEM STATUS";
   }
 
   function getDisplayedTicketStatus(ticket?: TicketItem | null) {
-    if (isReturnedTransferRecord()) {
-      return "UNAVAILABLE";
-    }
+    if (isReturnedTransferRecord()) return "UNAVAILABLE";
 
     return getTicketVisualStatus(ticket);
   }
@@ -593,6 +642,7 @@ export default function CustomerOrderDetailPage() {
   function getBackPath() {
     if (isTransferPage) return "/customer/orders";
     if (order?.event?.id) return `/customer/events/${order.event.id}`;
+
     return "/customer/orders";
   }
 
@@ -644,6 +694,7 @@ export default function CustomerOrderDetailPage() {
   const flattenedTickets = useMemo(() => {
     if (isTransferPage) {
       const ticket = buildTransferTicket();
+
       return ticket ? [ticket] : [];
     }
 
@@ -664,7 +715,10 @@ export default function CustomerOrderDetailPage() {
   }, [isTransferPage, flattenedTickets, orderItems]);
 
   const totalPaid =
-    order?.payments?.reduce((sum, payment) => sum + toNumber(payment.amount), 0) || 0;
+    payments.reduce((sum, payment) => sum + toNumber(payment.amount), 0) || 0;
+
+  const totalAmount = isTransferPage ? 0 : toNumber(order?.totalAmount);
+  const remainingAmount = Math.max(0, totalAmount - totalPaid);
 
   const canAcceptTransfer =
     isTransferPage &&
@@ -763,8 +817,8 @@ export default function CustomerOrderDetailPage() {
 
     const cpf = onlyDigits(transferTargetCpf);
 
-    if (!cpf) {
-      alert("Informe o CPF do destinatário");
+    if (cpf.length !== 11) {
+      alert("Informe o CPF do destinatário com 11 dígitos");
       return;
     }
 
@@ -1052,18 +1106,17 @@ export default function CustomerOrderDetailPage() {
         return;
       }
 
-      alert("Pagamento finalizado com sucesso");
-      setSelectedTicket(null);
+      alert("Pagamento confirmado com sucesso");
       await loadData();
     } catch (error) {
-      console.error("FINALIZE PAYMENT ERROR:", error);
+      console.error("FINISH PAYMENT ERROR:", error);
       alert("Erro ao conectar com a API");
     } finally {
       setPaying(false);
     }
   }
 
-  async function handleCancelOrderPending() {
+  async function handleCancelOrder(mode: "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80") {
     const token = localStorage.getItem("token");
 
     if (!token || token === "undefined") {
@@ -1076,62 +1129,8 @@ export default function CustomerOrderDetailPage() {
       return;
     }
 
-    setCancelingOrderMode("PENDING_SIMPLE");
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/orders/customer/${order.id}/cancel`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({}),
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao cancelar pedido",
-        );
-        return;
-      }
-
-      alert("Pedido cancelado com sucesso");
-      setSelectedTicket(null);
-      await loadData();
-    } catch (error) {
-      console.error("CANCEL PENDING ORDER ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setCancelingOrderMode("");
-    }
-  }
-
-  async function handleCancelOrder(mode: "REFUND_70" | "WALLET_80") {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined") {
-      window.location.href = "/login";
-      return;
-    }
-
-    if (!order?.id) {
-      alert("Pedido inválido");
-      return;
-    }
-
-    const message =
-      mode === "WALLET_80"
-        ? "Cancelar o pedido inteiro e receber 80% em crédito na wallet?"
-        : "Cancelar o pedido inteiro e solicitar 70% de estorno?";
-
-    const confirmed = window.confirm(message);
+    const info = normalizeCancelMode(mode);
+    const confirmed = window.confirm(info.confirm);
 
     if (!confirmed) return;
 
@@ -1146,7 +1145,10 @@ export default function CustomerOrderDetailPage() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ mode }),
+          body: JSON.stringify({
+            mode,
+            reason: info.title,
+          }),
         },
       );
 
@@ -1161,13 +1163,7 @@ export default function CustomerOrderDetailPage() {
         return;
       }
 
-      alert(
-        mode === "WALLET_80"
-          ? "Pedido pago cancelado com 80% de crédito na wallet"
-          : "Pedido pago cancelado com solicitação de estorno de 70%",
-      );
-
-      setSelectedTicket(null);
+      alert("Pedido atualizado com sucesso");
       await loadData();
     } catch (error) {
       console.error("CANCEL ORDER ERROR:", error);
@@ -1177,7 +1173,10 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-  async function handleCancelTicketPending() {
+  async function handleCancelTicket(
+    ticket: TicketItem,
+    mode: "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80",
+  ) {
     const token = localStorage.getItem("token");
 
     if (!token || token === "undefined") {
@@ -1185,67 +1184,13 @@ export default function CustomerOrderDetailPage() {
       return;
     }
 
-    if (!selectedTicket?.id) {
+    if (!ticket?.id) {
       alert("Ingresso inválido");
       return;
     }
 
-    setCancelingTicketMode("PENDING_SIMPLE");
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/orders/customer/tickets/${selectedTicket.id}/cancel`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({}),
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao cancelar ingresso",
-        );
-        return;
-      }
-
-      alert("Ingresso cancelado com sucesso");
-      setSelectedTicket(null);
-      await loadData();
-    } catch (error) {
-      console.error("CANCEL PENDING TICKET ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setCancelingTicketMode("");
-    }
-  }
-
-  async function handleCancelTicket(mode: "REFUND_70" | "WALLET_80") {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined") {
-      window.location.href = "/login";
-      return;
-    }
-
-    if (!selectedTicket?.id) {
-      alert("Ingresso inválido");
-      return;
-    }
-
-    const message =
-      mode === "WALLET_80"
-        ? "Cancelar este ingresso e receber 80% em crédito na wallet?"
-        : "Cancelar este ingresso e solicitar 70% de estorno?";
-
-    const confirmed = window.confirm(message);
+    const info = normalizeCancelMode(mode);
+    const confirmed = window.confirm(`${info.confirm}\n\nIngresso: ${ticket.code || ticket.id}`);
 
     if (!confirmed) return;
 
@@ -1253,14 +1198,17 @@ export default function CustomerOrderDetailPage() {
 
     try {
       const res = await fetch(
-        `http://localhost:3001/v1/orders/customer/tickets/${selectedTicket.id}/cancel`,
+        `http://localhost:3001/v1/orders/customer/tickets/${ticket.id}/cancel`,
         {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ mode }),
+          body: JSON.stringify({
+            mode,
+            reason: info.title,
+          }),
         },
       );
 
@@ -1275,12 +1223,7 @@ export default function CustomerOrderDetailPage() {
         return;
       }
 
-      alert(
-        mode === "WALLET_80"
-          ? "Ingresso pago cancelado com 80% de crédito na wallet"
-          : "Ingresso pago cancelado com solicitação de estorno de 70%",
-      );
-
+      alert("Ingresso atualizado com sucesso");
       setSelectedTicket(null);
       await loadData();
     } catch (error) {
@@ -1291,25 +1234,7 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-  function handleTalkToProducer() {
-    const baseOrderId = isTransferPage ? transfer?.order?.id : order?.id;
-
-    if (!baseOrderId) {
-      alert("Registro inválido");
-      return;
-    }
-
-    if (isTransferPage) {
-      setTicketSubject(`Dúvida sobre transferência #${transfer?.id || ""}`);
-    } else {
-      setTicketSubject(`Problema no pedido #${order?.id || ""}`);
-    }
-
-    setTicketMessage("");
-    setProducerTicketOpen(true);
-  }
-
-  async function handleSubmitProducerTicket(e: FormEvent) {
+  async function handleCreateSupportThread(e: FormEvent) {
     e.preventDefault();
 
     const token = localStorage.getItem("token");
@@ -1319,23 +1244,20 @@ export default function CustomerOrderDetailPage() {
       return;
     }
 
-    const baseOrderId = isTransferPage ? transfer?.order?.id : order?.id;
+    const supportOrderId = isTransferPage ? transfer?.order?.id : order?.id;
 
-    if (!baseOrderId) {
-      alert("Registro inválido");
+    if (!supportOrderId) {
+      alert("Pedido não encontrado para abrir suporte");
       return;
     }
 
-    const subject =
-      ticketSubject.trim() ||
-      (isTransferPage
-        ? `Dúvida sobre transferência #${transfer?.id || ""}`
-        : `Problema no pedido #${order?.id || ""}`);
+    if (ticketSubject.trim().length < 3) {
+      alert("Informe um assunto com pelo menos 3 caracteres");
+      return;
+    }
 
-    const message = ticketMessage.trim();
-
-    if (!message) {
-      alert("Descreva o problema para abrir o atendimento");
+    if (ticketMessage.trim().length < 3) {
+      alert("Informe uma mensagem com pelo menos 3 caracteres");
       return;
     }
 
@@ -1349,9 +1271,9 @@ export default function CustomerOrderDetailPage() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          orderId: baseOrderId,
-          subject,
-          message,
+          orderId: supportOrderId,
+          subject: ticketSubject.trim(),
+          message: ticketMessage.trim(),
         }),
       });
 
@@ -1361,13 +1283,19 @@ export default function CustomerOrderDetailPage() {
         alert(
           typeof data?.message === "string"
             ? data.message
-            : "Erro ao abrir atendimento",
+            : "Erro ao falar com o produtor",
         );
         return;
       }
 
-      alert("Atendimento aberto com sucesso");
+      alert("Solicitação enviada com sucesso");
       setProducerTicketOpen(false);
+      setTicketSubject("");
+      setTicketMessage("");
+
+      if (data.id) {
+        window.location.href = `/customer/support/${data.id}`;
+      }
     } catch (error) {
       console.error("CREATE SUPPORT THREAD ERROR:", error);
       alert("Erro ao conectar com a API");
@@ -1376,53 +1304,235 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
+  const ticketTypeByTicketId = useMemo(() => {
+    const map = new Map<string, string>();
+
+    for (const item of orderItems) {
+      for (const ticket of item.tickets || []) {
+        map.set(ticket.id, item.ticketType?.name || "Ingresso");
+      }
+    }
+
+    if (transfer?.ticket?.id) {
+      map.set(
+        transfer.ticket.id,
+        transfer.ticket.orderItem?.ticketType?.name || "Ingresso transferido",
+      );
+    }
+
+    return map;
+  }, [orderItems, transfer]);
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
-            <p className="text-lg font-medium text-slate-800">
+      <main className="min-h-screen bg-[#f7f7f7]">
+        <div className="mx-auto max-w-[1180px] px-4 py-10">
+          <section className={cardClass()}>
+            <p className="text-sm font-semibold text-slate-700">
               Carregando detalhes...
             </p>
-          </div>
+          </section>
         </div>
-      </div>
+      </main>
     );
   }
 
   if (!order && !transfer) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
-            <p className="text-lg font-medium text-slate-800">
-              Registro não encontrado.
+      <main className="min-h-screen bg-[#f7f7f7]">
+        <div className="mx-auto max-w-[1180px] px-4 py-10">
+          <section className={cardClass()}>
+            <p className="text-sm font-semibold text-slate-700">
+              Pedido não encontrado.
             </p>
-          </div>
+          </section>
         </div>
-      </div>
+      </main>
     );
   }
 
-  const heroTitle = isTransferPage ? "Transferência de ingresso" : "Detalhes do pedido";
-  const heroDescription = getEventDescription();
-  const eventName = getEventName();
-  const eventDate = getEventDate();
-  const countdownNumberClass = getCountdownNumberClass(timeLeftMs);
-
   return (
-    <>
-      <main className="mx-auto max-w-7xl px-4 py-8 pb-32 xl:pb-8">
-        <section className="overflow-hidden rounded-[36px] bg-gradient-to-r from-slate-950 via-slate-900 to-sky-900 text-white shadow-sm">
-          <div className="grid gap-8 p-8 md:p-10 xl:grid-cols-[1.2fr_0.8fr]">
-            <div>
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] backdrop-blur">
-                  {heroTitle}
-                </span>
+    <main className="min-h-screen bg-[#f7f7f7] text-slate-950">
+      <div className="mx-auto max-w-[1180px] px-4 pb-14 pt-7">
+        <section className="mb-5 flex flex-wrap items-center gap-2 text-[13px] text-slate-500">
+          <button
+            type="button"
+            onClick={() => goTo("/customer/dashboard")}
+            className="font-semibold text-sky-600 hover:text-sky-700"
+          >
+            Página inicial
+          </button>
+          <span>&gt;</span>
+          <button
+            type="button"
+            onClick={() => goTo("/customer/orders")}
+            className="font-semibold text-sky-600 hover:text-sky-700"
+          >
+            Meus pedidos
+          </button>
+          <span>&gt;</span>
+          <span className="font-semibold text-slate-700">
+            {isTransferPage ? "Transferência" : "Detalhes do pedido"}
+          </span>
+        </section>
+
+        <section className="overflow-hidden rounded-[30px] bg-white shadow-sm">
+          <div className="grid gap-0 lg:grid-cols-[1fr_390px]">
+            <div className="relative min-h-[280px] bg-gradient-to-br from-slate-950 via-blue-950 to-sky-800 p-7 text-white md:p-9">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.35),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.35),transparent_30%)]" />
+
+              <div className="relative">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-white">
+                    {isTransferPage ? "Transferência" : "Detalhes do pedido"}
+                  </span>
+
+                  <span
+                    className={`rounded-full border px-3 py-1 text-[11px] font-black ${getStatusClasses(
+                      isTransferPage ? transfer?.status : order?.status,
+                    )}`}
+                  >
+                    {getStatusLabel(isTransferPage ? transfer?.status : order?.status)}
+                  </span>
+                </div>
+
+                <h1 className="mt-5 max-w-3xl text-[36px] font-black leading-tight md:text-[54px]">
+                  {getEventName()}
+                </h1>
+
+                <p className="mt-4 max-w-2xl text-sm leading-7 text-white/80">
+                  {getEventDescription()}
+                </p>
+
+                <div className="mt-8 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => goTo(getBackPath())}
+                    className="rounded-xl bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-slate-100"
+                  >
+                    {isTransferPage ? "Voltar para meus pedidos" : "Ir para evento"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setProducerTicketOpen(true)}
+                    className="rounded-xl border border-white/30 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/20"
+                  >
+                    Falar com o produtor
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <aside className="space-y-3 p-5 md:p-6">
+              {isPendingOrder ? (
+                <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                    Tempo restante
+                  </p>
+                  <p
+                    className={`mt-2 text-4xl font-black ${getCountdownNumberClass(
+                      timeLeftMs,
+                    )}`}
+                  >
+                    {formatCountdown(timeLeftMs)}
+                  </p>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Finalize o pagamento antes do cronômetro zerar.
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Registro
+                </p>
+                <p className="mt-2 break-all text-sm font-black text-slate-950">
+                  {isTransferPage ? transfer?.id : order?.id}
+                </p>
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Data do evento
+                </p>
+                <p className="mt-2 text-sm font-black text-slate-950">
+                  {formatDate(getEventDate())}
+                </p>
+              </div>
+
+              {!isTransferPage ? (
+                <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                    Comprador
+                  </p>
+                  <p className="mt-2 text-sm font-black text-slate-950">
+                    {order?.customerName || "-"}
+                  </p>
+                  <p className="mt-1 break-all text-xs text-slate-500">
+                    {order?.customerEmail || "-"}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                    Transferência
+                  </p>
+                  <p className="mt-2 text-sm font-black text-slate-950">
+                    De: {transfer?.fromName || transfer?.fromUser?.name || "-"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Para: {transfer?.toName || transfer?.toUser?.name || "-"}
+                  </p>
+                </div>
+              )}
+            </aside>
+          </div>
+        </section>
+
+        <section className="mt-6 grid gap-4 md:grid-cols-4">
+          <SmallInfoCard
+            label="Status"
+            value={getStatusLabel(isTransferPage ? transfer?.status : order?.status)}
+            detail="Estado atual do registro"
+          />
+
+          <SmallInfoCard
+            label="Ingressos"
+            value={String(totalTickets)}
+            detail={showReleasedTickets ? "Liberados para consulta" : "Liberam após pagamento"}
+          />
+
+          <SmallInfoCard
+            label="Valor total"
+            value={isTransferPage ? "R$ 0,00" : formatMoney(order?.totalAmount)}
+            detail={isTransferPage ? "Recebido por transferência" : "Valor do pedido"}
+          />
+
+          <SmallInfoCard
+            label="Valor pago"
+            value={isTransferPage ? "R$ 0,00" : formatMoney(totalPaid)}
+            detail={!isTransferPage && remainingAmount > 0 ? `${formatMoney(remainingAmount)} restante` : "Sem pendência"}
+          />
+        </section>
+
+        <section className="mt-8 grid gap-7 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-6">
+            <section className={cardClass()}>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-950">
+                    {showReleasedTickets ? "Ingressos" : "Itens do pedido"}
+                  </h2>
+                  <p className="mt-2 text-sm text-slate-500">
+                    {showReleasedTickets
+                      ? "Veja os ingressos liberados, titulares, código e ações disponíveis."
+                      : "Os ingressos deste pedido serão liberados após a confirmação do pagamento."}
+                  </p>
+                </div>
 
                 <span
-                  className={`rounded-full border px-4 py-2 text-xs font-semibold ${getStatusClasses(
+                  className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClasses(
                     isTransferPage ? transfer?.status : order?.status,
                   )}`}
                 >
@@ -1430,158 +1540,28 @@ export default function CustomerOrderDetailPage() {
                 </span>
               </div>
 
-              <h1 className="mt-6 max-w-4xl text-4xl font-black leading-tight md:text-6xl">
-                {eventName}
-              </h1>
-
-              <p className="mt-5 max-w-3xl text-sm leading-7 text-white/85 md:text-base">
-                {heroDescription}
-              </p>
-
-              <div className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/70">
-                    Data do evento
-                  </p>
-                  <p className="mt-2 text-sm font-semibold text-white">
-                    {formatDate(eventDate)}
-                  </p>
-                </div>
-
-                <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/70">
-                    Registro
-                  </p>
-                  <p className="mt-2 break-all text-sm font-semibold text-white">
-                    #{isTransferPage ? transfer?.id : order?.id}
-                  </p>
-                </div>
-
-                <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/70">
-                    Total de ingressos
-                  </p>
-                  <p className="mt-2 text-sm font-semibold text-white">
-                    {totalTickets}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-8 flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => goTo("/customer/orders")}
-                  className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-900 shadow-sm hover:bg-slate-100"
-                >
-                  Voltar para meus pedidos
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => goTo(getBackPath())}
-                  className="rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white hover:bg-white/15"
-                >
-                  Ir para evento
-                </button>
-              </div>
-            </div>
-
-            <div className="grid gap-4 self-start">
-              <div className="rounded-[28px] border border-white/15 bg-white/10 p-5 backdrop-blur">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/65">
-                  Comprador
-                </p>
-                <p className="mt-3 text-lg font-black text-white">
-                  {isTransferPage
-                    ? transfer?.order?.customerName || "Cliente"
-                    : order?.customerName || "Cliente"}
-                </p>
-                <p className="mt-1 text-sm text-white/80">
-                  {isTransferPage
-                    ? transfer?.order?.customerEmail || "-"
-                    : order?.customerEmail || "-"}
-                </p>
-              </div>
-
-              <div className="rounded-[28px] border border-white/15 bg-white/10 p-5 backdrop-blur">
-                <p className="text-xs uppercase tracking-[0.18em] text-white/65">
-                  Valor
-                </p>
-                <p className="mt-3 text-3xl font-black text-white">
-                  {isTransferPage ? "Transferência" : formatMoney(order?.totalAmount)}
-                </p>
-                <p className="mt-1 text-sm text-white/80">
-                  {isTransferPage
-                    ? `Solicitada em ${formatDate(transfer?.requestedAt)}`
-                    : `Criado em ${formatDate(order?.createdAt)}`}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <div className={cardClass()}>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-              Status atual
-            </p>
-            <div className="mt-3">
-              <span
-                className={`inline-flex rounded-full border px-3 py-1 text-sm font-semibold ${getStatusClasses(
-                  isTransferPage ? transfer?.status : order?.status,
-                )}`}
-              >
-                {getStatusLabel(isTransferPage ? transfer?.status : order?.status)}
-              </span>
-            </div>
-          </div>
-
-          <div className={cardClass()}>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-              Valor pago
-            </p>
-            <p className="mt-3 text-3xl font-black text-slate-950">
-              {formatMoney(totalPaid)}
-            </p>
-          </div>
-
-          <div className={cardClass()}>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-              Ingressos
-            </p>
-            <p className="mt-3 text-3xl font-black text-slate-950">{totalTickets}</p>
-          </div>
-        </section>
-
-        <section className="mt-10 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="space-y-6">
-            {!isTransferPage ? (
-              <section className={cardClass()}>
-                <h2 className="text-2xl font-black text-slate-950">
-                  Itens do pedido
-                </h2>
-
+              {!showReleasedTickets ? (
                 <div className="mt-6 space-y-4">
-                  {orderItems.map((item, itemIndex) => (
+                  {orderItems.map((item, index) => (
                     <div
                       key={item.id}
-                      className="rounded-[24px] border border-slate-200 bg-white p-5"
+                      className="rounded-[22px] border border-slate-200 bg-white p-5"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-4">
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Item {itemIndex + 1}
+                          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                            Item {index + 1}
                           </p>
                           <h3 className="mt-2 text-xl font-black text-slate-950">
                             {item.ticketType?.name || "Ingresso"}
                           </h3>
-                          <p className="mt-2 text-sm text-slate-500">
-                            Quantidade: {item.quantity ?? 0}
+                          <p className="mt-1 text-sm text-slate-500">
+                            Quantidade: {item.quantity || item.tickets?.length || 0}
                           </p>
                         </div>
 
-                        <div className="rounded-2xl bg-slate-50 px-4 py-3 text-right">
-                          <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                        <div className="rounded-[18px] bg-slate-50 px-4 py-3 text-right">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
                             Total
                           </p>
                           <p className="mt-1 text-lg font-black text-slate-950">
@@ -1590,210 +1570,115 @@ export default function CustomerOrderDetailPage() {
                         </div>
                       </div>
 
-                      {showReleasedTickets ? (
-                        (item.tickets || []).length > 0 ? (
-                          <div className="mt-5 grid gap-3 md:grid-cols-2">
-                            {(item.tickets || []).map((ticket) => {
-                              const visualStatus = getTicketVisualStatus(ticket);
-
-                              return (
-                                <button
-                                  key={ticket.id}
-                                  type="button"
-                                  onClick={() => handleOpenTicket(ticket)}
-                                  className="rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-slate-100"
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                      <p className="text-sm font-semibold text-slate-900">
-                                        Código {ticket.code || "-"}
-                                      </p>
-                                      <p className="mt-1 text-sm text-slate-500">
-                                        Titular: {ticket.holderName || "Não definido"}
-                                      </p>
-                                      {isReturnOnlyTicket(ticket) ? (
-                                        <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-violet-700">
-                                          Somente devolução
-                                        </p>
-                                      ) : null}
-                                    </div>
-
-                                    <span
-                                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getStatusClasses(
-                                        visualStatus,
-                                      )}`}
-                                    >
-                                      {getStatusLabel(visualStatus)}
-                                    </span>
-                                  </div>
-
-                                  <p className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                                    Toque para abrir ações do ingresso
-                                  </p>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
-                            Nenhum ingresso gerado para este item.
-                          </div>
-                        )
-                      ) : (
-                        <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">
-                          Os ingressos deste pedido serão liberados somente após a
-                          confirmação do pagamento.
-                        </div>
-                      )}
+                      <div className="mt-4 rounded-[16px] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        Os ingressos deste item serão liberados somente após a
+                        confirmação do pagamento.
+                      </div>
                     </div>
                   ))}
                 </div>
-              </section>
-            ) : (
-              <section className={cardClass()}>
-                <h2 className="text-2xl font-black text-slate-950">
-                  Resumo da transferência
-                </h2>
+              ) : (
+                <div className="mt-6 grid gap-4">
+                  {flattenedTickets.length === 0 ? (
+                    <div className="rounded-[22px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
+                      Nenhum ingresso encontrado.
+                    </div>
+                  ) : (
+                    flattenedTickets.map((ticket, index) => {
+                      const status = getDisplayedTicketStatus(ticket);
+                      const ticketTypeName = ticketTypeByTicketId.get(ticket.id) || "Ingresso";
 
-                <div className="mt-6 grid gap-4 md:grid-cols-2">
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="text-sm text-slate-500">Quem enviou</p>
-                    <p className="mt-2 font-semibold text-slate-900">
-                      {transfer?.fromName || transfer?.requestedByName || "-"}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {transfer?.fromEmail || transfer?.requestedByEmail || "-"}
-                    </p>
-                  </div>
+                      return (
+                        <div
+                          key={ticket.id}
+                          className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-4">
+                            <div>
+                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                                Ingresso {index + 1}
+                              </p>
+                              <h3 className="mt-2 text-xl font-black text-slate-950">
+                                {ticketTypeName}
+                              </h3>
+                              <p className="mt-1 text-sm text-slate-500">
+                                Titular: {ticket.holderName || "-"}
+                              </p>
+                              <p className="mt-1 text-sm text-slate-500">
+                                CPF: {formatCpf(ticket.holderCpf)}
+                              </p>
+                            </div>
 
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="text-sm text-slate-500">Quem recebe</p>
-                    <p className="mt-2 font-semibold text-slate-900">
-                      {transfer?.toName || currentUser?.name || "-"}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {transfer?.toEmail || currentUser?.email || "-"}
-                    </p>
-                  </div>
+                            <span
+                              className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClasses(
+                                status,
+                              )}`}
+                            >
+                              {getStatusLabel(status)}
+                            </span>
+                          </div>
 
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="text-sm text-slate-500">Solicitada em</p>
-                    <p className="mt-2 font-semibold text-slate-900">
-                      {formatDate(transfer?.requestedAt)}
-                    </p>
-                  </div>
+                          <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
+                            <div className="rounded-[16px] bg-slate-50 p-4">
+                              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                                Código
+                              </p>
+                              <p className="mt-1 break-all text-sm font-black text-slate-950">
+                                {ticket.code || ticket.id}
+                              </p>
+                            </div>
 
-                  <div className="rounded-2xl bg-slate-50 p-4">
-                    <p className="text-sm text-slate-500">Respondida em</p>
-                    <p className="mt-2 font-semibold text-slate-900">
-                      {formatDate(transfer?.respondedAt)}
-                    </p>
-                  </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenTicket(ticket)}
+                                className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white hover:bg-slate-800"
+                              >
+                                Ver ingresso
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => copyTicketCode(ticket.code || ticket.id)}
+                                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                              >
+                                Copiar
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
+              )}
+            </section>
 
-                {transfer?.responseReason ? (
-                  <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
-                    <p className="text-sm text-slate-500">Motivo / observação</p>
-                    <p className="mt-2 font-semibold text-slate-900">
-                      {transfer.responseReason}
-                    </p>
-                  </div>
-                ) : null}
-
-                {transfer?.ticket ? (
-                  <div className="mt-5 rounded-[24px] border border-slate-200 bg-white p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          Ingresso transferido
-                        </p>
-                        <h3 className="mt-2 text-xl font-black text-slate-950">
-                          {transfer.ticket.orderItem?.ticketType?.name || "Ingresso"}
-                        </h3>
-                        <p className="mt-2 text-sm text-slate-500">
-                          Código: {transfer.ticket.code || "-"}
-                        </p>
-                      </div>
-
-                      <span
-                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(
-                          getDisplayedTicketStatus(buildTransferTicket()),
-                        )}`}
-                      >
-                        {getStatusLabel(getDisplayedTicketStatus(buildTransferTicket()))}
-                      </span>
-                    </div>
-
-                    <div className="mt-5 grid gap-4 md:grid-cols-2">
-                      <div className="rounded-2xl bg-slate-50 p-4">
-                        <p className="text-sm text-slate-500">Titular</p>
-                        <p className="mt-2 font-semibold text-slate-900">
-                          {transfer.ticket.holderName || "-"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-2xl bg-slate-50 p-4">
-                        <p className="text-sm text-slate-500">CPF</p>
-                        <p className="mt-2 font-semibold text-slate-900">
-                          {formatCpf(transfer.ticket.holderCpf)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-5">
-                      {isReturnedTransferRecord() ? (
-                        <button
-                          type="button"
-                          disabled
-                          className="rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-500"
-                        >
-                          Ingresso indisponível
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const transferTicket = buildTransferTicket();
-                            if (transferTicket) {
-                              handleOpenTicket(transferTicket);
-                            }
-                          }}
-                          className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
-                        >
-                          Abrir ingresso
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ) : null}
-              </section>
-            )}
-
-            {(order?.payments || []).length > 0 ? (
+            {!isTransferPage && payments.length > 0 ? (
               <section className={cardClass()}>
                 <h2 className="text-2xl font-black text-slate-950">Pagamentos</h2>
 
-                <div className="mt-6 space-y-3">
-                  {(order?.payments || []).map((payment) => (
+                <div className="mt-5 space-y-3">
+                  {payments.map((payment) => (
                     <div
                       key={payment.id}
-                      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                      className="grid gap-3 rounded-[20px] border border-slate-200 bg-slate-50 p-4 md:grid-cols-[1fr_auto]"
                     >
                       <div>
-                        <p className="font-semibold text-slate-900">
+                        <p className="font-black text-slate-950">
                           {payment.method || "Pagamento"}
                         </p>
                         <p className="mt-1 text-sm text-slate-500">
-                          {formatDate(payment.createdAt)}
+                          Criado em {formatDate(payment.createdAt)}
                         </p>
                       </div>
 
-                      <div className="text-right">
-                        <p className="text-lg font-black text-slate-950">
+                      <div className="text-left md:text-right">
+                        <p className="font-black text-slate-950">
                           {formatMoney(payment.amount)}
                         </p>
                         <span
-                          className={`mt-2 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold ${getStatusClasses(
+                          className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black ${getStatusClasses(
                             payment.status,
                           )}`}
                         >
@@ -1806,32 +1691,30 @@ export default function CustomerOrderDetailPage() {
               </section>
             ) : null}
 
-            {(order?.cancellations || []).length > 0 ? (
+            {!isTransferPage && cancellations.length > 0 ? (
               <section className={cardClass()}>
                 <h2 className="text-2xl font-black text-slate-950">
-                  Histórico de cancelamentos
+                  Cancelamentos e créditos
                 </h2>
 
-                <div className="mt-6 space-y-3">
-                  {(order?.cancellations || []).map((cancellation) => (
+                <div className="mt-5 space-y-3">
+                  {cancellations.map((cancellation) => (
                     <div
                       key={cancellation.id}
-                      className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                      className="rounded-[20px] border border-slate-200 bg-slate-50 p-4"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                          <p className="font-semibold text-slate-900">
-                            {cancellation.ticketId
-                              ? `Ingresso ${cancellation.ticketId}`
-                              : "Pedido inteiro"}
+                          <p className="font-black text-slate-950">
+                            {cancellation.mode || "Solicitação"}
                           </p>
                           <p className="mt-1 text-sm text-slate-500">
-                            {formatDate(cancellation.createdAt)}
+                            Criado em {formatDate(cancellation.createdAt)}
                           </p>
                         </div>
 
                         <span
-                          className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getStatusClasses(
+                          className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClasses(
                             cancellation.status,
                           )}`}
                         >
@@ -1839,30 +1722,21 @@ export default function CustomerOrderDetailPage() {
                         </span>
                       </div>
 
-                      <div className="mt-4 grid gap-3 md:grid-cols-3">
-                        <div className="rounded-2xl bg-white px-4 py-3">
-                          <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
-                            Modalidade
-                          </p>
-                          <p className="mt-1 font-semibold text-slate-900">
-                            {cancellation.mode || "-"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl bg-white px-4 py-3">
-                          <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-[16px] bg-white p-3">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
                             Valor original
                           </p>
-                          <p className="mt-1 font-semibold text-slate-900">
+                          <p className="mt-1 font-black text-slate-950">
                             {formatMoney(cancellation.originalAmount)}
                           </p>
                         </div>
 
-                        <div className="rounded-2xl bg-white px-4 py-3">
-                          <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
-                            Valor devolvido
+                        <div className="rounded-[16px] bg-white p-3">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                            Valor retornado
                           </p>
-                          <p className="mt-1 font-semibold text-slate-900">
+                          <p className="mt-1 font-black text-slate-950">
                             {formatMoney(cancellation.returnedAmount)}
                           </p>
                         </div>
@@ -1872,125 +1746,53 @@ export default function CustomerOrderDetailPage() {
                 </div>
               </section>
             ) : null}
-
-            {!isTransferPage &&
-            flattenedTickets.some((ticket) => (ticket.transferRequests || []).length > 0) ? (
-              <section className={cardClass()}>
-                <h2 className="text-2xl font-black text-slate-950">
-                  Histórico de transferências
-                </h2>
-
-                <div className="mt-6 space-y-4">
-                  {flattenedTickets.map((ticket) => {
-                    const requests = ticket.transferRequests || [];
-
-                    if (requests.length === 0) return null;
-
-                    return (
-                      <div
-                        key={`transfers-${ticket.id}`}
-                        className="rounded-[24px] border border-slate-200 bg-slate-50 p-5"
-                      >
-                        <p className="text-sm font-semibold text-slate-900">
-                          Ingresso {ticket.code || ticket.id}
-                        </p>
-
-                        <div className="mt-4 space-y-3">
-                          {requests.map((request) => (
-                            <button
-                              key={request.id}
-                              type="button"
-                              onClick={() =>
-                                goTo(`/customer/orders/transfer_${request.id}`)
-                              }
-                              className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:bg-slate-50"
-                            >
-                              <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div>
-                                  <p className="font-semibold text-slate-900">
-                                    {request.toName ||
-                                      request.toEmail ||
-                                      request.toCpf ||
-                                      "Destinatário"}
-                                  </p>
-                                  <p className="mt-1 text-sm text-slate-500">
-                                    {formatDate(request.requestedAt)}
-                                  </p>
-                                </div>
-
-                                <span
-                                  className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getStatusClasses(
-                                    request.status,
-                                  )}`}
-                                >
-                                  {getStatusLabel(request.status)}
-                                </span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            ) : null}
           </div>
 
-          <aside className="xl:sticky xl:top-24 xl:self-start">
-            <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
-              <div className="border-b border-slate-100 bg-slate-50 px-6 py-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                  Ações rápidas
-                </p>
-                <h2 className="mt-2 text-2xl font-black text-slate-950">
-                  {isTransferPage ? "Gerenciar transferência" : "Gerenciar pedido"}
-                </h2>
-                <p className="mt-2 text-sm text-slate-500">
-                  Escolha a próxima ação sem se perder na jornada.
-                </p>
-              </div>
+          <aside className="space-y-5 lg:sticky lg:top-24 lg:self-start">
+            <section className={cardClass()}>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                Ações rápidas
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">
+                Gerenciar
+              </h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Escolha uma ação disponível para este registro.
+              </p>
 
-              <div className="space-y-3 p-5">
-                {isPendingOrder ? (
-                <div className="flex min-h-[112px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-4 text-center shadow-sm">
-                <p className="text-[10px] font-black uppercase leading-none tracking-[0.18em] text-slate-500">
-                Tempo restante
-                </p>
-                <p className={`mt-2 text-3xl font-black leading-none ${countdownNumberClass}`}>
-                {formatCountdown(timeLeftMs)}
-                </p>
-                <p className="mt-2 text-sm text-slate-500">
-                {isPendingCountdownExpired
-                ? "O pedido está sendo marcado como expirado."
-                : "Pague antes do cronômetro zerar."}
-                </p>
-                </div>
-                ) : null}
-
+              <div className="mt-6 space-y-3">
                 {isPendingOrder ? (
                   <>
+                    <div className="rounded-[18px] border border-slate-200 bg-white p-4">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                        Tempo restante
+                      </p>
+                      <p
+                        className={`mt-2 text-3xl font-black ${getCountdownNumberClass(
+                          timeLeftMs,
+                        )}`}
+                      >
+                        {formatCountdown(timeLeftMs)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Pague antes do cronômetro zerar.
+                      </p>
+                    </div>
+
                     <button
                       type="button"
                       onClick={handleFinishPayment}
                       disabled={paying || isPendingCountdownExpired}
-                      className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="w-full rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
-                      {isPendingCountdownExpired
-                        ? "Tempo encerrado"
-                        : paying
-                          ? "Finalizando..."
-                          : "Finalizar pagamento"}
+                      {paying ? "Finalizando..." : "Finalizar pagamento"}
                     </button>
 
                     <button
                       type="button"
-                      onClick={handleCancelOrderPending}
-                      disabled={
-                        cancelingOrderMode === "PENDING_SIMPLE" ||
-                        isPendingCountdownExpired
-                      }
-                      className="w-full rounded-2xl border border-rose-200 px-5 py-4 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => handleCancelOrder("PENDING_SIMPLE")}
+                      disabled={!!cancelingOrderMode}
+                      className="w-full rounded-xl border border-rose-200 bg-white px-5 py-4 text-sm font-black text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {cancelingOrderMode === "PENDING_SIMPLE"
                         ? "Cancelando..."
@@ -2003,24 +1805,20 @@ export default function CustomerOrderDetailPage() {
                   <>
                     <button
                       type="button"
-                      onClick={() => handleCancelOrder("WALLET_80")}
-                      disabled={cancelingOrderMode === "WALLET_80"}
-                      className="w-full rounded-2xl border border-violet-200 px-5 py-4 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => handleCancelOrder("REFUND_70")}
+                      disabled={!!cancelingOrderMode}
+                      className="w-full rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-black text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {cancelingOrderMode === "WALLET_80"
-                        ? "Processando..."
-                        : "Cancelar com 80% em wallet"}
+                      Solicitar reembolso 70%
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => handleCancelOrder("REFUND_70")}
-                      disabled={cancelingOrderMode === "REFUND_70"}
-                      className="w-full rounded-2xl border border-orange-200 px-5 py-4 text-sm font-semibold text-orange-700 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => handleCancelOrder("WALLET_80")}
+                      disabled={!!cancelingOrderMode}
+                      className="w-full rounded-xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {cancelingOrderMode === "REFUND_70"
-                        ? "Processando..."
-                        : "Cancelar com estorno de 70%"}
+                      Receber 80% na wallet
                     </button>
                   </>
                 ) : null}
@@ -2029,8 +1827,8 @@ export default function CustomerOrderDetailPage() {
                   <button
                     type="button"
                     onClick={handleAcceptTransfer}
-                    disabled={transferActionLoading === "ACCEPT"}
-                    className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!!transferActionLoading}
+                    className="w-full rounded-xl bg-emerald-600 px-5 py-4 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {transferActionLoading === "ACCEPT"
                       ? "Aceitando..."
@@ -2042,8 +1840,8 @@ export default function CustomerOrderDetailPage() {
                   <button
                     type="button"
                     onClick={handleRejectTransfer}
-                    disabled={transferActionLoading === "REJECT"}
-                    className="w-full rounded-2xl border border-rose-200 px-5 py-4 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!!transferActionLoading}
+                    className="w-full rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-black text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {transferActionLoading === "REJECT"
                       ? "Recusando..."
@@ -2055,8 +1853,8 @@ export default function CustomerOrderDetailPage() {
                   <button
                     type="button"
                     onClick={handleCancelTransfer}
-                    disabled={transferActionLoading === "CANCEL"}
-                    className="w-full rounded-2xl border border-slate-200 px-5 py-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!!transferActionLoading}
+                    className="w-full rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-black text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {transferActionLoading === "CANCEL"
                       ? "Cancelando..."
@@ -2066,8 +1864,8 @@ export default function CustomerOrderDetailPage() {
 
                 <button
                   type="button"
-                  onClick={handleTalkToProducer}
-                  className="w-full rounded-2xl border border-sky-200 px-5 py-4 text-sm font-semibold text-sky-700 transition hover:bg-sky-50"
+                  onClick={() => setProducerTicketOpen(true)}
+                  className="w-full rounded-xl border border-sky-200 bg-white px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-50"
                 >
                   Falar com o produtor
                 </button>
@@ -2075,170 +1873,171 @@ export default function CustomerOrderDetailPage() {
                 <button
                   type="button"
                   onClick={() => goTo("/customer/orders")}
-                  className="w-full rounded-2xl border border-slate-200 px-5 py-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
                 >
                   Voltar para meus pedidos
                 </button>
               </div>
-            </div>
+            </section>
+
+            {!isTransferPage ? (
+              <section className={cardClass()}>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                  Financeiro
+                </p>
+                <div className="mt-5 space-y-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Total do pedido</span>
+                    <span className="font-black text-slate-950">
+                      {formatMoney(order?.totalAmount)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Valor pago</span>
+                    <span className="font-black text-emerald-700">
+                      {formatMoney(totalPaid)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-slate-200 pt-3">
+                    <span className="text-slate-500">Restante</span>
+                    <span className="font-black text-slate-950">
+                      {formatMoney(remainingAmount)}
+                    </span>
+                  </div>
+                </div>
+              </section>
+            ) : null}
           </aside>
         </section>
-      </main>
+      </div>
 
       {selectedTicket ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6">
-          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[30px] bg-white shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                  Ingresso
-                </p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">
-                  {selectedTicket.code || "Código indisponível"}
-                </h3>
-                <p className="mt-2 text-sm text-slate-500">{eventName}</p>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
+          <div className="max-h-[92vh] w-full max-w-[620px] overflow-y-auto rounded-[28px] bg-white shadow-2xl">
+            <div className="border-b border-slate-100 p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                    Ingresso digital
+                  </p>
+                  <h2 className="mt-2 text-2xl font-black text-slate-950">
+                    {ticketTypeByTicketId.get(selectedTicket.id) || "Ingresso"}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {getEventName()}
+                  </p>
+                </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedTicket(null)}
-                className="rounded-full border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
-              >
-                ✕
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTicket(null)}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-sm font-black text-slate-600 hover:bg-slate-50"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-6 p-6">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <p className="text-sm text-slate-500">Titular</p>
-                  <p className="mt-2 font-semibold text-slate-900">
+            <div className="p-6">
+              <div className="mx-auto flex h-64 w-64 items-center justify-center rounded-[26px] border border-slate-200 bg-slate-50 p-5">
+                <div className="grid h-full w-full grid-cols-5 gap-2">
+                  {Array.from({ length: 25 }).map((_, index) => (
+                    <div
+                      key={index}
+                      className={`rounded ${
+                        (index + String(selectedTicket.code || selectedTicket.id).length) %
+                          3 ===
+                        0
+                          ? "bg-slate-950"
+                          : "bg-white"
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-[20px] bg-slate-50 p-4 text-center">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Código do ingresso
+                </p>
+                <p className="mt-2 break-all text-lg font-black text-slate-950">
+                  {selectedTicket.code || selectedTicket.id}
+                </p>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                <div className="rounded-[18px] border border-slate-200 bg-white p-4">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Titular
+                  </p>
+                  <p className="mt-1 font-black text-slate-950">
                     {selectedTicket.holderName || "-"}
                   </p>
                 </div>
 
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <p className="text-sm text-slate-500">CPF</p>
-                  <p className="mt-2 font-semibold text-slate-900">
+                <div className="rounded-[18px] border border-slate-200 bg-white p-4">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                    CPF
+                  </p>
+                  <p className="mt-1 font-black text-slate-950">
                     {formatCpf(selectedTicket.holderCpf)}
                   </p>
                 </div>
-
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <p className="text-sm text-slate-500">Email</p>
-                  <p className="mt-2 font-semibold text-slate-900">
-                    {selectedTicket.holderEmail || "-"}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <p className="text-sm text-slate-500">Status</p>
-                  <div className="mt-2">
-                    <span
-                      className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(
-                        getDisplayedTicketStatus(selectedTicket),
-                      )}`}
-                    >
-                      {getStatusLabel(getDisplayedTicketStatus(selectedTicket))}
-                    </span>
-                  </div>
-                </div>
               </div>
 
-              {isReturnOnlyTicket(selectedTicket) ? (
-                <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 text-sm leading-6 text-violet-800">
-                  Este ingresso foi recebido por transferência. Ele não pode ser
-                  enviado para outra pessoa, apenas devolvido para quem enviou
-                  originalmente.
-                </div>
-              ) : null}
-
-              <div className="flex flex-wrap gap-3">
+              <div className="mt-6 grid gap-3 md:grid-cols-2">
                 <button
                   type="button"
-                  onClick={() => copyTicketCode(selectedTicket.code)}
-                  className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+                  onClick={() => copyTicketCode(selectedTicket.code || selectedTicket.id)}
+                  className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-700 hover:bg-slate-50"
                 >
                   Copiar código
                 </button>
 
-                {canTransferTicket(selectedTicket) &&
-                !isReturnOnlyTicket(selectedTicket) ? (
+                {canTransferTicket(selectedTicket) ? (
                   <button
                     type="button"
                     onClick={() => openTransferModal(selectedTicket)}
-                    className="rounded-2xl border border-sky-200 px-4 py-3 text-sm font-semibold text-sky-700 hover:bg-sky-50"
+                    className="rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800"
                   >
                     Transferir ingresso
                   </button>
                 ) : null}
 
-                {canTransferTicket(selectedTicket) &&
-                isReturnOnlyTicket(selectedTicket) ? (
+                {isReturnOnlyTicket(selectedTicket) ? (
                   <button
                     type="button"
                     onClick={() => handleReturnTicket(selectedTicket)}
                     disabled={returningTicket}
-                    className="rounded-2xl border border-violet-200 px-4 py-3 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="rounded-xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {returningTicket ? "Devolvendo..." : "Devolver ingresso"}
                   </button>
                 ) : null}
 
-                {isPendingOrder ? (
-                  <button
-                    type="button"
-                    onClick={handleCancelTicketPending}
-                    disabled={
-                      cancelingTicketMode === "PENDING_SIMPLE" ||
-                      isPendingCountdownExpired
-                    }
-                    className="rounded-2xl border border-rose-200 px-4 py-3 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {cancelingTicketMode === "PENDING_SIMPLE"
-                      ? "Cancelando..."
-                      : "Cancelar ingresso"}
-                  </button>
-                ) : null}
-
-                {isPaidOrder ? (
+                {isPaidOrder && selectedTicket.status === "AVAILABLE" ? (
                   <>
                     <button
                       type="button"
-                      onClick={() => handleCancelTicket("WALLET_80")}
-                      disabled={cancelingTicketMode === "WALLET_80"}
-                      className="rounded-2xl border border-violet-200 px-4 py-3 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => handleCancelTicket(selectedTicket, "REFUND_70")}
+                      disabled={!!cancelingTicketMode}
+                      className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-black text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {cancelingTicketMode === "WALLET_80"
-                        ? "Processando..."
-                        : "Cancelar com wallet"}
+                      Reembolso 70%
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => handleCancelTicket("REFUND_70")}
-                      disabled={cancelingTicketMode === "REFUND_70"}
-                      className="rounded-2xl border border-orange-200 px-4 py-3 text-sm font-semibold text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => handleCancelTicket(selectedTicket, "WALLET_80")}
+                      disabled={!!cancelingTicketMode}
+                      className="rounded-xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {cancelingTicketMode === "REFUND_70"
-                        ? "Processando..."
-                        : "Cancelar com estorno"}
+                      Crédito 80%
                     </button>
                   </>
                 ) : null}
-              </div>
-
-              <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  QR Code
-                </p>
-                <p className="mt-4 break-all text-2xl font-black text-slate-950">
-                  {selectedTicket.code || selectedTicket.id}
-                </p>
-                <p className="mt-3 text-sm text-slate-500">
-                  Prévia visual do ingresso. A validação real usa o código assinado do
-                  ticket.
-                </p>
               </div>
             </div>
           </div>
@@ -2246,152 +2045,121 @@ export default function CustomerOrderDetailPage() {
       ) : null}
 
       {transferModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
           <form
             onSubmit={handleSubmitTransfer}
-            className="w-full max-w-xl rounded-[30px] bg-white shadow-2xl"
+            className="w-full max-w-[520px] rounded-[28px] bg-white p-6 shadow-2xl"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
                   Transferência
                 </p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">
-                  Transferir ingresso
-                </h3>
+                <h2 className="mt-2 text-2xl font-black text-slate-950">
+                  Enviar ingresso
+                </h2>
                 <p className="mt-2 text-sm text-slate-500">
-                  Informe o CPF do destinatário.
+                  Informe o CPF da pessoa que receberá este ingresso.
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={closeTransferModal}
-                className="rounded-full border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
+                className="rounded-full border border-slate-200 px-3 py-1 text-sm font-black text-slate-600 hover:bg-slate-50"
               >
                 ✕
               </button>
             </div>
 
-            <div className="space-y-4 p-6">
-              <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Ingresso</p>
-                <p className="mt-2 font-semibold text-slate-900">
-                  {transferSourceTicket?.code || transferSourceTicket?.id || "-"}
-                </p>
-              </div>
-
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700">
-                  CPF do destinatário
-                </span>
-                <input
-                  type="text"
-                  value={transferTargetCpf}
-                  onChange={(e) => setTransferTargetCpf(e.target.value)}
-                  placeholder="000.000.000-00"
-                  className="mt-2 h-14 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-400"
-                />
+            <div className="mt-6">
+              <label className="mb-2 block text-sm font-bold text-slate-700">
+                CPF do destinatário
               </label>
-
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">
-                Depois de criada, a transferência ficará pendente até o destinatário
-                aceitar ou recusar.
-              </div>
-
-              <div className="flex flex-wrap gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={transferSubmitting}
-                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {transferSubmitting ? "Enviando..." : "Criar transferência"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={closeTransferModal}
-                  className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-              </div>
+              <input
+                value={transferTargetCpf}
+                onChange={(event) => setTransferTargetCpf(formatCpf(event.target.value))}
+                maxLength={14}
+                inputMode="numeric"
+                placeholder="000.000.000-00"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+              />
             </div>
+
+            <button
+              type="submit"
+              disabled={transferSubmitting}
+              className="mt-6 w-full rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {transferSubmitting ? "Enviando..." : "Criar transferência"}
+            </button>
           </form>
         </div>
       ) : null}
 
       {producerTicketOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
           <form
-            onSubmit={handleSubmitProducerTicket}
-            className="w-full max-w-2xl rounded-[30px] bg-white shadow-2xl"
+            onSubmit={handleCreateSupportThread}
+            className="w-full max-w-[620px] rounded-[28px] bg-white p-6 shadow-2xl"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                  Atendimento
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                  Suporte
                 </p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">
+                <h2 className="mt-2 text-2xl font-black text-slate-950">
                   Falar com o produtor
-                </h3>
+                </h2>
                 <p className="mt-2 text-sm text-slate-500">
-                  Descreva sua dúvida para abrir um atendimento vinculado ao registro.
+                  Abra uma solicitação vinculada a este pedido.
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={() => setProducerTicketOpen(false)}
-                className="rounded-full border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-50"
+                className="rounded-full border border-slate-200 px-3 py-1 text-sm font-black text-slate-600 hover:bg-slate-50"
               >
                 ✕
               </button>
             </div>
 
-            <div className="space-y-4 p-6">
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Assunto</span>
-                <input
-                  type="text"
-                  value={ticketSubject}
-                  onChange={(e) => setTicketSubject(e.target.value)}
-                  className="mt-2 h-14 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-400"
-                />
+            <div className="mt-6">
+              <label className="mb-2 block text-sm font-bold text-slate-700">
+                Assunto
               </label>
-
-              <label className="block">
-                <span className="text-sm font-semibold text-slate-700">Mensagem</span>
-                <textarea
-                  value={ticketMessage}
-                  onChange={(e) => setTicketMessage(e.target.value)}
-                  rows={6}
-                  placeholder="Explique o que aconteceu..."
-                  className="mt-2 w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400"
-                />
-              </label>
-
-              <div className="flex flex-wrap gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={creatingSupportThread}
-                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {creatingSupportThread ? "Abrindo..." : "Abrir atendimento"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setProducerTicketOpen(false)}
-                  className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-              </div>
+              <input
+                value={ticketSubject}
+                onChange={(event) => setTicketSubject(event.target.value)}
+                placeholder="Ex: Dúvida sobre meu ingresso"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+              />
             </div>
+
+            <div className="mt-4">
+              <label className="mb-2 block text-sm font-bold text-slate-700">
+                Mensagem
+              </label>
+              <textarea
+                value={ticketMessage}
+                onChange={(event) => setTicketMessage(event.target.value)}
+                rows={5}
+                placeholder="Descreva sua solicitação..."
+                className="w-full resize-none rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={creatingSupportThread}
+              className="mt-6 w-full rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {creatingSupportThread ? "Enviando..." : "Enviar solicitação"}
+            </button>
           </form>
         </div>
       ) : null}
-    </>
+    </main>
   );
 }

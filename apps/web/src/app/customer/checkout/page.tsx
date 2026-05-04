@@ -21,6 +21,26 @@ type OrganizerInfo = {
   id?: string;
   tradeName?: string;
   legalName?: string;
+  logoUrl?: string;
+};
+
+type EventMedia = {
+  coverImageUrl?: string;
+  bannerImageUrl?: string;
+  thumbnailUrl?: string;
+  mobileBannerUrl?: string;
+  gallery?: string[];
+};
+
+type EventLocation = {
+  mode?: string;
+  venueName?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
 };
 
 type EventDetail = {
@@ -33,10 +53,14 @@ type EventDetail = {
   endDate?: string;
   capacity?: number;
   status?: string;
+  category?: string;
+  highlightTag?: string;
   checkoutTitle?: string;
   checkoutSubtitle?: string;
   organizer?: OrganizerInfo;
   ticketTypes?: TicketTypeItem[];
+  media?: EventMedia | null;
+  location?: EventLocation | null;
 };
 
 type WalletTransaction = {
@@ -90,6 +114,7 @@ function formatCpf(value: string) {
 
   if (digits.length <= 3) return digits;
   if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+
   if (digits.length <= 9) {
     return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
   }
@@ -104,11 +129,12 @@ function formatDate(value?: string) {
   if (!value) return "-";
 
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return value;
 
   return date.toLocaleString("pt-BR", {
     day: "2-digit",
-    month: "2-digit",
+    month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
@@ -186,16 +212,93 @@ function getTicketLabel(ticket: TicketTypeItem) {
     : ticket.name || "Ingresso";
 }
 
-function inputClass() {
-  return "w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none transition focus:border-sky-500";
+function getEventImage(event?: EventDetail | null) {
+  if (!event) return "";
+
+  return (
+    event.media?.bannerImageUrl ||
+    event.media?.coverImageUrl ||
+    event.media?.mobileBannerUrl ||
+    event.media?.thumbnailUrl ||
+    event.media?.gallery?.[0] ||
+    ""
+  );
 }
 
-function inputReadOnlyClass() {
-  return "w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800";
+function getLocationLabel(event?: EventDetail | null) {
+  if (!event?.location) return "Local a confirmar";
+
+  if (String(event.location.mode || "").toUpperCase() === "ONLINE") {
+    return "Evento online";
+  }
+
+  const cityState = [event.location.city, event.location.state]
+    .filter(Boolean)
+    .join(" - ");
+
+  return [event.location.venueName, cityState].filter(Boolean).join(", ") ||
+    "Local a confirmar";
+}
+
+function getFullAddress(event?: EventDetail | null) {
+  if (!event?.location) return "Endereço a confirmar";
+
+  if (String(event.location.mode || "").toUpperCase() === "ONLINE") {
+    return "O acesso será enviado pelos canais do evento.";
+  }
+
+  const pieces = [
+    event.location.addressLine1,
+    event.location.addressLine2,
+    event.location.neighborhood,
+    event.location.city,
+    event.location.state,
+    event.location.zipCode,
+  ].filter(Boolean);
+
+  return pieces.length > 0 ? pieces.join(", ") : "Endereço a confirmar";
+}
+
+function inputClass() {
+  return "w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100";
+}
+
+function readOnlyBoxClass() {
+  return "rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900";
 }
 
 function cardClass() {
   return "rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm";
+}
+
+function getStatusLabel(status?: string) {
+  const normalized = String(status || "").toUpperCase();
+
+  if (normalized === "ACTIVE") return "Disponível";
+  if (normalized === "PUBLISHED") return "Publicado";
+  if (normalized === "INACTIVE") return "Indisponível";
+  if (normalized === "SOLD_OUT") return "Esgotado";
+  if (normalized === "CANCELED") return "Cancelado";
+
+  return status || "Disponível";
+}
+
+function getStatusClass(status?: string) {
+  const normalized = String(status || "").toUpperCase();
+
+  if (
+    normalized === "ACTIVE" ||
+    normalized === "PUBLISHED" ||
+    normalized === "AVAILABLE"
+  ) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (normalized === "INACTIVE" || normalized === "SOLD_OUT") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+
+  return "border-sky-200 bg-sky-50 text-sky-700";
 }
 
 export default function CustomerCheckoutPage() {
@@ -215,10 +318,12 @@ export default function CustomerCheckoutPage() {
 
   const searchParams = useMemo(() => {
     if (typeof window === "undefined") return new URLSearchParams();
+
     return new URLSearchParams(window.location.search);
   }, []);
 
   const eventId = searchParams.get("eventId") || "";
+
   const requestedItems = useMemo(
     () => parseRequestedItems(searchParams),
     [searchParams],
@@ -263,6 +368,7 @@ export default function CustomerCheckoutPage() {
             method: "GET",
             headers: {
               "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
             },
           }),
           fetch("http://localhost:3001/v1/users/me/wallet", {
@@ -288,16 +394,18 @@ export default function CustomerCheckoutPage() {
         }
 
         if (!walletRes.ok) {
-          alert(
-            typeof walletData?.message === "string"
-              ? walletData.message
-              : "Erro ao carregar wallet",
-          );
-          return;
+          console.warn("Não foi possível carregar wallet:", walletData);
+          setWallet({
+            balance: 0,
+            transactions: [],
+          });
+        } else {
+          setWallet(walletData);
         }
 
         const availableTicketTypes = (eventData.ticketTypes || []).filter(
-          (ticket: TicketTypeItem) => ticket.status === "ACTIVE" && !ticket.isHidden,
+          (ticket: TicketTypeItem) =>
+            ticket.status === "ACTIVE" && !ticket.isHidden,
         );
 
         const normalizedItems = requestedItems.filter((item) =>
@@ -313,7 +421,6 @@ export default function CustomerCheckoutPage() {
         }
 
         setEvent(eventData);
-        setWallet(walletData);
         setCartItems(mergeCartItems(normalizedItems));
       } catch (error) {
         console.error("CUSTOMER CHECKOUT ERROR:", error);
@@ -383,9 +490,11 @@ export default function CustomerCheckoutPage() {
   );
 
   const walletBalanceNumber = toNumber(wallet?.balance);
+
   const walletApplied = useWalletBalance
     ? Math.min(walletBalanceNumber, subtotal)
     : 0;
+
   const remainingAmount = Math.max(0, subtotal - walletApplied);
   const purchaseWillBePaid = remainingAmount === 0;
 
@@ -492,7 +601,7 @@ export default function CustomerCheckoutPage() {
                 ...holder,
                 useBuyerData: checked,
                 name: checked ? customerName : holder.name,
-                email: checked ? customerEmail : holder.email,
+                email: checked ? customerEmail : "",
                 cpf: checked ? formatCpf(customerCpf) : holder.cpf,
               }
             : holder,
@@ -504,7 +613,7 @@ export default function CustomerCheckoutPage() {
   function handleHolderFieldChange(
     ticketTypeId: string,
     index: number,
-    field: "name" | "email" | "cpf",
+    field: "name" | "cpf",
     value: string,
   ) {
     setHoldersByTicketType((prev) => {
@@ -542,17 +651,17 @@ export default function CustomerCheckoutPage() {
     const customerCpfDigits = onlyDigits(customerCpf);
 
     if (!customerName.trim()) {
-      alert("Informe o nome");
+      alert("Dados do comprador incompletos: nome não encontrado.");
       return;
     }
 
     if (!customerEmail.trim()) {
-      alert("Informe o email");
+      alert("Dados do comprador incompletos: email não encontrado.");
       return;
     }
 
     if (customerCpfDigits.length !== 11) {
-      alert("Informe o CPF do comprador com 11 dígitos");
+      alert("Dados do comprador incompletos: CPF inválido.");
       return;
     }
 
@@ -579,7 +688,9 @@ export default function CustomerCheckoutPage() {
 
       if (availableQuantity > 0 && item.quantity > availableQuantity) {
         alert(
-          `A quantidade de ${item.ticketType.name || "ingresso"} é maior do que a disponível`,
+          `A quantidade de ${
+            item.ticketType.name || "ingresso"
+          } é maior do que a disponível`,
         );
         return;
       }
@@ -588,7 +699,9 @@ export default function CustomerCheckoutPage() {
 
       if (holders.length !== item.quantity) {
         alert(
-          `Os titulares do item ${item.ticketType.name || "ingresso"} ainda não foram preparados corretamente`,
+          `Os titulares do item ${
+            item.ticketType.name || "ingresso"
+          } ainda não foram preparados corretamente`,
         );
         return;
       }
@@ -596,7 +709,6 @@ export default function CustomerCheckoutPage() {
       for (let index = 0; index < holders.length; index += 1) {
         const holder = holders[index];
         const holderName = holder.useBuyerData ? customerName : holder.name;
-        const holderEmail = holder.useBuyerData ? customerEmail : holder.email;
         const holderCpf = holder.useBuyerData ? customerCpf : holder.cpf;
         const holderCpfDigits = onlyDigits(holderCpf);
 
@@ -616,14 +728,6 @@ export default function CustomerCheckoutPage() {
             }`,
           );
           return;
-        }
-
-        if (
-          !holder.useBuyerData &&
-          holderCpfDigits !== customerCpfDigits &&
-          holderEmail.trim().length === 0
-        ) {
-          // Mantido opcional, conforme sua lógica atual.
         }
       }
     }
@@ -650,7 +754,7 @@ export default function CustomerCheckoutPage() {
               (holder) => ({
                 name: (holder.useBuyerData ? customerName : holder.name).trim(),
                 email: (
-                  holder.useBuyerData ? customerEmail : holder.email
+                  holder.useBuyerData ? customerEmail : holder.email || ""
                 ).trim(),
                 cpf: onlyDigits(holder.useBuyerData ? customerCpf : holder.cpf),
               }),
@@ -698,8 +802,8 @@ export default function CustomerCheckoutPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-7xl px-4 py-10">
+      <div className="min-h-screen bg-[#f7f7f7]">
+        <div className="mx-auto max-w-[1180px] px-4 py-10">
           <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
             <p className="text-lg font-medium text-slate-800">
               Carregando checkout...
@@ -712,8 +816,8 @@ export default function CustomerCheckoutPage() {
 
   if (!event || selectedItemsDetailed.length === 0) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-7xl px-4 py-10">
+      <div className="min-h-screen bg-[#f7f7f7]">
+        <div className="mx-auto max-w-[1180px] px-4 py-10">
           <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
             <p className="text-lg font-medium text-slate-800">
               Checkout não encontrado.
@@ -724,461 +828,530 @@ export default function CustomerCheckoutPage() {
     );
   }
 
+  const eventImage = getEventImage(event);
+  const organizerName =
+    event.organizer?.tradeName || event.organizer?.legalName || "Organizador";
+
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8 pb-32 xl:pb-8">
-      <section className="overflow-hidden rounded-[34px] bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 p-8 text-white shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/75">
-          Checkout
-        </p>
+    <main className="min-h-screen bg-[#f7f7f7] text-slate-950">
+      <div className="mx-auto max-w-[1180px] px-4 pb-32 pt-7 xl:pb-12">
+        <section className="mb-5 flex flex-wrap items-center gap-2 text-[13px] text-slate-500">
+          <button
+            type="button"
+            onClick={() => goTo("/customer/dashboard")}
+            className="font-semibold text-sky-600 hover:text-sky-700"
+          >
+            Página inicial
+          </button>
+          <span>&gt;</span>
+          <button
+            type="button"
+            onClick={() => goTo("/customer/events")}
+            className="font-semibold text-sky-600 hover:text-sky-700"
+          >
+            Eventos
+          </button>
+          <span>&gt;</span>
+          <button
+            type="button"
+            onClick={() => goTo(`/customer/events/${event.id}`)}
+            className="font-semibold text-sky-600 hover:text-sky-700"
+          >
+            {event.name || "Evento"}
+          </button>
+          <span>&gt;</span>
+          <span className="font-semibold text-slate-700">Checkout</span>
+        </section>
 
-        <h1 className="mt-4 text-4xl font-black leading-tight md:text-5xl">
-          Finalize seu pedido
-        </h1>
-
-        <p className="mt-4 max-w-3xl text-sm leading-6 text-white/85 md:text-base">
-          Revise seus ingressos, defina os titulares e confirme a compra com
-          mais clareza.
-        </p>
-
-        <div className="mt-6 flex flex-wrap gap-3 text-sm text-white/85">
-          <span>🎟️ {event.name || "Evento"}</span>
-          <span>
-            👤{" "}
-            {event.organizer?.tradeName ||
-              event.organizer?.legalName ||
-              "Organizador"}
-          </span>
-          <span>📅 {formatDate(event.startDate || event.eventDate)}</span>
-        </div>
-      </section>
-
-      <section className="mt-10 grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
-        <form
-          id="customer-checkout-form"
-          onSubmit={handleCreateOrder}
-          className="space-y-6"
-        >
-          <section className={cardClass()}>
-            <h2 className="text-2xl font-black text-slate-950">
-              Dados do comprador
-            </h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Esses dados serão usados no pedido e podem ser reaproveitados nos
-              titulares.
-            </p>
-
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  Nome do comprador
-                </label>
-                <input
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  className={inputClass()}
-                  placeholder="Seu nome"
+        <section className="overflow-hidden rounded-[30px] bg-white shadow-sm">
+          <div className="grid md:grid-cols-[0.95fr_1.05fr]">
+            <div className="relative min-h-[260px] bg-slate-900">
+              {eventImage ? (
+                <img
+                  src={eventImage}
+                  alt={event.name || "Evento"}
+                  className="absolute inset-0 h-full w-full object-cover"
                 />
-              </div>
+              ) : (
+                <div className="absolute inset-0 bg-gradient-to-br from-sky-600 via-blue-700 to-indigo-900" />
+              )}
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  Email do comprador
-                </label>
-                <input
-                  type="email"
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  className={inputClass()}
-                  placeholder="seuemail@exemplo.com"
-                />
-              </div>
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-transparent" />
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  CPF do comprador
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={customerCpf}
-                  onChange={(e) => setCustomerCpf(formatCpf(e.target.value))}
-                  className={inputClass()}
-                  placeholder="000.000.000-00"
-                  maxLength={14}
-                />
+              <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
+                <span className="rounded-full bg-white/95 px-3 py-1 text-[11px] font-black text-slate-800">
+                  Checkout
+                </span>
+                <h1 className="mt-4 text-[34px] font-black leading-tight md:text-[44px]">
+                  Finalize seu pedido
+                </h1>
+                <p className="mt-3 text-sm leading-6 text-white/85">
+                  Revise seus ingressos, titulares e pagamento antes de criar o
+                  pedido.
+                </p>
               </div>
             </div>
 
-            <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 p-5">
-              <p className="text-sm leading-6 text-amber-800">
-                Regras da compra: no máximo <strong>4 ingressos</strong> por
-                pedido, sendo até <strong>2 no CPF do comprador</strong> e até{" "}
-                <strong>2 para outros CPFs</strong>. O prazo de 10 minutos
-                começa depois que o pedido é criado.
+            <div className="p-6 md:p-8">
+              <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                Evento selecionado
               </p>
-            </div>
-          </section>
 
-          <section className={cardClass()}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-black text-slate-950">Titulares</h2>
-                <p className="mt-2 text-sm text-slate-500">
-                  Defina para quem cada ingresso vai ficar.
-                </p>
-              </div>
+              <h2 className="mt-3 text-3xl font-black leading-tight text-slate-950">
+                {event.name || "Evento sem nome"}
+              </h2>
 
-              <div
-                className={`rounded-[22px] border px-4 py-3 text-sm ${
-                  holderStats.isValid
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                    : "border-amber-200 bg-amber-50 text-amber-800"
-                }`}
-              >
-                <p className="font-semibold">
-                  Comprador: {holderStats.buyerCount} · Outros: {holderStats.otherCount}
-                </p>
-                <p className="mt-1">{holderStats.message}</p>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-5">
-              {selectedItemsDetailed.map((item) => (
-                <div
-                  key={`holders-${item.ticketTypeId}`}
-                  className="rounded-[24px] border border-sky-100 bg-sky-50 p-5"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-lg font-black text-slate-950">
-                        {getTicketLabel(item.ticketType)}
-                      </h3>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {item.quantity} ingresso(s) neste item
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 space-y-4">
-                    {(holdersByTicketType[item.ticketTypeId] || []).map(
-                      (holder, index) => (
-                        <div
-                          key={`${item.ticketTypeId}-${index}`}
-                          className="rounded-[22px] border border-slate-200 bg-white p-4"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="font-semibold text-slate-900">
-                                Ingresso {index + 1}
-                              </p>
-                              <p className="mt-1 text-sm text-slate-500">
-                                {item.ticketType.name || "Ingresso"}
-                              </p>
-                            </div>
-
-                            <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700">
-                              <input
-                                type="checkbox"
-                                checked={holder.useBuyerData}
-                                onChange={(e) =>
-                                  handleHolderUseBuyerChange(
-                                    item.ticketTypeId,
-                                    index,
-                                    e.target.checked,
-                                  )
-                                }
-                              />
-                              Usar dados do comprador
-                            </label>
-                          </div>
-
-                          {holder.useBuyerData ? (
-                            <div className="mt-4 grid gap-3 md:grid-cols-3">
-                              <div>
-                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                  Nome
-                                </label>
-                                <div className={inputReadOnlyClass()}>
-                                  {customerName || "-"}
-                                </div>
-                              </div>
-
-                              <div>
-                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                  Email
-                                </label>
-                                <div className={`${inputReadOnlyClass()} break-all`}>
-                                  {customerEmail || "-"}
-                                </div>
-                              </div>
-
-                              <div>
-                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                  CPF
-                                </label>
-                                <div className={inputReadOnlyClass()}>
-                                  {formatCpf(customerCpf) || "-"}
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="mt-4 grid gap-3 md:grid-cols-3">
-                              <div>
-                                <label className="mb-2 block text-sm font-medium text-slate-700">
-                                  Nome do titular
-                                </label>
-                                <input
-                                  type="text"
-                                  value={holder.name}
-                                  onChange={(e) =>
-                                    handleHolderFieldChange(
-                                      item.ticketTypeId,
-                                      index,
-                                      "name",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className={inputClass()}
-                                  placeholder="Nome completo"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="mb-2 block text-sm font-medium text-slate-700">
-                                  Email do titular
-                                </label>
-                                <input
-                                  type="email"
-                                  value={holder.email}
-                                  onChange={(e) =>
-                                    handleHolderFieldChange(
-                                      item.ticketTypeId,
-                                      index,
-                                      "email",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className={inputClass()}
-                                  placeholder="email@exemplo.com"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="mb-2 block text-sm font-medium text-slate-700">
-                                  CPF do titular
-                                </label>
-                                <input
-                                  type="text"
-                                  inputMode="numeric"
-                                  value={holder.cpf}
-                                  onChange={(e) =>
-                                    handleHolderFieldChange(
-                                      item.ticketTypeId,
-                                      index,
-                                      "cpf",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className={inputClass()}
-                                  placeholder="000.000.000-00"
-                                  maxLength={14}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className={cardClass()}>
-            <h2 className="text-2xl font-black text-slate-950">Pagamento</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Escolha como a wallet entra nesta compra.
-            </p>
-
-            <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm text-slate-500">Saldo atual da wallet</p>
-                  <p className="mt-2 text-2xl font-black text-slate-950">
-                    {formatMoney(wallet?.balance)}
+              <div className="mt-5 grid gap-3 text-sm text-slate-600">
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Data
+                  </p>
+                  <p className="mt-1 font-bold text-slate-950">
+                    {formatDate(event.startDate || event.eventDate)}
                   </p>
                 </div>
 
-                <label className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-sm font-medium text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={useWalletBalance}
-                    onChange={(e) => setUseWalletBalance(e.target.checked)}
-                  />
-                  Usar saldo da wallet nesta compra
-                </label>
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Local
+                  </p>
+                  <p className="mt-1 font-bold text-slate-950">
+                    {getLocationLabel(event)}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {getFullAddress(event)}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Organizador
+                  </p>
+                  <p className="mt-1 font-bold text-slate-950">
+                    {organizerName}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-8 grid gap-7 xl:grid-cols-[minmax(0,1fr)_390px]">
+          <form
+            id="customer-checkout-form"
+            onSubmit={handleCreateOrder}
+            className="space-y-6"
+          >
+            <section className={cardClass()}>
+              <h2 className="text-2xl font-black text-slate-950">
+                Dados do comprador
+              </h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Esses dados vêm da conta logada e ficam travados nesta etapa.
+              </p>
+
+              <div className="mt-6 grid gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <p className="mb-2 text-sm font-medium text-slate-700">
+                    Nome do comprador
+                  </p>
+                  <div className={readOnlyBoxClass()}>
+                    {customerName || "Nome não encontrado"}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-sm font-medium text-slate-700">
+                    Email do comprador
+                  </p>
+                  <div className={`${readOnlyBoxClass()} break-all`}>
+                    {customerEmail || "Email não encontrado"}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-sm font-medium text-slate-700">
+                    CPF do comprador
+                  </p>
+                  <div className={readOnlyBoxClass()}>
+                    {formatCpf(customerCpf) || "CPF não encontrado"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-[24px] border border-amber-200 bg-amber-50 p-5">
+                <p className="text-sm leading-6 text-amber-800">
+                  Regras da compra: no máximo <strong>4 ingressos</strong> por
+                  pedido, sendo até <strong>2 no CPF do comprador</strong> e até{" "}
+                  <strong>2 para outros CPFs</strong>. O prazo de 10 minutos
+                  começa depois que o pedido é criado.
+                </p>
+              </div>
+            </section>
+
+            <section className={cardClass()}>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-950">
+                    Titulares
+                  </h2>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Defina o nome e o CPF de cada titular.
+                  </p>
+                </div>
+
+                <div
+                  className={`rounded-[22px] border px-4 py-3 text-sm ${
+                    holderStats.isValid
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-amber-200 bg-amber-50 text-amber-800"
+                  }`}
+                >
+                  <p className="font-semibold">
+                    Comprador: {holderStats.buyerCount} · Outros:{" "}
+                    {holderStats.otherCount}
+                  </p>
+                  <p className="mt-1">{holderStats.message}</p>
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-5">
+                {selectedItemsDetailed.map((item) => (
+                  <div
+                    key={`holders-${item.ticketTypeId}`}
+                    className="rounded-[24px] border border-sky-100 bg-sky-50 p-5"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-black text-slate-950">
+                          {getTicketLabel(item.ticketType)}
+                        </h3>
+                        <p className="mt-1 text-sm text-slate-500">
+                          {item.quantity} ingresso(s) neste item
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 space-y-4">
+                      {(holdersByTicketType[item.ticketTypeId] || []).map(
+                        (holder, index) => (
+                          <div
+                            key={`${item.ticketTypeId}-${index}`}
+                            className="rounded-[22px] border border-slate-200 bg-white p-4"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="font-semibold text-slate-900">
+                                  Ingresso {index + 1}
+                                </p>
+                                <p className="mt-1 text-sm text-slate-500">
+                                  {item.ticketType.name || "Ingresso"}
+                                </p>
+                              </div>
+
+                              <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={holder.useBuyerData}
+                                  onChange={(e) =>
+                                    handleHolderUseBuyerChange(
+                                      item.ticketTypeId,
+                                      index,
+                                      e.target.checked,
+                                    )
+                                  }
+                                />
+                                Usar dados do comprador
+                              </label>
+                            </div>
+
+                            {holder.useBuyerData ? (
+                              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                <div>
+                                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                    Nome
+                                  </p>
+                                  <div className={readOnlyBoxClass()}>
+                                    {customerName || "-"}
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                    CPF
+                                  </p>
+                                  <div className={readOnlyBoxClass()}>
+                                    {formatCpf(customerCpf) || "-"}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                <div>
+                                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                                    Nome do titular
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={holder.name}
+                                    onChange={(e) =>
+                                      handleHolderFieldChange(
+                                        item.ticketTypeId,
+                                        index,
+                                        "name",
+                                        e.target.value,
+                                      )
+                                    }
+                                    className={inputClass()}
+                                    placeholder="Nome completo"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                                    CPF do titular
+                                  </label>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={holder.cpf}
+                                    onChange={(e) =>
+                                      handleHolderFieldChange(
+                                        item.ticketTypeId,
+                                        index,
+                                        "cpf",
+                                        e.target.value,
+                                      )
+                                    }
+                                    className={inputClass()}
+                                    placeholder="000.000.000-00"
+                                    maxLength={14}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className={cardClass()}>
+              <h2 className="text-2xl font-black text-slate-950">Pagamento</h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Nesta etapa o pedido é criado. Se houver saldo na wallet, ele
+                pode ser usado automaticamente.
+              </p>
+
+              <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-black text-slate-950">
+                      Usar saldo da wallet
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Saldo disponível:{" "}
+                      <strong>{formatMoney(walletBalanceNumber)}</strong>
+                    </p>
+                  </div>
+
+                  <label className="flex cursor-pointer items-center gap-3 rounded-full bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm">
+                    <input
+                      type="checkbox"
+                      checked={useWalletBalance}
+                      onChange={(event) =>
+                        setUseWalletBalance(event.target.checked)
+                      }
+                      disabled={walletBalanceNumber <= 0}
+                    />
+                    Aplicar wallet
+                  </label>
+                </div>
               </div>
 
               <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl bg-white p-4">
-                  <p className="text-sm text-slate-500">Subtotal</p>
-                  <p className="mt-2 font-black text-slate-950">
+                <div className="rounded-[20px] bg-slate-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Subtotal
+                  </p>
+                  <p className="mt-2 text-xl font-black text-slate-950">
                     {formatMoney(subtotal)}
                   </p>
                 </div>
 
-                <div className="rounded-2xl bg-white p-4">
-                  <p className="text-sm text-slate-500">Wallet aplicada</p>
-                  <p className="mt-2 font-black text-emerald-700">
+                <div className="rounded-[20px] bg-slate-50 p-4">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+                    Wallet
+                  </p>
+                  <p className="mt-2 text-xl font-black text-emerald-700">
                     - {formatMoney(walletApplied)}
                   </p>
                 </div>
 
-                <div className="rounded-2xl bg-white p-4">
-                  <p className="text-sm text-slate-500">Valor restante</p>
-                  <p className="mt-2 font-black text-slate-950">
+                <div className="rounded-[20px] bg-slate-950 p-4 text-white">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/60">
+                    A pagar
+                  </p>
+                  <p className="mt-2 text-xl font-black">
                     {formatMoney(remainingAmount)}
                   </p>
                 </div>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">
-                {purchaseWillBePaid
-                  ? "Seu saldo cobre 100% da compra."
-                  : "Se ainda restar valor, o pedido será criado como pendente e o contador de 10 minutos aparece depois."}
-              </div>
-            </div>
-          </section>
-        </form>
-
-        <aside className="xl:sticky xl:top-24 xl:self-start">
-          <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-100 px-6 py-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                Escolha seu ingresso
-              </p>
-              <h2 className="mt-2 text-2xl font-black text-slate-950">
-                {event.checkoutTitle || event.name || "Resumo do pedido"}
-              </h2>
-              <p className="mt-2 text-sm text-slate-500">
-                {event.checkoutSubtitle || "Selecione o lote ideal para continuar"}
-              </p>
-            </div>
-
-            <div className="space-y-4 px-6 py-5">
-              <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Quando
+              <div
+                className={`mt-5 rounded-[22px] border p-5 ${
+                  purchaseWillBePaid
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-sky-200 bg-sky-50 text-sky-800"
+                }`}
+              >
+                <p className="text-sm leading-6">
+                  {purchaseWillBePaid
+                    ? "Com o saldo aplicado, este pedido deve ser criado como pago pela wallet."
+                    : "Após criar o pedido, você poderá continuar o pagamento do valor restante conforme as opções disponíveis no sistema."}
                 </p>
-                <p className="mt-2 font-semibold text-slate-900">
-                  {formatDate(event.startDate || event.eventDate)}
+              </div>
+            </section>
+          </form>
+
+          <aside className="xl:sticky xl:top-24 xl:self-start">
+            <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 p-6">
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                  Resumo
+                </p>
+                <h2 className="mt-2 text-2xl font-black text-slate-950">
+                  Seu pedido
+                </h2>
+                <p className="mt-2 text-sm text-slate-500">
+                  {totalTickets} ingresso(s) selecionado(s)
                 </p>
               </div>
 
-              <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Organizador
-                </p>
-                <p className="mt-2 font-semibold text-slate-900">
-                  {event.organizer?.tradeName ||
-                    event.organizer?.legalName ||
-                    "-"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-slate-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Itens
-                </p>
-
-                <div className="mt-3 space-y-3">
-                  {selectedItemsDetailed.map((item) => (
-                    <div
-                      key={`summary-${item.ticketTypeId}`}
-                      className="flex items-start justify-between gap-3"
-                    >
+              <div className="space-y-4 p-5">
+                {selectedItemsDetailed.map((item) => (
+                  <div
+                    key={`summary-${item.ticketTypeId}`}
+                    className="rounded-[20px] border border-slate-200 bg-white p-4"
+                  >
+                    <div className="flex items-start justify-between gap-4">
                       <div>
-                        <p className="font-semibold text-slate-900">
+                        <p className="font-black text-slate-950">
                           {getTicketLabel(item.ticketType)}
                         </p>
-                        <p className="text-sm text-slate-500">
-                          {item.quantity} x {formatMoney(item.unitTotal)}
+                        <p className="mt-1 text-sm text-slate-500">
+                          {item.quantity}x {formatMoney(item.unitTotal)}
                         </p>
                       </div>
 
-                      <p className="font-semibold text-slate-900">
+                      <p className="whitespace-nowrap font-black text-slate-950">
                         {formatMoney(item.totalPrice)}
                       </p>
                     </div>
-                  ))}
-                </div>
+
+                    {item.feeAmount > 0 ? (
+                      <p className="mt-2 text-xs text-slate-400">
+                        Inclui {formatMoney(item.feeAmount)} de taxa por
+                        ingresso.
+                      </p>
+                    ) : null}
+
+                    {item.ticketType.benefitDescription ? (
+                      <p className="mt-2 text-xs font-bold text-emerald-700">
+                        {item.ticketType.benefitDescription}
+                      </p>
+                    ) : null}
+
+                    <span
+                      className={`mt-3 inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold ${getStatusClass(
+                        item.ticketType.status,
+                      )}`}
+                    >
+                      {getStatusLabel(item.ticketType.status)}
+                    </span>
+                  </div>
+                ))}
               </div>
 
-              <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="flex items-center justify-between py-2 text-sm">
-                  <span className="text-slate-500">Ingressos</span>
-                  <span className="font-semibold text-slate-900">{totalTickets}</span>
-                </div>
-
-                <div className="flex items-center justify-between py-2 text-sm">
-                  <span className="text-slate-500">Subtotal</span>
-                  <span className="font-semibold text-slate-900">
-                    {formatMoney(subtotal)}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between py-2 text-sm">
-                  <span className="text-slate-500">Wallet</span>
-                  <span className="font-semibold text-emerald-700">
-                    - {formatMoney(walletApplied)}
-                  </span>
-                </div>
-
-                <div className="mt-2 border-t border-slate-200 pt-4">
+              <div className="border-t border-slate-100 bg-slate-50 p-6">
+                <div className="space-y-3 text-sm">
                   <div className="flex items-center justify-between">
-                    <span className="text-base font-semibold text-slate-700">
-                      Total final
+                    <span className="text-slate-500">Subtotal</span>
+                    <span className="font-bold text-slate-950">
+                      {formatMoney(subtotal)}
                     </span>
-                    <span className="text-3xl font-black text-slate-950">
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Wallet</span>
+                    <span className="font-bold text-emerald-700">
+                      - {formatMoney(walletApplied)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-slate-200 pt-4">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+                        Total a pagar
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {totalTickets} ingresso(s)
+                      </p>
+                    </div>
+
+                    <span className="text-2xl font-black text-slate-950">
                       {formatMoney(remainingAmount)}
                     </span>
                   </div>
                 </div>
+
+                <button
+                  type="submit"
+                  form="customer-checkout-form"
+                  disabled={creatingOrder || !holderStats.isValid}
+                  className="mt-6 w-full rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {creatingOrder ? "Criando pedido..." : "Finalizar pedido"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => goTo(`/customer/events/${event.id}`)}
+                  className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                >
+                  Voltar ao evento
+                </button>
               </div>
-
-              <div
-                className={`rounded-2xl border p-4 text-sm ${
-                  holderStats.isValid
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                    : "border-amber-200 bg-amber-50 text-amber-800"
-                }`}
-              >
-                <p className="font-semibold">Validação da compra</p>
-                <p className="mt-2">{holderStats.message}</p>
-              </div>
-
-              <button
-                type="submit"
-                form="customer-checkout-form"
-                disabled={creatingOrder || !holderStats.isValid}
-                className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {creatingOrder ? "Criando pedido..." : "Finalizar pedido"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => goTo(`/customer/events/${event.id}`)}
-                className="w-full rounded-2xl border border-slate-200 px-5 py-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                Voltar para o evento
-              </button>
             </div>
+          </aside>
+        </section>
+      </div>
+
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white p-4 shadow-2xl xl:hidden">
+        <div className="mx-auto flex max-w-[1180px] items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+              Total
+            </p>
+            <p className="text-lg font-black text-slate-950">
+              {formatMoney(remainingAmount)}
+            </p>
+            <p className="text-xs text-slate-500">{totalTickets} ingresso(s)</p>
           </div>
-        </aside>
-      </section>
+
+          <button
+            type="submit"
+            form="customer-checkout-form"
+            disabled={creatingOrder || !holderStats.isValid}
+            className="rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {creatingOrder ? "Criando..." : "Finalizar"}
+          </button>
+        </div>
+      </div>
     </main>
   );
 }
