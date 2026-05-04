@@ -200,7 +200,7 @@ function formatMoney(value?: string | number) {
   }).format(toNumber(value));
 }
 
-function formatDate(value?: string) {
+function formatDate(value?: string | null) {
   if (!value) return "-";
 
   const date = new Date(value);
@@ -249,24 +249,16 @@ function formatCountdown(ms?: number | null) {
   )}`;
 }
 
-function getCountdownTone(ms?: number | null) {
+function getCountdownNumberClass(ms?: number | null) {
   if (ms === null || ms === undefined) {
-    return "border-slate-200 bg-slate-50 text-slate-700";
-  }
-
-  if (ms <= 0) {
-    return "border-rose-200 bg-rose-50 text-rose-700";
-  }
-
-  if (ms <= 2 * 60 * 1000) {
-    return "border-orange-200 bg-orange-50 text-orange-700";
+    return "text-slate-700";
   }
 
   if (ms <= 5 * 60 * 1000) {
-    return "border-amber-200 bg-amber-50 text-amber-700";
+    return "text-rose-600";
   }
 
-  return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  return "text-emerald-600";
 }
 
 function getStatusLabel(status?: string) {
@@ -666,6 +658,7 @@ export default function CustomerOrderDetailPage() {
         typeof item.quantity === "number"
           ? item.quantity
           : (item.tickets || []).length;
+
       return sum + quantity;
     }, 0);
   }, [isTransferPage, flattenedTickets, orderItems]);
@@ -965,7 +958,7 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-    async function handleCancelTransfer() {
+  async function handleCancelTransfer() {
     const token = localStorage.getItem("token");
 
     if (!token || token === "undefined" || !transfer?.id) {
@@ -1415,7 +1408,7 @@ export default function CustomerOrderDetailPage() {
   const heroDescription = getEventDescription();
   const eventName = getEventName();
   const eventDate = getEventDate();
-  const countdownTone = getCountdownTone(timeLeftMs);
+  const countdownNumberClass = getCountdownNumberClass(timeLeftMs);
 
   return (
     <>
@@ -1444,24 +1437,6 @@ export default function CustomerOrderDetailPage() {
               <p className="mt-5 max-w-3xl text-sm leading-7 text-white/85 md:text-base">
                 {heroDescription}
               </p>
-
-              {isPendingOrder ? (
-                <div
-                  className={`mt-6 rounded-[24px] border px-5 py-4 ${countdownTone}`}
-                >
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em]">
-                    Tempo para pagamento
-                  </p>
-                  <p className="mt-2 text-3xl font-black">
-                    {formatCountdown(timeLeftMs)}
-                  </p>
-                  <p className="mt-2 text-sm opacity-90">
-                    {isPendingCountdownExpired
-                      ? "Tempo encerrado. Atualizando o status do pedido..."
-                      : "Finalize a compra antes do relógio zerar."}
-                  </p>
-                </div>
-              ) : null}
 
               <div className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <div className="rounded-[22px] border border-white/18 bg-white/10 px-4 py-4 backdrop-blur">
@@ -1541,29 +1516,11 @@ export default function CustomerOrderDetailPage() {
                     : `Criado em ${formatDate(order?.createdAt)}`}
                 </p>
               </div>
-
-              {isPendingOrder ? (
-                <div
-                  className={`rounded-[28px] border p-5 backdrop-blur ${countdownTone}`}
-                >
-                  <p className="text-xs uppercase tracking-[0.18em]">
-                    Restante
-                  </p>
-                  <p className="mt-3 text-3xl font-black">
-                    {formatCountdown(timeLeftMs)}
-                  </p>
-                  <p className="mt-1 text-sm opacity-90">
-                    {isPendingCountdownExpired
-                      ? "Aguardando atualização"
-                      : "Esse pedido expira automaticamente"}
-                  </p>
-                </div>
-              ) : null}
             </div>
           </div>
         </section>
 
-        <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <div className={cardClass()}>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
               Status atual
@@ -1593,17 +1550,6 @@ export default function CustomerOrderDetailPage() {
               Ingressos
             </p>
             <p className="mt-3 text-3xl font-black text-slate-950">{totalTickets}</p>
-          </div>
-
-          <div className={cardClass()}>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-              {isPendingOrder ? "Tempo restante" : "Criado em"}
-            </p>
-            <p className="mt-3 text-base font-black text-slate-950">
-              {isPendingOrder
-                ? formatCountdown(timeLeftMs)
-                : formatDate(isTransferPage ? transfer?.requestedAt : order?.createdAt)}
-            </p>
           </div>
         </section>
 
@@ -2007,21 +1953,19 @@ export default function CustomerOrderDetailPage() {
 
               <div className="space-y-3 p-5">
                 {isPendingOrder ? (
-                  <div
-                    className={`rounded-2xl border px-4 py-4 ${countdownTone}`}
-                  >
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em]">
-                      Tempo restante
-                    </p>
-                    <p className="mt-2 text-2xl font-black">
-                      {formatCountdown(timeLeftMs)}
-                    </p>
-                    <p className="mt-2 text-sm opacity-90">
-                      {isPendingCountdownExpired
-                        ? "O pedido está sendo marcado como expirado."
-                        : "Pague antes do cronômetro zerar."}
-                    </p>
-                  </div>
+                <div className="flex min-h-[112px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-4 text-center shadow-sm">
+                <p className="text-[10px] font-black uppercase leading-none tracking-[0.18em] text-slate-500">
+                Tempo restante
+                </p>
+                <p className={`mt-2 text-3xl font-black leading-none ${countdownNumberClass}`}>
+                {formatCountdown(timeLeftMs)}
+                </p>
+                <p className="mt-2 text-sm text-slate-500">
+                {isPendingCountdownExpired
+                ? "O pedido está sendo marcado como expirado."
+                : "Pague antes do cronômetro zerar."}
+                </p>
+                </div>
                 ) : null}
 
                 {isPendingOrder ? (
@@ -2253,15 +2197,11 @@ export default function CustomerOrderDetailPage() {
                   >
                     {cancelingTicketMode === "PENDING_SIMPLE"
                       ? "Cancelando..."
-                      : "Cancelar ingresso pendente"}
+                      : "Cancelar ingresso"}
                   </button>
                 ) : null}
 
-                {isPaidOrder &&
-                !isTransferPage &&
-                !isTicketCanceled(selectedTicket) &&
-                !isTicketTransferredAway(selectedTicket) &&
-                !isTicketTransferPending(selectedTicket) ? (
+                {isPaidOrder ? (
                   <>
                     <button
                       type="button"
@@ -2271,7 +2211,7 @@ export default function CustomerOrderDetailPage() {
                     >
                       {cancelingTicketMode === "WALLET_80"
                         ? "Processando..."
-                        : "Cancelar com wallet 80%"}
+                        : "Cancelar com wallet"}
                     </button>
 
                     <button
@@ -2282,51 +2222,24 @@ export default function CustomerOrderDetailPage() {
                     >
                       {cancelingTicketMode === "REFUND_70"
                         ? "Processando..."
-                        : "Cancelar com estorno 70%"}
+                        : "Cancelar com estorno"}
                     </button>
                   </>
                 ) : null}
               </div>
 
-              {(selectedTicket.transferRequests || []).length > 0 ? (
-                <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-                  <h4 className="text-lg font-black text-slate-950">
-                    Transferências deste ingresso
-                  </h4>
-
-                  <div className="mt-4 space-y-3">
-                    {(selectedTicket.transferRequests || []).map((request) => (
-                      <button
-                        key={request.id}
-                        type="button"
-                        onClick={() => goTo(`/customer/orders/transfer_${request.id}`)}
-                        className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:bg-slate-50"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {request.toName ||
-                                request.toEmail ||
-                                formatCpf(request.toCpf)}
-                            </p>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {formatDate(request.requestedAt)}
-                            </p>
-                          </div>
-
-                          <span
-                            className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getStatusClasses(
-                              request.status,
-                            )}`}
-                          >
-                            {getStatusLabel(request.status)}
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
+              <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  QR Code
+                </p>
+                <p className="mt-4 break-all text-2xl font-black text-slate-950">
+                  {selectedTicket.code || selectedTicket.id}
+                </p>
+                <p className="mt-3 text-sm text-slate-500">
+                  Prévia visual do ingresso. A validação real usa o código assinado do
+                  ticket.
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -2334,15 +2247,21 @@ export default function CustomerOrderDetailPage() {
 
       {transferModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6">
-          <div className="w-full max-w-lg rounded-[30px] bg-white shadow-2xl">
+          <form
+            onSubmit={handleSubmitTransfer}
+            className="w-full max-w-xl rounded-[30px] bg-white shadow-2xl"
+          >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                  Transferir ingresso
+                  Transferência
                 </p>
                 <h3 className="mt-2 text-2xl font-black text-slate-950">
-                  {transferSourceTicket?.code || "Ingresso"}
+                  Transferir ingresso
                 </h3>
+                <p className="mt-2 text-sm text-slate-500">
+                  Informe o CPF do destinatário.
+                </p>
               </div>
 
               <button
@@ -2354,52 +2273,60 @@ export default function CustomerOrderDetailPage() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmitTransfer} className="space-y-5 p-6">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
+            <div className="space-y-4 p-6">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-sm text-slate-500">Ingresso</p>
+                <p className="mt-2 font-semibold text-slate-900">
+                  {transferSourceTicket?.code || transferSourceTicket?.id || "-"}
+                </p>
+              </div>
+
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">
                   CPF do destinatário
-                </label>
+                </span>
                 <input
                   type="text"
-                  inputMode="numeric"
-                  value={formatCpf(transferTargetCpf)}
+                  value={transferTargetCpf}
                   onChange={(e) => setTransferTargetCpf(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none transition focus:border-sky-500"
                   placeholder="000.000.000-00"
-                  maxLength={14}
+                  className="mt-2 h-14 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-400"
                 />
-              </div>
+              </label>
 
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">
-                O ingresso ficará vinculado à conta do CPF informado. A pessoa
-                precisa já existir na plataforma.
+                Depois de criada, a transferência ficará pendente até o destinatário
+                aceitar ou recusar.
               </div>
 
-              <div className="flex flex-wrap justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={closeTransferModal}
-                  className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Fechar
-                </button>
-
+              <div className="flex flex-wrap gap-3 pt-2">
                 <button
                   type="submit"
                   disabled={transferSubmitting}
-                  className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {transferSubmitting ? "Enviando..." : "Confirmar transferência"}
+                  {transferSubmitting ? "Enviando..." : "Criar transferência"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={closeTransferModal}
+                  className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancelar
                 </button>
               </div>
-            </form>
-          </div>
+            </div>
+          </form>
         </div>
       ) : null}
 
       {producerTicketOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6">
-          <div className="w-full max-w-2xl rounded-[30px] bg-white shadow-2xl">
+          <form
+            onSubmit={handleSubmitProducerTicket}
+            className="w-full max-w-2xl rounded-[30px] bg-white shadow-2xl"
+          >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
@@ -2408,6 +2335,9 @@ export default function CustomerOrderDetailPage() {
                 <h3 className="mt-2 text-2xl font-black text-slate-950">
                   Falar com o produtor
                 </h3>
+                <p className="mt-2 text-sm text-slate-500">
+                  Descreva sua dúvida para abrir um atendimento vinculado ao registro.
+                </p>
               </div>
 
               <button
@@ -2419,51 +2349,47 @@ export default function CustomerOrderDetailPage() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmitProducerTicket} className="space-y-5 p-6">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  Assunto
-                </label>
+            <div className="space-y-4 p-6">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Assunto</span>
                 <input
                   type="text"
                   value={ticketSubject}
                   onChange={(e) => setTicketSubject(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none transition focus:border-sky-500"
-                  placeholder="Resumo do problema"
+                  className="mt-2 h-14 w-full rounded-2xl border border-slate-200 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-400"
                 />
-              </div>
+              </label>
 
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  Mensagem
-                </label>
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Mensagem</span>
                 <textarea
                   value={ticketMessage}
                   onChange={(e) => setTicketMessage(e.target.value)}
-                  className="min-h-[180px] w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none transition focus:border-sky-500"
-                  placeholder="Descreva aqui o que aconteceu..."
+                  rows={6}
+                  placeholder="Explique o que aconteceu..."
+                  className="mt-2 w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400"
                 />
-              </div>
+              </label>
 
-              <div className="flex flex-wrap justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setProducerTicketOpen(false)}
-                  className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Fechar
-                </button>
-
+              <div className="flex flex-wrap gap-3 pt-2">
                 <button
                   type="submit"
                   disabled={creatingSupportThread}
-                  className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {creatingSupportThread ? "Enviando..." : "Abrir atendimento"}
+                  {creatingSupportThread ? "Abrindo..." : "Abrir atendimento"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setProducerTicketOpen(false)}
+                  className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancelar
                 </button>
               </div>
-            </form>
-          </div>
+            </div>
+          </form>
         </div>
       ) : null}
     </>

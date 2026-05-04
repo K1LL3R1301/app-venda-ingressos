@@ -17,6 +17,7 @@ type OrderItem = {
   totalAmount?: string | number;
   status?: string;
   createdAt?: string;
+  expiresAt?: string | null;
   event?: {
     id: string;
     name?: string;
@@ -198,6 +199,46 @@ function formatDate(value?: string) {
   });
 }
 
+function formatCountdown(ms?: number | null) {
+  if (ms === null || ms === undefined) return "--:--";
+
+  const safeMs = Math.max(0, ms);
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(
+    2,
+    "0",
+  )}`;
+}
+
+function getCountdownNumberClass(ms?: number | null) {
+  if (ms === null || ms === undefined) {
+    return "text-slate-700";
+  }
+
+  if (ms <= 5 * 60 * 1000) {
+    return "text-rose-600";
+  }
+
+  return "text-emerald-600";
+}
+
+function getOrderTimeLeftMs(order: OrderItem, nowMs: number) {
+  if (!order.expiresAt) return null;
+
+  const expiresAt = new Date(order.expiresAt).getTime();
+
+  if (Number.isNaN(expiresAt)) return null;
+
+  return Math.max(0, expiresAt - nowMs);
+}
+
+function isPendingOrder(order?: OrderItem | null) {
+  return order?.status === "PENDING" || order?.status === "PENDING_PAYMENT";
+}
+
 function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
@@ -349,6 +390,15 @@ export default function CustomerOrdersPage() {
   const [user, setUser] = useState<StoredUser | null>(null);
   const [activeView, setActiveView] = useState<ViewFilter>("all");
   const [pageWarning, setPageWarning] = useState("");
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     async function loadEverything() {
@@ -602,10 +652,7 @@ export default function CustomerOrdersPage() {
     return {
       totalOrders: orders.length,
       paidOrders: orders.filter((order) => order.status === "PAID").length,
-      pendingOrders: orders.filter(
-        (order) =>
-          order.status === "PENDING" || order.status === "PENDING_PAYMENT",
-      ).length,
+      pendingOrders: orders.filter((order) => isPendingOrder(order)).length,
       receivedTransfers: visibleIncomingTransfers.length + acceptedTransfers.length,
     };
   }, [orders, visibleIncomingTransfers, acceptedTransfers]);
@@ -624,9 +671,7 @@ export default function CustomerOrdersPage() {
               : activeView === "paid"
                 ? entry.type === "order" && entry.order.status === "PAID"
                 : activeView === "pending"
-                  ? entry.type === "order" &&
-                    (entry.order.status === "PENDING" ||
-                      entry.order.status === "PENDING_PAYMENT")
+                  ? entry.type === "order" && isPendingOrder(entry.order)
                   : true;
 
       if (!matchesView) return false;
@@ -886,6 +931,9 @@ export default function CustomerOrdersPage() {
                   }, 0) || 0;
 
                 const isPaid = order.status === "PAID";
+                const isPending = isPendingOrder(order);
+                const timeLeftMs = getOrderTimeLeftMs(order, nowMs);
+                const showCountdown = isPending && timeLeftMs !== null;
                 const eventDate = order.event?.startDate || order.event?.eventDate;
 
                 return (
@@ -893,7 +941,9 @@ export default function CustomerOrdersPage() {
                     key={`order-${order.id}`}
                     className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm"
                   >
-                    <div className={`bg-gradient-to-r ${gradient} p-6 text-white`}>
+                    <div
+                      className={`relative bg-gradient-to-r ${gradient} p-6 text-white md:min-h-[150px] md:pr-52`}
+                    >
                       <div className="flex flex-wrap items-center gap-3">
                         <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold backdrop-blur">
                           Pedido
@@ -919,6 +969,21 @@ export default function CustomerOrdersPage() {
                       <p className="mt-2 max-w-3xl text-sm text-white/80">
                         {previewText(order.event?.description, 150)}
                       </p>
+
+                      {showCountdown ? (
+                        <div className="mt-5 flex h-[72px] w-[142px] flex-col items-center justify-center rounded-2xl border border-white/25 bg-white text-center text-slate-900 shadow-sm md:absolute md:right-6 md:top-1/2 md:mt-0 md:-translate-y-1/2">
+                          <p className="text-[10px] font-black uppercase leading-none tracking-[0.18em] text-slate-500">
+                            Tempo restante
+                          </p>
+                          <p
+                            className={`mt-2 text-3xl font-black leading-none ${getCountdownNumberClass(
+                              timeLeftMs,
+                            )}`}
+                          >
+                            {formatCountdown(timeLeftMs)}
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="grid gap-6 p-6 xl:grid-cols-[1.2fr_0.8fr]">
