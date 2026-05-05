@@ -34,10 +34,10 @@ const operatorItems: MenuItem[] = [
 ];
 
 const customerItems: MenuItem[] = [
-  { href: "/customer/dashboard", label: "Área do cliente", emoji: "👤" },
-  { href: "/customer/orders", label: "Meus pedidos", emoji: "🛍️" },
-  { href: "/customer/support", label: "Suporte", emoji: "💬" },
-  { href: "/customer/wallet", label: "Wallet", emoji: "👛" },
+  { href: "/dashboard", label: "Área do cliente", emoji: "👤" },
+  { href: "/orders", label: "Meus pedidos", emoji: "🛍️" },
+  { href: "/support", label: "Suporte", emoji: "💬" },
+  { href: "/wallet", label: "Wallet", emoji: "👛" },
 ];
 
 export default function AdminSidebar({

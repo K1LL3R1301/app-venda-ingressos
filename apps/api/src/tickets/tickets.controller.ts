@@ -13,6 +13,7 @@ import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { TicketsQrService } from './tickets-qr.service';
 import { TicketsService } from './tickets.service';
 
 type AuthenticatedRequest = Request & {
@@ -26,7 +27,10 @@ type AuthenticatedRequest = Request & {
 
 @Controller('tickets')
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService) {}
+  constructor(
+    private readonly ticketsService: TicketsService,
+    private readonly ticketsQrService: TicketsQrService,
+  ) {}
 
   @Get()
   findAll() {
@@ -69,6 +73,42 @@ export class TicketsController {
       transferRequestId,
       req.user.sub,
     );
+  }
+
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('customer/:ticketId/qr-token')
+  @Roles('CUSTOMER', 'ADMIN', 'OPERATOR')
+  generateCustomerTicketQrToken(
+    @Param('ticketId') ticketId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.ticketsQrService.generateTicketQrToken({
+      ticketId,
+      userId: req.user.sub,
+      userRole: req.user.role,
+    });
+  }
+
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post('validate')
+  @Roles('ADMIN', 'OPERATOR')
+  validateTicketQrToken(
+    @Req() req: AuthenticatedRequest,
+    @Body()
+    body: {
+      token?: string;
+      gate?: string;
+      markAsUsed?: boolean;
+    },
+  ) {
+    return this.ticketsQrService.validateTicketQrToken({
+      token: body?.token,
+      gate: body?.gate,
+      markAsUsed: body?.markAsUsed !== false,
+      operatorName: req.user.name || req.user.email || 'Operador',
+    });
   }
 
   @ApiBearerAuth('bearer')

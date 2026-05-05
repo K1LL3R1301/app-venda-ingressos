@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 
@@ -106,8 +106,8 @@ export default function CustomerHeader({
       }),
     );
 
-    if (!window.location.pathname.startsWith("/customer/dashboard")) {
-      window.location.href = "/customer/dashboard";
+    if (!window.location.pathname.startsWith("/dashboard")) {
+      window.location.href = "/dashboard";
     }
   }
 
@@ -116,7 +116,7 @@ export default function CustomerHeader({
       <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-4">
         <button
           type="button"
-          onClick={() => goTo("/customer/dashboard")}
+          onClick={() => goTo("/dashboard")}
           className="shrink-0 text-3xl font-black tracking-tight text-sky-600"
         >
           Sympla
@@ -147,7 +147,7 @@ export default function CustomerHeader({
         <nav className="ml-auto hidden items-center gap-5 md:flex">
           <button
             type="button"
-            onClick={() => goTo("/customer/orders")}
+            onClick={() => goTo("/orders")}
             className={getTopNavClasses(activeNav === "orders")}
           >
             Meus ingressos
@@ -155,7 +155,7 @@ export default function CustomerHeader({
 
           <button
             type="button"
-            onClick={() => goTo("/customer/wallet")}
+            onClick={() => goTo("/wallet")}
             className={getTopNavClasses(activeNav === "wallet")}
           >
             Wallet
@@ -191,7 +191,7 @@ export default function CustomerHeader({
               <div className="p-2">
                 <button
                   type="button"
-                  onClick={() => handleGo("/customer/dashboard")}
+                  onClick={() => handleGo("/dashboard")}
                   className={getMenuItemClasses(activeNav === "dashboard")}
                 >
                   Início
@@ -199,7 +199,7 @@ export default function CustomerHeader({
 
                 <button
                   type="button"
-                  onClick={() => handleGo("/customer/events")}
+                  onClick={() => handleGo("/events")}
                   className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
                 >
                   Eventos
@@ -207,7 +207,7 @@ export default function CustomerHeader({
 
                 <button
                   type="button"
-                  onClick={() => handleGo("/customer/orders")}
+                  onClick={() => handleGo("/orders")}
                   className={getMenuItemClasses(activeNav === "orders")}
                 >
                   Meus ingressos
@@ -215,7 +215,7 @@ export default function CustomerHeader({
 
                 <button
                   type="button"
-                  onClick={() => handleGo("/customer/support")}
+                  onClick={() => handleGo("/support")}
                   className={getMenuItemClasses(activeNav === "support")}
                 >
                   Suporte
@@ -223,7 +223,7 @@ export default function CustomerHeader({
 
                 <button
                   type="button"
-                  onClick={() => handleGo("/customer/wallet")}
+                  onClick={() => handleGo("/wallet")}
                   className={getMenuItemClasses(activeNav === "wallet")}
                 >
                   Wallet
@@ -232,7 +232,7 @@ export default function CustomerHeader({
                 {canAccessAdmin ? (
                   <button
                     type="button"
-                    onClick={() => handleGo("/dashboard")}
+                    onClick={() => handleGo("/admin/dashboard")}
                     className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
                   >
                     Painel Admin

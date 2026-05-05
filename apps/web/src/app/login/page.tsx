@@ -60,7 +60,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   function getDefaultRedirectPath() {
-    return "/customer/dashboard";
+    return "/dashboard";
   }
 
   async function handleLogin(e: React.FormEvent) {
