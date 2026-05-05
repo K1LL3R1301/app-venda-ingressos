@@ -8,6 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import { useParams } from "next/navigation";
+import { QRCodeSVG } from "qrcode.react";
 
 type StoredUser = {
   id?: string;
@@ -264,7 +265,6 @@ function formatCountdown(ms?: number | null) {
 
 function getCountdownNumberClass(ms?: number | null) {
   if (ms === null || ms === undefined) return "text-slate-700";
-
   if (ms <= 5 * 60 * 1000) return "text-rose-600";
 
   return "text-emerald-600";
@@ -749,6 +749,26 @@ export default function CustomerOrderDetailPage() {
         transfer?.fromUserId === currentUserId
       : true);
 
+  function buildTicketPayload(ticket: TicketItem) {
+    const payload = {
+      ticketId: ticket.id,
+      code: ticket.code || ticket.id,
+      orderId: isTransferPage ? transfer?.order?.id : order?.id,
+      eventId: isTransferPage ? transfer?.order?.event?.id : order?.event?.id,
+      eventName: getEventName(),
+      holderName: ticket.holderName || "",
+      holderCpf: onlyDigits(ticket.holderCpf),
+      status: getDisplayedTicketStatus(ticket),
+      generatedAt: new Date().toISOString(),
+    };
+
+    return JSON.stringify(payload);
+  }
+
+  function handlePrintDigitalTicket() {
+    window.print();
+  }
+
   async function copyTicketCode(code?: string) {
     if (!code) {
       alert("Código não encontrado");
@@ -1204,7 +1224,9 @@ export default function CustomerOrderDetailPage() {
     }
 
     const info = normalizeCancelMode(mode);
-    const confirmed = window.confirm(`${info.confirm}\n\nIngresso: ${ticket.code || ticket.id}`);
+    const confirmed = window.confirm(
+      `${info.confirm}\n\nIngresso: ${ticket.code || ticket.id}`,
+    );
 
     if (!confirmed) return;
 
@@ -1941,135 +1963,212 @@ export default function CustomerOrderDetailPage() {
       </div>
 
       {selectedTicket ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
-          <div className="max-h-[92vh] w-full max-w-[620px] overflow-y-auto rounded-[28px] bg-white shadow-2xl">
-            <div className="border-b border-slate-100 p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                    Ingresso digital
-                  </p>
-                  <h2 className="mt-2 text-2xl font-black text-slate-950">
-                    {ticketTypeByTicketId.get(selectedTicket.id) || "Ingresso"}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {getEventName()}
-                  </p>
-                </div>
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm print:static print:block print:bg-white print:p-0">
+    <div className="max-h-[94vh] w-full max-w-[880px] overflow-y-auto rounded-[34px] bg-white shadow-2xl print:max-h-none print:max-w-none print:overflow-visible print:rounded-none print:shadow-none">
+      <div className="relative overflow-hidden rounded-t-[34px] bg-slate-950 text-white print:rounded-none">
+        {currentEventImage ? (
+          <img
+            src={currentEventImage}
+            alt={getEventName()}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-blue-950 to-sky-800" />
+        )}
 
-                <button
-                  type="button"
-                  onClick={() => setSelectedTicket(null)}
-                  className="rounded-full border border-slate-200 px-3 py-1 text-sm font-black text-slate-600 hover:bg-slate-50"
-                >
-                  ✕
-                </button>
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/75 to-slate-950/35" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.26),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.28),transparent_32%)]" />
+
+        <div className="relative z-10 p-6 md:p-8">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/70">
+                Ingresso digital
+              </p>
+
+              <h2 className="mt-3 text-3xl font-black leading-tight md:text-5xl">
+                {ticketTypeByTicketId.get(selectedTicket.id) || "Ingresso"}
+              </h2>
+
+              <p className="mt-3 max-w-2xl text-sm font-semibold leading-6 text-white/90 md:text-base">
+                {getEventName()}
+              </p>
+
+              <div className="mt-5 flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-white/20 bg-white/15 px-4 py-2 text-xs font-black text-white shadow-sm">
+                  {formatDate(getEventDate())}
+                </span>
               </div>
             </div>
 
-            <div className="p-6">
-              <div className="mx-auto flex h-64 w-64 items-center justify-center rounded-[26px] border border-slate-200 bg-slate-50 p-5">
-                <div className="grid h-full w-full grid-cols-5 gap-2">
-                  {Array.from({ length: 25 }).map((_, index) => (
-                    <div
-                      key={index}
-                      className={`rounded ${
-                        (index + String(selectedTicket.code || selectedTicket.id).length) %
-                          3 ===
-                        0
-                          ? "bg-slate-950"
-                          : "bg-white"
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
+            <button
+              type="button"
+              onClick={() => setSelectedTicket(null)}
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/15 text-xl font-black text-white shadow-sm transition hover:bg-white/25 print:hidden"
+              aria-label="Fechar ingresso"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      </div>
 
-              <div className="mt-6 rounded-[20px] bg-slate-50 p-4 text-center">
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                  Código do ingresso
+      <div className="grid bg-white md:grid-cols-[350px_1fr]">
+        <section className="border-b border-slate-200 bg-slate-50 p-6 md:border-b-0 md:border-r">
+          <div className="mx-auto max-w-[286px]">
+            <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.12)]">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">
+                  QR Code
                 </p>
-                <p className="mt-2 break-all text-lg font-black text-slate-950">
-                  {selectedTicket.code || selectedTicket.id}
+
+                <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black text-emerald-700">
+                  Válido
+                </span>
+              </div>
+
+              <div className="mt-4 flex justify-center rounded-[24px] bg-white p-3">
+                <QRCodeSVG
+                  value={buildTicketPayload(selectedTicket)}
+                  size={220}
+                  level="H"
+                  includeMargin
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-[24px] border border-slate-200 bg-white p-5 text-center shadow-sm">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                Código do ingresso
+              </p>
+
+              <p className="mt-3 break-all text-base font-black leading-6 text-slate-950">
+                {selectedTicket.code || selectedTicket.id}
+              </p>
+            </div>
+
+            <div className="mt-5 rounded-[22px] border border-sky-100 bg-sky-50 p-4 text-center">
+              <p className="text-xs font-semibold leading-5 text-sky-800">
+                Apresente este QR Code na entrada do evento. Ele é único e fica
+                vinculado ao titular do ingresso.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="p-6 md:p-8">
+          <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">
+              Dados do titular
+            </p>
+
+            <div className="mt-6 grid gap-4">
+              <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-6">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                  Nome
+                </p>
+
+                <p className="mt-3 text-3xl font-black leading-tight text-slate-950">
+                  {selectedTicket.holderName || "-"}
                 </p>
               </div>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-2">
-                <div className="rounded-[18px] border border-slate-200 bg-white p-4">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                    Titular
-                  </p>
-                  <p className="mt-1 font-black text-slate-950">
-                    {selectedTicket.holderName || "-"}
-                  </p>
-                </div>
+              <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-6">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                  CPF
+                </p>
 
-                <div className="rounded-[18px] border border-slate-200 bg-white p-4">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                    CPF
-                  </p>
-                  <p className="mt-1 font-black text-slate-950">
-                    {formatCpf(selectedTicket.holderCpf)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-3 md:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => copyTicketCode(selectedTicket.code || selectedTicket.id)}
-                  className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-700 hover:bg-slate-50"
-                >
-                  Copiar código
-                </button>
-
-                {canTransferTicket(selectedTicket) ? (
-                  <button
-                    type="button"
-                    onClick={() => openTransferModal(selectedTicket)}
-                    className="rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800"
-                  >
-                    Transferir ingresso
-                  </button>
-                ) : null}
-
-                {isReturnOnlyTicket(selectedTicket) ? (
-                  <button
-                    type="button"
-                    onClick={() => handleReturnTicket(selectedTicket)}
-                    disabled={returningTicket}
-                    className="rounded-xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {returningTicket ? "Devolvendo..." : "Devolver ingresso"}
-                  </button>
-                ) : null}
-
-                {isPaidOrder && selectedTicket.status === "AVAILABLE" ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleCancelTicket(selectedTicket, "REFUND_70")}
-                      disabled={!!cancelingTicketMode}
-                      className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-black text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Reembolso 70%
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleCancelTicket(selectedTicket, "WALLET_80")}
-                      disabled={!!cancelingTicketMode}
-                      className="rounded-xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Crédito 80%
-                    </button>
-                  </>
-                ) : null}
+                <p className="mt-3 text-2xl font-black leading-tight text-slate-950">
+                  {formatCpf(selectedTicket.holderCpf)}
+                </p>
               </div>
             </div>
           </div>
-        </div>
-      ) : null}
+
+          <div className="mt-5 rounded-[24px] border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-5">
+            <div className="flex gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-base font-black text-amber-800">
+                !
+              </span>
+
+              <div>
+                <p className="text-sm font-black text-amber-950">
+                  Proteja seu ingresso
+                </p>
+
+                <p className="mt-2 text-sm leading-6 text-amber-800">
+                  Não compartilhe este QR Code publicamente. Se o ingresso for
+                  transferido ou cancelado, o acesso pode mudar automaticamente.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-3 print:hidden md:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => copyTicketCode(selectedTicket.code || selectedTicket.id)}
+              className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              Copiar código
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePrintDigitalTicket}
+              className="rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white shadow-sm transition hover:bg-slate-800"
+            >
+              Imprimir ingresso
+            </button>
+
+            {canTransferTicket(selectedTicket) ? (
+              <button
+                type="button"
+                onClick={() => openTransferModal(selectedTicket)}
+                className="rounded-2xl border border-sky-200 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 shadow-sm transition hover:bg-sky-100"
+              >
+                Transferir ingresso
+              </button>
+            ) : null}
+
+            {isReturnOnlyTicket(selectedTicket) ? (
+              <button
+                type="button"
+                onClick={() => handleReturnTicket(selectedTicket)}
+                disabled={returningTicket}
+                className="rounded-2xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 shadow-sm transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {returningTicket ? "Devolvendo..." : "Devolver ingresso"}
+              </button>
+            ) : null}
+
+            {isPaidOrder && selectedTicket.status === "AVAILABLE" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleCancelTicket(selectedTicket, "REFUND_70")}
+                  disabled={!!cancelingTicketMode}
+                  className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-black text-amber-700 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Reembolso 70%
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleCancelTicket(selectedTicket, "WALLET_80")}
+                  disabled={!!cancelingTicketMode}
+                  className="rounded-2xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 shadow-sm transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Crédito 80%
+                </button>
+              </>
+            ) : null}
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+) : null}
 
       {transferModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
