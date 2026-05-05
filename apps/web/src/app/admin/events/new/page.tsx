@@ -1,8 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import EventImageUploadField from "../../../../components/admin/EventImageUploadField";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 
 type OrganizerItem = {
   id: string;
@@ -30,6 +35,51 @@ type EventCategory =
   | "INFANTIL"
   | "GASTRONOMIA";
 
+type OccupancyPresetKey =
+  | "OPEN_ADMISSION"
+  | "PLATEIA_ONLY"
+  | "NUMBERED_SEATS_ONLY"
+  | "TABLES_ONLY"
+  | "NUMBERED_SEATS_AND_PLATEIA"
+  | "TABLES_AND_PLATEIA"
+  | "TABLES_AND_OPEN_ADMISSION";
+
+type SectorKind =
+  | "OPEN_ADMISSION"
+  | "PLATEIA"
+  | "NUMBERED_SEATS"
+  | "TABLES";
+
+type SectorColorOption = {
+  label: string;
+  value: string;
+};
+
+type SectorKindConfig = {
+  key: SectorKind;
+  label: string;
+  description: string;
+  internalType: string;
+  occupancyMode: OccupancyMode;
+};
+
+type OccupancyPresetOption = {
+  key: OccupancyPresetKey;
+  label: string;
+  description: string;
+  occupancyMode: OccupancyMode;
+  usesOpenAdmission: boolean;
+  usesPlateia: boolean;
+  usesNumberedSeats: boolean;
+  usesTables: boolean;
+  requiresMap: boolean;
+  allowSeatMap: boolean;
+  allowTableMap: boolean;
+  supportsMultipleSectors: boolean;
+  defaultSectorKind: SectorKind;
+  allowedSectorKinds: SectorKind[];
+};
+
 type EventSessionFormItem = {
   localId: string;
   name: string;
@@ -45,6 +95,7 @@ type VenueSectorFormItem = {
   localId: string;
   name: string;
   description: string;
+  sectorKind: SectorKind;
   type: string;
   occupancyMode: OccupancyMode;
   capacity: string;
@@ -107,9 +158,6 @@ type TicketTypeFormItem = {
 type CategoryPreset = {
   label: string;
   description: string;
-  suggestedOccupancyMode: OccupancyMode;
-  allowSeatMap: boolean;
-  allowTableMap: boolean;
   defaultSectorName: string;
   defaultSectorType: string;
   sessionLabel: string;
@@ -126,6 +174,9 @@ type StepId =
   | "extras"
   | "review";
 
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+
 const categoryOptions: Array<{
   value: EventCategory;
   label: string;
@@ -139,27 +190,27 @@ const categoryOptions: Array<{
   {
     value: "TEATROS_ESPETACULOS",
     label: "Teatros e espetáculos",
-    description: "Eventos com plateia, assentos marcados e sessões.",
+    description: "Eventos com cadeiras numeradas e sessões.",
   },
   {
     value: "STAND_UP_COMEDY",
     label: "Stand-up comedy",
-    description: "Pode ser entrada geral, assento marcado ou mesa marcada.",
+    description: "Pode usar cadeiras numeradas ou mesas marcadas.",
   },
   {
     value: "CONGRESSOS",
     label: "Congressos e palestras",
-    description: "Auditórios, salas, sessões, assentos e credenciais.",
+    description: "Auditórios, salas, sessões, cadeiras ou mesas.",
   },
   {
     value: "GASTRONOMIA",
-    label: "Gastronomia, bar e restaurante",
-    description: "Mesas, reservas, salões, áreas VIP e eventos gastronômicos.",
+    label: "Gastronomia, bar e restaurantes",
+    description: "Mesas, reservas e ingressos para evento aberto.",
   },
   {
     value: "ESPORTES",
     label: "Esportes",
-    description: "Arquibancadas, setores, assentos ou entrada geral.",
+    description: "Venda de ingressos para evento aberto.",
   },
   {
     value: "PASSEIOS_TOURS",
@@ -169,36 +220,226 @@ const categoryOptions: Array<{
   {
     value: "INFANTIL",
     label: "Infantil",
-    description: "Eventos infantis, acompanhantes e regras especiais.",
+    description: "Eventos infantis com ingresso aberto, plateia ou cadeiras.",
   },
 ];
 
-const occupancyOptions: Array<{
-  value: OccupancyMode;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: "GENERAL_ADMISSION",
-    label: "Entrada geral",
-    description: "O comprador escolhe quantidade, sem lugar marcado.",
-  },
-  {
-    value: "RESERVED_SEATING",
-    label: "Assento marcado",
-    description: "Ideal para teatro, congresso, cinema, auditório e stand-up.",
-  },
-  {
-    value: "RESERVED_TABLE",
-    label: "Mesa marcada",
-    description: "Ideal para bar, gastronomia, jantar, camarote e restaurante.",
-  },
-  {
-    value: "MIXED",
-    label: "Misto",
-    description: "Combina entrada geral, assentos, mesas e setores no mesmo evento.",
-  },
+const sectorColorOptions: SectorColorOption[] = [
+  { label: "Azul", value: "#2563eb" },
+  { label: "Céu", value: "#0284c7" },
+  { label: "Ciano", value: "#0891b2" },
+  { label: "Teal", value: "#0f766e" },
+  { label: "Verde", value: "#16a34a" },
+  { label: "Esmeralda", value: "#059669" },
+  { label: "Lima", value: "#65a30d" },
+  { label: "Amarelo", value: "#ca8a04" },
+  { label: "Laranja", value: "#ea580c" },
+  { label: "Vermelho", value: "#dc2626" },
+  { label: "Rosa", value: "#db2777" },
+  { label: "Roxo", value: "#9333ea" },
+  { label: "Violeta", value: "#7c3aed" },
+  { label: "Índigo", value: "#4f46e5" },
+  { label: "Cinza", value: "#475569" },
 ];
+
+const sectorKindCatalog: Record<SectorKind, SectorKindConfig> = {
+  OPEN_ADMISSION: {
+    key: "OPEN_ADMISSION",
+    label: "Livre / evento aberto",
+    description:
+      "Área única para todos os ingressos, sem separação por setor, mesa ou cadeira.",
+    internalType: "OPEN_ADMISSION",
+    occupancyMode: "GENERAL_ADMISSION",
+  },
+  PLATEIA: {
+    key: "PLATEIA",
+    label: "Plateia",
+    description:
+      "Área livre de plateia, pista, mezanino ou camarote sem lugar marcado.",
+    internalType: "PLATEIA",
+    occupancyMode: "GENERAL_ADMISSION",
+  },
+  NUMBERED_SEATS: {
+    key: "NUMBERED_SEATS",
+    label: "Cadeiras numeradas",
+    description: "Setor com mapa de cadeiras numeradas.",
+    internalType: "NUMBERED_SEATS",
+    occupancyMode: "RESERVED_SEATING",
+  },
+  TABLES: {
+    key: "TABLES",
+    label: "Mesas",
+    description: "Setor com mapa de mesas marcadas.",
+    internalType: "TABLES",
+    occupancyMode: "RESERVED_TABLE",
+  },
+};
+
+const occupancyPresetCatalog: Record<OccupancyPresetKey, OccupancyPresetOption> =
+  {
+    OPEN_ADMISSION: {
+      key: "OPEN_ADMISSION",
+      label: "Ingressos evento aberto",
+      description:
+        "Venda por quantidade em área única. Não usa setores separados, mesas ou cadeiras.",
+      occupancyMode: "GENERAL_ADMISSION",
+      usesOpenAdmission: true,
+      usesPlateia: false,
+      usesNumberedSeats: false,
+      usesTables: false,
+      requiresMap: false,
+      allowSeatMap: false,
+      allowTableMap: false,
+      supportsMultipleSectors: false,
+      defaultSectorKind: "OPEN_ADMISSION",
+      allowedSectorKinds: ["OPEN_ADMISSION"],
+    },
+    PLATEIA_ONLY: {
+      key: "PLATEIA_ONLY",
+      label: "Somente plateia",
+      description:
+        "Permite criar vários setores de plateia, pista, mezanino ou camarote sem cadeira e sem mesa.",
+      occupancyMode: "GENERAL_ADMISSION",
+      usesOpenAdmission: false,
+      usesPlateia: true,
+      usesNumberedSeats: false,
+      usesTables: false,
+      requiresMap: false,
+      allowSeatMap: false,
+      allowTableMap: false,
+      supportsMultipleSectors: true,
+      defaultSectorKind: "PLATEIA",
+      allowedSectorKinds: ["PLATEIA"],
+    },
+    NUMBERED_SEATS_ONLY: {
+      key: "NUMBERED_SEATS_ONLY",
+      label: "Somente cadeiras numeradas",
+      description:
+        "Permite criar vários setores, todos com cadeiras numeradas no mapa.",
+      occupancyMode: "RESERVED_SEATING",
+      usesOpenAdmission: false,
+      usesPlateia: false,
+      usesNumberedSeats: true,
+      usesTables: false,
+      requiresMap: true,
+      allowSeatMap: true,
+      allowTableMap: false,
+      supportsMultipleSectors: true,
+      defaultSectorKind: "NUMBERED_SEATS",
+      allowedSectorKinds: ["NUMBERED_SEATS"],
+    },
+    TABLES_ONLY: {
+      key: "TABLES_ONLY",
+      label: "Somente mesas",
+      description:
+        "Permite criar vários setores, todos com mesas marcadas no mapa.",
+      occupancyMode: "RESERVED_TABLE",
+      usesOpenAdmission: false,
+      usesPlateia: false,
+      usesNumberedSeats: false,
+      usesTables: true,
+      requiresMap: true,
+      allowSeatMap: false,
+      allowTableMap: true,
+      supportsMultipleSectors: true,
+      defaultSectorKind: "TABLES",
+      allowedSectorKinds: ["TABLES"],
+    },
+    NUMBERED_SEATS_AND_PLATEIA: {
+      key: "NUMBERED_SEATS_AND_PLATEIA",
+      label: "Cadeiras numeradas e plateia",
+      description:
+        "Permite vários setores. Em cada setor, escolha plateia ou cadeiras numeradas.",
+      occupancyMode: "MIXED",
+      usesOpenAdmission: false,
+      usesPlateia: true,
+      usesNumberedSeats: true,
+      usesTables: false,
+      requiresMap: true,
+      allowSeatMap: true,
+      allowTableMap: false,
+      supportsMultipleSectors: true,
+      defaultSectorKind: "PLATEIA",
+      allowedSectorKinds: ["PLATEIA", "NUMBERED_SEATS"],
+    },
+    TABLES_AND_PLATEIA: {
+      key: "TABLES_AND_PLATEIA",
+      label: "Mesas e plateia",
+      description:
+        "Permite vários setores. Em cada setor, escolha plateia ou mesas marcadas.",
+      occupancyMode: "MIXED",
+      usesOpenAdmission: false,
+      usesPlateia: true,
+      usesNumberedSeats: false,
+      usesTables: true,
+      requiresMap: true,
+      allowSeatMap: false,
+      allowTableMap: true,
+      supportsMultipleSectors: true,
+      defaultSectorKind: "PLATEIA",
+      allowedSectorKinds: ["PLATEIA", "TABLES"],
+    },
+    TABLES_AND_OPEN_ADMISSION: {
+      key: "TABLES_AND_OPEN_ADMISSION",
+      label: "Mesas e ingressos evento aberto",
+      description:
+        "Permite uma área aberta para ingressos avulsos e setores de mesas marcadas.",
+      occupancyMode: "MIXED",
+      usesOpenAdmission: true,
+      usesPlateia: false,
+      usesNumberedSeats: false,
+      usesTables: true,
+      requiresMap: true,
+      allowSeatMap: false,
+      allowTableMap: true,
+      supportsMultipleSectors: true,
+      defaultSectorKind: "OPEN_ADMISSION",
+      allowedSectorKinds: ["OPEN_ADMISSION", "TABLES"],
+    },
+  };
+
+const categoryOccupancyPresetKeys: Record<
+  EventCategory,
+  OccupancyPresetKey[]
+> = {
+  FESTAS_SHOWS: [
+    "PLATEIA_ONLY",
+    "TABLES_ONLY",
+    "NUMBERED_SEATS_ONLY",
+    "NUMBERED_SEATS_AND_PLATEIA",
+    "TABLES_AND_PLATEIA",
+  ],
+  TEATROS_ESPETACULOS: ["NUMBERED_SEATS_ONLY"],
+  STAND_UP_COMEDY: ["NUMBERED_SEATS_ONLY", "TABLES_ONLY"],
+  CONGRESSOS: ["NUMBERED_SEATS_ONLY", "TABLES_ONLY"],
+  GASTRONOMIA: ["TABLES_AND_OPEN_ADMISSION", "TABLES_ONLY"],
+  ESPORTES: ["OPEN_ADMISSION"],
+  PASSEIOS_TOURS: ["OPEN_ADMISSION"],
+  INFANTIL: [
+    "OPEN_ADMISSION",
+    "NUMBERED_SEATS_ONLY",
+    "PLATEIA_ONLY",
+    "NUMBERED_SEATS_AND_PLATEIA",
+  ],
+};
+
+function getDefaultOccupancyPresetKey(category: EventCategory) {
+  return categoryOccupancyPresetKeys[category]?.[0] || "OPEN_ADMISSION";
+}
+
+function getOccupancyPreset(key: OccupancyPresetKey) {
+  return occupancyPresetCatalog[key];
+}
+
+function getOccupancyPresetOptions(category: EventCategory) {
+  return categoryOccupancyPresetKeys[category].map(
+    (key) => occupancyPresetCatalog[key],
+  );
+}
+
+function getSectorKindConfig(sectorKind: SectorKind) {
+  return sectorKindCatalog[sectorKind];
+}
 
 function newLocalId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -222,6 +463,14 @@ function toNumberOrUndefined(value: string) {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+function toIntOrUndefined(value: string) {
+  if (!value) return undefined;
+
+  const parsed = Number.parseInt(value, 10);
+
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
 function parseGallery(value: string) {
   return value
     .split("\n")
@@ -229,31 +478,13 @@ function parseGallery(value: string) {
     .filter(Boolean);
 }
 
-function hasDefinedValue(value: unknown): boolean {
-  if (value === undefined || value === null) return false;
-  if (typeof value === "string") return value.trim().length > 0;
-  if (typeof value === "number") return true;
-  if (typeof value === "boolean") return true;
-  if (Array.isArray(value)) return value.length > 0;
-
-  if (typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).some(hasDefinedValue);
-  }
-
-  return false;
-}
-
 function getCategoryPreset(category: EventCategory): CategoryPreset {
   if (category === "TEATROS_ESPETACULOS") {
     return {
       label: "Teatro e espetáculo",
-      description:
-        "Libera sessões, setores e mapa de assentos para plateia, mezanino ou camarote.",
-      suggestedOccupancyMode: "RESERVED_SEATING",
-      allowSeatMap: true,
-      allowTableMap: false,
-      defaultSectorName: "Plateia",
-      defaultSectorType: "AUDITORIUM",
+      description: "Criação focada em sessões e cadeiras numeradas.",
+      defaultSectorName: "Cadeiras numeradas",
+      defaultSectorType: "NUMBERED_SEATS",
       sessionLabel: "Sessão",
     };
   }
@@ -261,11 +492,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
   if (category === "CONGRESSOS") {
     return {
       label: "Congresso e palestra",
-      description:
-        "Libera sessões, auditórios, salas e assentos opcionais por atividade.",
-      suggestedOccupancyMode: "RESERVED_SEATING",
-      allowSeatMap: true,
-      allowTableMap: false,
+      description: "Criação focada em auditórios, salas, cadeiras ou mesas.",
       defaultSectorName: "Auditório principal",
       defaultSectorType: "AUDITORIUM",
       sessionLabel: "Atividade",
@@ -275,11 +502,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
   if (category === "GASTRONOMIA") {
     return {
       label: "Gastronomia, bar e restaurante",
-      description:
-        "Libera mapa de mesas, salões, áreas VIP e capacidade por mesa.",
-      suggestedOccupancyMode: "RESERVED_TABLE",
-      allowSeatMap: false,
-      allowTableMap: true,
+      description: "Criação focada em mesas e ingressos avulsos.",
       defaultSectorName: "Salão principal",
       defaultSectorType: "DINING_ROOM",
       sessionLabel: "Horário",
@@ -289,11 +512,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
   if (category === "STAND_UP_COMEDY") {
     return {
       label: "Stand-up comedy",
-      description:
-        "Permite entrada geral, assentos marcados, mesas ou modelo misto.",
-      suggestedOccupancyMode: "MIXED",
-      allowSeatMap: true,
-      allowTableMap: true,
+      description: "Criação focada em cadeiras numeradas ou mesas.",
       defaultSectorName: "Área principal",
       defaultSectorType: "MAIN_AREA",
       sessionLabel: "Sessão",
@@ -303,13 +522,9 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
   if (category === "PASSEIOS_TOURS") {
     return {
       label: "Passeios e tours",
-      description:
-        "Libera turmas por horário, ponto de encontro e capacidade por saída.",
-      suggestedOccupancyMode: "GENERAL_ADMISSION",
-      allowSeatMap: false,
-      allowTableMap: false,
-      defaultSectorName: "Turma principal",
-      defaultSectorType: "TOUR_GROUP",
+      description: "Criação focada em ingressos de evento aberto.",
+      defaultSectorName: "Entrada geral",
+      defaultSectorType: "OPEN_ADMISSION",
       sessionLabel: "Turma",
     };
   }
@@ -317,13 +532,9 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
   if (category === "ESPORTES") {
     return {
       label: "Evento esportivo",
-      description:
-        "Permite setores, arquibancadas e futuramente assentos por setor.",
-      suggestedOccupancyMode: "MIXED",
-      allowSeatMap: true,
-      allowTableMap: false,
-      defaultSectorName: "Arquibancada",
-      defaultSectorType: "STAND",
+      description: "Criação focada em ingressos para evento aberto.",
+      defaultSectorName: "Entrada geral",
+      defaultSectorType: "OPEN_ADMISSION",
       sessionLabel: "Partida",
     };
   }
@@ -331,28 +542,40 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
   if (category === "INFANTIL") {
     return {
       label: "Evento infantil",
-      description:
-        "Permite sessões, setores e regras especiais para acompanhantes.",
-      suggestedOccupancyMode: "GENERAL_ADMISSION",
-      allowSeatMap: false,
-      allowTableMap: false,
+      description: "Criação para ingresso aberto, plateia ou cadeiras.",
       defaultSectorName: "Entrada geral",
-      defaultSectorType: "GENERAL",
+      defaultSectorType: "OPEN_ADMISSION",
       sessionLabel: "Sessão",
     };
   }
 
   return {
     label: "Festas e shows",
-    description:
-      "Libera múltiplas datas, setores como pista, VIP, camarote e lotes.",
-    suggestedOccupancyMode: "GENERAL_ADMISSION",
-    allowSeatMap: false,
-    allowTableMap: false,
-    defaultSectorName: "Entrada geral",
-    defaultSectorType: "GENERAL",
+    description: "Criação para plateia, mesas, cadeiras ou modelos mistos.",
+    defaultSectorName: "Plateia",
+    defaultSectorType: "PLATEIA",
     sessionLabel: "Data",
   };
+}
+
+function getDefaultSectorName(
+  category: EventCategory,
+  sectorKind: SectorKind,
+  index = 0,
+) {
+  const categoryPreset = getCategoryPreset(category);
+  const sectorKindConfig = getSectorKindConfig(sectorKind);
+
+  if (index > 0) {
+    return `${sectorKindConfig.label} ${index + 1}`;
+  }
+
+  if (sectorKind === "OPEN_ADMISSION") return "Livre / evento aberto";
+  if (sectorKind === "PLATEIA") return "Plateia";
+  if (sectorKind === "NUMBERED_SEATS") return "Cadeiras numeradas";
+  if (sectorKind === "TABLES") return "Mesas";
+
+  return categoryPreset.defaultSectorName;
 }
 
 function createDefaultSession(index = 0): EventSessionFormItem {
@@ -370,21 +593,23 @@ function createDefaultSession(index = 0): EventSessionFormItem {
 
 function createDefaultSector(
   category: EventCategory,
-  occupancyMode?: OccupancyMode,
+  occupancyPreset: OccupancyPresetOption,
   index = 0,
+  forcedSectorKind?: SectorKind,
 ): VenueSectorFormItem {
-  const preset = getCategoryPreset(category);
-  const resolvedOccupancyMode = occupancyMode || preset.suggestedOccupancyMode;
+  const sectorKind = forcedSectorKind || occupancyPreset.defaultSectorKind;
+  const sectorKindConfig = getSectorKindConfig(sectorKind);
 
   return {
     localId: newLocalId("sector"),
-    name: index === 0 ? preset.defaultSectorName : `Setor ${index + 1}`,
+    name: getDefaultSectorName(category, sectorKind, index),
     description: "",
-    type: preset.defaultSectorType,
-    occupancyMode: resolvedOccupancyMode,
+    sectorKind,
+    type: sectorKindConfig.internalType,
+    occupancyMode: sectorKindConfig.occupancyMode,
     capacity: "",
     displayOrder: String(index),
-    color: "",
+    color: sectorColorOptions[index % sectorColorOptions.length].value,
     gateName: "",
   };
 }
@@ -461,8 +686,14 @@ function formatDatePreview(value: string) {
   });
 }
 
-function getOccupancyLabel(value: OccupancyMode) {
-  return occupancyOptions.find((item) => item.value === value)?.label || value;
+function getCategoryLabel(value: EventCategory) {
+  return categoryOptions.find((item) => item.value === value)?.label || value;
+}
+
+function getNumericValue(value: string) {
+  const parsed = Number(value);
+
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function Field({
@@ -475,6 +706,7 @@ function Field({
   error = false,
   helper,
   min,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -485,6 +717,7 @@ function Field({
   error?: boolean;
   helper?: string;
   min?: number;
+  disabled?: boolean;
 }) {
   return (
     <div>
@@ -497,9 +730,12 @@ function Field({
         type={type}
         value={value}
         min={min}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className={inputClass(error)}
+        className={`${inputClass(error)} ${
+          disabled ? "cursor-not-allowed bg-slate-100 text-slate-500" : ""
+        }`}
       />
 
       {helper ? (
@@ -613,6 +849,202 @@ function MiniStat({
   );
 }
 
+function StepShell({
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+      <div className="mb-8">
+        <p className="text-xs font-black uppercase tracking-[0.24em] text-sky-600">
+          {eyebrow}
+        </p>
+        <h2 className="mt-2 text-2xl font-black text-slate-950 md:text-3xl">
+          {title}
+        </h2>
+        <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+          {description}
+        </p>
+      </div>
+
+      {children}
+    </section>
+  );
+}
+
+function ImageUploadField({
+  label,
+  helper,
+  value,
+  kind,
+  onChange,
+}: {
+  label: string;
+  helper?: string;
+  value: string;
+  kind:
+    | "cover"
+    | "banner"
+    | "thumbnail"
+    | "mobile-banner"
+    | "sector-map"
+    | "gallery"
+    | "event-image";
+  onChange: (value: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+
+  async function handleUpload(file: File) {
+    const token = localStorage.getItem("token");
+
+    if (!token || token === "undefined") {
+      alert("Faça login novamente para enviar imagens.");
+      window.location.href = "/login";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("kind", kind);
+
+    setUploading(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/uploads/event-image`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        alert(
+          typeof result?.message === "string"
+            ? result.message
+            : "Erro ao enviar imagem",
+        );
+        return;
+      }
+
+      const uploadedUrl =
+        result?.url || result?.publicUrl || result?.path || result?.fileUrl;
+
+      if (!uploadedUrl) {
+        alert("Upload concluído, mas a API não retornou a URL da imagem.");
+        return;
+      }
+
+      onChange(uploadedUrl);
+    } catch (error) {
+      console.error("UPLOAD IMAGE ERROR:", error);
+      alert("Erro ao conectar com a API de upload.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+      <label className="block text-sm font-black text-slate-800">{label}</label>
+      {helper ? (
+        <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+          {helper}
+        </p>
+      ) : null}
+
+      <div className="mt-4 flex flex-col gap-3">
+        <input
+          type="file"
+          accept="image/*"
+          disabled={uploading}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+
+            if (file) {
+              void handleUpload(file);
+            }
+          }}
+          className="block w-full cursor-pointer rounded-2xl border border-slate-300 bg-white text-sm font-semibold text-slate-700 file:mr-4 file:h-[48px] file:border-0 file:bg-slate-950 file:px-5 file:text-sm file:font-black file:text-white hover:file:bg-sky-700"
+        />
+
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Ou cole uma URL manualmente"
+          className={inputClass()}
+        />
+
+        {uploading ? (
+          <p className="text-xs font-black text-sky-600">Enviando imagem...</p>
+        ) : null}
+
+        {value ? (
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={value} alt={label} className="h-40 w-full object-cover" />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SectorColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-black text-slate-700">
+        Cor do setor
+      </label>
+
+      <div className="grid grid-cols-5 gap-2">
+        {sectorColorOptions.map((color) => {
+          const active = color.value === value;
+
+          return (
+            <button
+              key={color.value}
+              type="button"
+              onClick={() => onChange(color.value)}
+              className={`flex h-11 items-center justify-center rounded-2xl border transition ${
+                active
+                  ? "border-slate-950 ring-4 ring-slate-200"
+                  : "border-slate-200 hover:border-slate-400"
+              }`}
+              title={color.label}
+              aria-label={`Selecionar cor ${color.label}`}
+            >
+              <span
+                className="h-7 w-7 rounded-full border border-white shadow"
+                style={{ backgroundColor: color.value }}
+              />
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="mt-2 text-xs font-semibold text-slate-500">
+        Cor selecionada: {value}
+      </p>
+    </div>
+  );
+}
+
 export default function NewEventPage() {
   const [organizers, setOrganizers] = useState<OrganizerItem[]>([]);
   const [loadingOrganizers, setLoadingOrganizers] = useState(true);
@@ -627,8 +1059,11 @@ export default function NewEventPage() {
   const [shortDescription, setShortDescription] = useState("");
   const [slug, setSlug] = useState("");
   const [category, setCategory] = useState<EventCategory>("FESTAS_SHOWS");
-  const [occupancyMode, setOccupancyMode] =
-    useState<OccupancyMode>("GENERAL_ADMISSION");
+  const [occupancyPresetKey, setOccupancyPresetKey] =
+    useState<OccupancyPresetKey>("PLATEIA_ONLY");
+  const [occupancyMode, setOccupancyMode] = useState<OccupancyMode>(
+    occupancyPresetCatalog.PLATEIA_ONLY.occupancyMode,
+  );
   const [status, setStatus] = useState("DRAFT");
   const [visibility, setVisibility] = useState("PUBLIC");
   const [timezone, setTimezone] = useState("America/Sao_Paulo");
@@ -674,7 +1109,6 @@ export default function NewEventPage() {
   const [mobileBannerUrl, setMobileBannerUrl] = useState("");
   const [sectorMapImageUrl, setSectorMapImageUrl] = useState("");
   const [galleryText, setGalleryText] = useState("");
-  const [lastGalleryUploadUrl, setLastGalleryUploadUrl] = useState("");
 
   const [ageRating, setAgeRating] = useState("");
   const [refundPolicy, setRefundPolicy] = useState("");
@@ -684,23 +1118,41 @@ export default function NewEventPage() {
   const [entryRules, setEntryRules] = useState("");
   const [documentRules, setDocumentRules] = useState("");
 
+  const initialOccupancyPreset = occupancyPresetCatalog.PLATEIA_ONLY;
+
   const [sessions, setSessions] = useState<EventSessionFormItem[]>([
     createDefaultSession(0),
   ]);
   const [sectors, setSectors] = useState<VenueSectorFormItem[]>([
-    createDefaultSector("FESTAS_SHOWS", "GENERAL_ADMISSION", 0),
+    createDefaultSector("FESTAS_SHOWS", initialOccupancyPreset, 0),
   ]);
   const [mapObjects, setMapObjects] = useState<SeatMapObjectFormItem[]>([]);
   const [seatRows, setSeatRows] = useState("8");
   const [seatColumns, setSeatColumns] = useState("12");
   const [tableCount, setTableCount] = useState("20");
   const [seatsPerTable, setSeatsPerTable] = useState("4");
+  const [selectedSeatMapSectorId, setSelectedSeatMapSectorId] = useState("");
+  const [selectedTableMapSectorId, setSelectedTableMapSectorId] = useState("");
 
   const [ticketTypes, setTicketTypes] = useState<TicketTypeFormItem[]>([
-    createDefaultTicketType(0),
+    createDefaultTicketType(
+      0,
+      "",
+      "",
+      initialOccupancyPreset.occupancyMode,
+    ),
   ]);
 
   const preset = useMemo(() => getCategoryPreset(category), [category]);
+
+  const availableOccupancyPresets = useMemo(() => {
+    return getOccupancyPresetOptions(category);
+  }, [category]);
+
+  const selectedOccupancyPreset = useMemo(() => {
+    return getOccupancyPreset(occupancyPresetKey);
+  }, [occupancyPresetKey]);
+
   const galleryPreview = useMemo(() => parseGallery(galleryText), [galleryText]);
 
   const selectedOrganizer = useMemo(() => {
@@ -710,13 +1162,59 @@ export default function NewEventPage() {
   const mainPreviewImage =
     bannerImageUrl || coverImageUrl || thumbnailUrl || mobileBannerUrl;
 
-  const allowSeatMap =
-    occupancyMode === "RESERVED_SEATING" || occupancyMode === "MIXED";
-  const allowTableMap =
-    occupancyMode === "RESERVED_TABLE" || occupancyMode === "MIXED";
-  const showMapBuilder = allowSeatMap || allowTableMap;
+  const allowSeatMap = selectedOccupancyPreset.allowSeatMap;
+  const allowTableMap = selectedOccupancyPreset.allowTableMap;
+  const showMapBuilder = selectedOccupancyPreset.requiresMap;
+  const isOpenAdmissionOnly = occupancyPresetKey === "OPEN_ADMISSION";
 
-  const primarySessionDate = sessions.find((session) => session.startsAt)?.startsAt;
+  const generalCapacityNumber = useMemo(() => {
+    return getNumericValue(capacity);
+  }, [capacity]);
+
+  const sectorCapacityTotal = useMemo(() => {
+    return sectors.reduce((sum, sector) => {
+      return sum + getNumericValue(sector.capacity);
+    }, 0);
+  }, [sectors]);
+
+  const hasSectorOverCapacity = useMemo(() => {
+    if (generalCapacityNumber <= 0) return false;
+
+    return sectors.some((sector) => {
+      const sectorCapacity = getNumericValue(sector.capacity);
+
+      return sectorCapacity > generalCapacityNumber;
+    });
+  }, [generalCapacityNumber, sectors]);
+
+  const hasSectorTotalOverCapacity = useMemo(() => {
+    if (generalCapacityNumber <= 0) return false;
+
+    return sectorCapacityTotal > generalCapacityNumber;
+  }, [generalCapacityNumber, sectorCapacityTotal]);
+
+  const sectorCapacityErrorMessage = useMemo(() => {
+    if (hasSectorOverCapacity) {
+      return "Nenhum setor pode ter capacidade maior que a capacidade geral do evento.";
+    }
+
+    if (hasSectorTotalOverCapacity) {
+      return "A soma das capacidades dos setores não pode ultrapassar a capacidade geral do evento.";
+    }
+
+    return "";
+  }, [hasSectorOverCapacity, hasSectorTotalOverCapacity]);
+
+  const seatMapSectors = useMemo(() => {
+    return sectors.filter((sector) => sector.sectorKind === "NUMBERED_SEATS");
+  }, [sectors]);
+
+  const tableMapSectors = useMemo(() => {
+    return sectors.filter((sector) => sector.sectorKind === "TABLES");
+  }, [sectors]);
+
+  const primarySessionDate = sessions.find((session) => session.startsAt)
+    ?.startsAt;
   const primaryEventDate = eventDate || primarySessionDate || "";
 
   const validTicketTypes = useMemo(() => {
@@ -736,10 +1234,15 @@ export default function NewEventPage() {
   }, [ticketTypes]);
 
   const stepCompletion: Record<StepId, boolean> = {
-    type: Boolean(category && occupancyMode),
+    type: Boolean(category && occupancyPresetKey && occupancyMode),
     basic: Boolean(organizerId && name.trim() && Number(capacity) > 0),
     sessions: sessions.some((session) => session.name.trim() && session.startsAt),
-    sectors: sectors.some((sector) => sector.name.trim()),
+    sectors:
+      !hasSectorOverCapacity &&
+      !hasSectorTotalOverCapacity &&
+      (isOpenAdmissionOnly
+        ? sectors.length === 1
+        : sectors.some((sector) => sector.name.trim())),
     map: !showMapBuilder || mapObjects.length > 0,
     tickets: validTicketTypes.length > 0,
     location: Boolean(venueName.trim() && city.trim() && stateName.trim()),
@@ -756,7 +1259,7 @@ export default function NewEventPage() {
     {
       id: "type",
       title: "Tipo de evento",
-      description: "Categoria e tipo de ocupação.",
+      description: "Categoria e ocupação personalizada.",
     },
     {
       id: "basic",
@@ -771,12 +1274,14 @@ export default function NewEventPage() {
     {
       id: "sectors",
       title: "Setores / áreas",
-      description: "Pista, plateia, salão, camarote ou auditório.",
+      description: isOpenAdmissionOnly
+        ? "Área única para todos os ingressos."
+        : "Plateia, cadeiras numeradas, mesas ou modelos mistos.",
     },
     {
       id: "map",
       title: "Mapa",
-      description: "Assentos, mesas ou mapa misto.",
+      description: "Cadeiras numeradas ou mesas marcadas.",
       optional: !showMapBuilder,
     },
     {
@@ -825,7 +1330,7 @@ export default function NewEventPage() {
       }
 
       try {
-        const res = await fetch("http://localhost:3001/v1/organizers", {
+        const response = await fetch(`${API_BASE_URL}/organizers`, {
           method: "GET",
           headers: {
             "Content-Type": "application/json",
@@ -833,9 +1338,9 @@ export default function NewEventPage() {
           },
         });
 
-        const result = await res.json();
+        const result = await response.json();
 
-        if (!res.ok) {
+        if (!response.ok) {
           alert(
             typeof result?.message === "string"
               ? result.message
@@ -863,6 +1368,63 @@ export default function NewEventPage() {
 
     loadOrganizers();
   }, []);
+
+  function syncTicketTypesWithSectors(nextSectors: VenueSectorFormItem[]) {
+    setTicketTypes((currentTicketTypes) =>
+      currentTicketTypes.map((ticketType) => {
+        const linkedSector = nextSectors.find(
+          (sector) => sector.localId === ticketType.venueSectorLocalId,
+        );
+
+        return {
+          ...ticketType,
+          occupancyMode: linkedSector?.occupancyMode || occupancyMode,
+        };
+      }),
+    );
+  }
+
+  function applyOccupancyPreset(nextKey: OccupancyPresetKey) {
+    const nextPreset = getOccupancyPreset(nextKey);
+    const nextDefaultSector = createDefaultSector(category, nextPreset, 0);
+
+    setOccupancyPresetKey(nextKey);
+    setOccupancyMode(nextPreset.occupancyMode);
+    setMapObjects([]);
+    setSelectedSeatMapSectorId("");
+    setSelectedTableMapSectorId("");
+    setSectors([nextDefaultSector]);
+
+    setTicketTypes((currentTicketTypes) =>
+      currentTicketTypes.map((ticketType) => ({
+        ...ticketType,
+        venueSectorLocalId: "",
+        occupancyMode: nextPreset.occupancyMode,
+      })),
+    );
+  }
+
+  function handleCategoryChange(nextCategory: EventCategory) {
+    const nextPresetKey = getDefaultOccupancyPresetKey(nextCategory);
+    const nextPreset = getOccupancyPreset(nextPresetKey);
+    const nextDefaultSector = createDefaultSector(nextCategory, nextPreset, 0);
+
+    setCategory(nextCategory);
+    setOccupancyPresetKey(nextPresetKey);
+    setOccupancyMode(nextPreset.occupancyMode);
+    setMapObjects([]);
+    setSelectedSeatMapSectorId("");
+    setSelectedTableMapSectorId("");
+    setSectors([nextDefaultSector]);
+
+    setTicketTypes((currentTicketTypes) =>
+      currentTicketTypes.map((ticketType) => ({
+        ...ticketType,
+        venueSectorLocalId: "",
+        occupancyMode: nextPreset.occupancyMode,
+      })),
+    );
+  }
 
   function isStepAccessible(index: number) {
     if (index === 0) return true;
@@ -911,341 +1473,509 @@ export default function NewEventPage() {
       return true;
     }
 
+    if (currentStep.id === "sectors" && sectorCapacityErrorMessage) {
+      alert(sectorCapacityErrorMessage);
+      return false;
+    }
+
     const messages: Record<StepId, string> = {
       type: "Escolha a categoria e o tipo de ocupação do evento.",
       basic: "Preencha produtora, nome do evento e capacidade geral.",
       sessions: "Cadastre pelo menos uma data ou sessão com início.",
-      sectors: "Cadastre pelo menos um setor ou área.",
-      map: "Gere o mapa de assentos ou mesas para continuar.",
-      tickets: "Cadastre pelo menos um ingresso válido com nome, preço e quantidade.",
-      location: "Preencha nome do local, cidade e estado.",
-      extras: "Esta etapa é opcional.",
-      review: "Revise os dados antes de salvar.",
+      sectors: "Cadastre pelo menos um setor ou área válido.",
+      map: "Gere o mapa de cadeiras ou mesas para continuar.",
+      tickets:
+        "Cadastre pelo menos um ingresso válido com nome, preço e quantidade.",
+      location: "Preencha local, cidade e estado.",
+      extras: "",
+      review: "",
     };
 
     alert(messages[currentStep.id]);
     return false;
   }
 
-  function goToNextStep() {
+  function goNextStep() {
     setSubmitAttempted(true);
 
     if (!validateCurrentStep()) return;
 
-    const nextIndex = Math.min(activeStepIndex + 1, stepDefinitions.length - 1);
-    setActiveStepIndex(nextIndex);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function goToPreviousStep() {
-    const previousIndex = Math.max(activeStepIndex - 1, 0);
-    setActiveStepIndex(previousIndex);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function handleCategoryChange(value: EventCategory) {
-    const nextPreset = getCategoryPreset(value);
-    const nextOccupancyMode = nextPreset.suggestedOccupancyMode;
-
-    setCategory(value);
-    setOccupancyMode(nextOccupancyMode);
-
-    setSectors((prev) => {
-      if (prev.length === 0 || prev.length === 1) {
-        return [createDefaultSector(value, nextOccupancyMode, 0)];
-      }
-
-      return prev.map((sector) => ({
-        ...sector,
-        occupancyMode: nextOccupancyMode,
-      }));
-    });
-
-    setTicketTypes((prev) =>
-      prev.map((ticketType) => ({
-        ...ticketType,
-        occupancyMode: nextOccupancyMode,
-      })),
+    setActiveStepIndex((currentIndex) =>
+      Math.min(currentIndex + 1, stepDefinitions.length - 1),
     );
-
-    if (
-      nextOccupancyMode === "GENERAL_ADMISSION" &&
-      value !== "ESPORTES" &&
-      value !== "STAND_UP_COMEDY"
-    ) {
-      setMapObjects([]);
-    }
   }
 
-  function handleOccupancyModeChange(value: OccupancyMode) {
-    setOccupancyMode(value);
-
-    setSectors((prev) =>
-      prev.map((sector) => ({
-        ...sector,
-        occupancyMode: value,
-      })),
-    );
-
-    setTicketTypes((prev) =>
-      prev.map((ticketType) => ({
-        ...ticketType,
-        occupancyMode: value,
-      })),
-    );
-
-    if (value === "GENERAL_ADMISSION") {
-      setMapObjects([]);
-    }
+  function goPreviousStep() {
+    setActiveStepIndex((currentIndex) => Math.max(currentIndex - 1, 0));
   }
 
-  function updateSession(
+  function addSession() {
+    setSessions((currentSessions) => [
+      ...currentSessions,
+      createDefaultSession(currentSessions.length),
+    ]);
+  }
+
+  function updateSession<K extends keyof EventSessionFormItem>(
     localId: string,
-    field: keyof EventSessionFormItem,
-    value: string,
+    field: K,
+    value: EventSessionFormItem[K],
   ) {
-    setSessions((prev) =>
-      prev.map((session) =>
-        session.localId === localId
-          ? {
-              ...session,
-              [field]: value,
-            }
-          : session,
+    setSessions((currentSessions) =>
+      currentSessions.map((session) =>
+        session.localId === localId ? { ...session, [field]: value } : session,
       ),
     );
-
-    if (field === "startsAt" && !eventDate) {
-      setEventDate(value);
-    }
   }
 
-  function handleAddSession() {
-    setSessions((prev) => [...prev, createDefaultSession(prev.length)]);
-  }
+  function removeSession(localId: string) {
+    setSessions((currentSessions) => {
+      if (currentSessions.length <= 1) return currentSessions;
 
-  function handleRemoveSession(localId: string) {
-    setSessions((prev) => {
-      if (prev.length === 1) {
-        return [createDefaultSession(0)];
-      }
-
-      return prev.filter((session) => session.localId !== localId);
+      return currentSessions.filter((session) => session.localId !== localId);
     });
 
-    setTicketTypes((prev) =>
-      prev.map((ticketType) =>
+    setTicketTypes((currentTicketTypes) =>
+      currentTicketTypes.map((ticketType) =>
         ticketType.eventSessionLocalId === localId
-          ? {
-              ...ticketType,
-              eventSessionLocalId: "",
-            }
+          ? { ...ticketType, eventSessionLocalId: "" }
           : ticketType,
       ),
     );
   }
 
-  function updateSector(
-    localId: string,
-    field: keyof VenueSectorFormItem,
-    value: string,
-  ) {
-    setSectors((prev) =>
-      prev.map((sector) =>
-        sector.localId === localId
-          ? {
-              ...sector,
-              [field]: field === "occupancyMode" ? (value as OccupancyMode) : value,
-            }
-          : sector,
-      ),
-    );
-  }
+  function addSector() {
+    if (!selectedOccupancyPreset.supportsMultipleSectors) {
+      alert("Este tipo de evento usa área única, sem setores separados.");
+      return;
+    }
 
-  function handleAddSector() {
-    setSectors((prev) => [
-      ...prev,
-      createDefaultSector(category, occupancyMode, prev.length),
+    setSectors((currentSectors) => [
+      ...currentSectors,
+      createDefaultSector(
+        category,
+        selectedOccupancyPreset,
+        currentSectors.length,
+        selectedOccupancyPreset.defaultSectorKind,
+      ),
     ]);
   }
 
-  function handleRemoveSector(localId: string) {
-    setSectors((prev) => {
-      if (prev.length === 1) {
-        return [createDefaultSector(category, occupancyMode, 0)];
-      }
+  function updateSector<K extends keyof VenueSectorFormItem>(
+    localId: string,
+    field: K,
+    value: VenueSectorFormItem[K],
+  ) {
+    setSectors((currentSectors) => {
+      const nextSectors = currentSectors.map((sector) =>
+        sector.localId === localId ? { ...sector, [field]: value } : sector,
+      );
 
-      return prev.filter((sector) => sector.localId !== localId);
+      syncTicketTypesWithSectors(nextSectors);
+      return nextSectors;
+    });
+  }
+
+  function updateSectorKind(localId: string, sectorKind: SectorKind) {
+    const config = getSectorKindConfig(sectorKind);
+
+    setSectors((currentSectors) => {
+      const nextSectors = currentSectors.map((sector) => {
+        if (sector.localId !== localId) return sector;
+
+        return {
+          ...sector,
+          sectorKind,
+          type: config.internalType,
+          occupancyMode: config.occupancyMode,
+        };
+      });
+
+      syncTicketTypesWithSectors(nextSectors);
+      return nextSectors;
     });
 
-    setMapObjects((prev) =>
-      prev.filter((object) => object.venueSectorLocalId !== localId),
+    setMapObjects((currentObjects) =>
+      currentObjects.filter((object) => object.venueSectorLocalId !== localId),
     );
+  }
 
-    setTicketTypes((prev) =>
-      prev.map((ticketType) =>
+  function removeSector(localId: string) {
+    if (!selectedOccupancyPreset.supportsMultipleSectors) {
+      alert("Este tipo de evento usa área única, sem setores separados.");
+      return;
+    }
+
+    setSectors((currentSectors) => {
+      if (currentSectors.length <= 1) return currentSectors;
+
+      const nextSectors = currentSectors.filter(
+        (sector) => sector.localId !== localId,
+      );
+
+      syncTicketTypesWithSectors(nextSectors);
+      return nextSectors;
+    });
+
+    setTicketTypes((currentTicketTypes) =>
+      currentTicketTypes.map((ticketType) =>
         ticketType.venueSectorLocalId === localId
-          ? {
-              ...ticketType,
-              venueSectorLocalId: "",
-            }
+          ? { ...ticketType, venueSectorLocalId: "" }
           : ticketType,
       ),
     );
-  }
 
-  function updateTicketType(
-    localId: string,
-    field: keyof TicketTypeFormItem,
-    value: string | boolean,
-  ) {
-    setTicketTypes((prev) =>
-      prev.map((ticketType) =>
-        ticketType.localId === localId
-          ? {
-              ...ticketType,
-              [field]:
-                field === "isHidden"
-                  ? Boolean(value)
-                  : field === "occupancyMode"
-                    ? (value as OccupancyMode)
-                    : value,
-            }
-          : ticketType,
-      ),
+    setMapObjects((currentObjects) =>
+      currentObjects.filter((object) => object.venueSectorLocalId !== localId),
     );
   }
 
-  function handleAddTicketType() {
-    const firstSession = sessions[0]?.localId || "";
-    const firstSector = sectors[0]?.localId || "";
+  function addTicketType() {
+    const firstSessionId = sessions[0]?.localId || "";
+    const firstSectorId = isOpenAdmissionOnly ? "" : sectors[0]?.localId || "";
+    const firstSector = sectors.find((sector) => sector.localId === firstSectorId);
 
-    setTicketTypes((prev) => [
-      ...prev,
+    setTicketTypes((currentTicketTypes) => [
+      ...currentTicketTypes,
       createDefaultTicketType(
-        prev.length,
-        firstSession,
-        firstSector,
-        occupancyMode,
+        currentTicketTypes.length,
+        firstSessionId,
+        firstSectorId,
+        firstSector?.occupancyMode || occupancyMode,
       ),
     ]);
   }
 
-  function handleRemoveTicketType(localId: string) {
-    setTicketTypes((prev) => {
-      if (prev.length === 1) {
-        return [
-          createDefaultTicketType(
-            0,
-            sessions[0]?.localId || "",
-            sectors[0]?.localId || "",
-            occupancyMode,
-          ),
-        ];
-      }
+  function updateTicketType<K extends keyof TicketTypeFormItem>(
+    localId: string,
+    field: K,
+    value: TicketTypeFormItem[K],
+  ) {
+    setTicketTypes((currentTicketTypes) =>
+      currentTicketTypes.map((ticketType) => {
+        if (ticketType.localId !== localId) return ticketType;
 
-      return prev.filter((ticketType) => ticketType.localId !== localId);
+        if (field === "venueSectorLocalId") {
+          const linkedSector = sectors.find((sector) => sector.localId === value);
+
+          return {
+            ...ticketType,
+            venueSectorLocalId: String(value),
+            occupancyMode: linkedSector?.occupancyMode || occupancyMode,
+          };
+        }
+
+        return { ...ticketType, [field]: value };
+      }),
+    );
+  }  function removeTicketType(localId: string) {
+    setTicketTypes((currentTicketTypes) => {
+      if (currentTicketTypes.length <= 1) return currentTicketTypes;
+
+      return currentTicketTypes.filter(
+        (ticketType) => ticketType.localId !== localId,
+      );
     });
-  }
-
-  function generateSlugFromName() {
-    const generatedSlug = name
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "");
-
-    setSlug(generatedSlug);
   }
 
   function generateSeatMap() {
-    const rows = Math.max(1, Number(seatRows) || 1);
-    const columns = Math.max(1, Number(seatColumns) || 1);
-    const sectorLocalId = sectors[0]?.localId || "";
-    const objects: SeatMapObjectFormItem[] = [];
+    if (!allowSeatMap) {
+      alert("Este tipo de evento não usa cadeiras numeradas.");
+      return;
+    }
+
+    const targetSectorId = selectedSeatMapSectorId || seatMapSectors[0]?.localId;
+
+    if (!targetSectorId) {
+      alert(
+        "Crie ou selecione um setor de cadeiras numeradas antes de gerar o mapa.",
+      );
+      return;
+    }
+
+    const rows = Math.max(1, Number.parseInt(seatRows, 10) || 1);
+    const columns = Math.max(1, Number.parseInt(seatColumns, 10) || 1);
+    const createdObjects: SeatMapObjectFormItem[] = [];
+    const rowLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
     for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
-      const rowLabel = String.fromCharCode(65 + rowIndex);
+      const rowLabel =
+        rowIndex < rowLetters.length
+          ? rowLetters[rowIndex]
+          : `R${rowIndex + 1}`;
 
-      for (let columnIndex = 1; columnIndex <= columns; columnIndex += 1) {
-        objects.push({
+      for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
+        const number = String(columnIndex + 1);
+        const code = `${rowLabel}${number}`;
+
+        createdObjects.push({
           localId: newLocalId("seat"),
-          venueSectorLocalId: sectorLocalId,
-          code: `${rowLabel}${columnIndex}`,
-          label: `${rowLabel}${columnIndex}`,
+          venueSectorLocalId: targetSectorId,
+          code,
+          label: `Cadeira ${code}`,
           type: "SEAT",
           row: rowLabel,
-          number: String(columnIndex),
+          number,
           capacity: "1",
-          x: columnIndex * 44,
-          y: rowIndex * 44,
-          width: 34,
-          height: 34,
+          x: 40 + columnIndex * 52,
+          y: 40 + rowIndex * 48,
+          width: 38,
+          height: 38,
           rotation: 0,
           status: "AVAILABLE",
         });
       }
     }
 
-    setMapObjects(objects);
+    setMapObjects((currentObjects) => [
+      ...currentObjects.filter(
+        (object) => object.venueSectorLocalId !== targetSectorId,
+      ),
+      ...createdObjects,
+    ]);
   }
 
   function generateTableMap() {
-    const count = Math.max(1, Number(tableCount) || 1);
-    const tableCapacity = Math.max(1, Number(seatsPerTable) || 1);
-    const sectorLocalId = sectors[0]?.localId || "";
-    const objects: SeatMapObjectFormItem[] = [];
+    if (!allowTableMap) {
+      alert("Este tipo de evento não usa mesas marcadas.");
+      return;
+    }
+
+    const targetSectorId =
+      selectedTableMapSectorId || tableMapSectors[0]?.localId;
+
+    if (!targetSectorId) {
+      alert("Crie ou selecione um setor de mesas antes de gerar o mapa.");
+      return;
+    }
+
+    const count = Math.max(1, Number.parseInt(tableCount, 10) || 1);
+    const capacityPerTable = Math.max(
+      1,
+      Number.parseInt(seatsPerTable, 10) || 1,
+    );
+    const createdObjects: SeatMapObjectFormItem[] = [];
 
     for (let index = 0; index < count; index += 1) {
-      const column = index % 5;
-      const row = Math.floor(index / 5);
+      const number = String(index + 1);
+      const code = `M${number.padStart(2, "0")}`;
 
-      objects.push({
+      createdObjects.push({
         localId: newLocalId("table"),
-        venueSectorLocalId: sectorLocalId,
-        code: `M${String(index + 1).padStart(2, "0")}`,
-        label: `Mesa ${String(index + 1).padStart(2, "0")}`,
+        venueSectorLocalId: targetSectorId,
+        code,
+        label: `Mesa ${number}`,
         type: "TABLE",
-        row: String(row + 1),
-        number: String(index + 1),
-        capacity: String(tableCapacity),
-        x: column * 96,
-        y: row * 96,
-        width: 72,
-        height: 72,
+        row: "",
+        number,
+        capacity: String(capacityPerTable),
+        x: 48 + (index % 5) * 120,
+        y: 48 + Math.floor(index / 5) * 110,
+        width: 76,
+        height: 76,
         rotation: 0,
         status: "AVAILABLE",
-        metadata: {
-          seatsPerTable: tableCapacity,
-        },
       });
     }
 
-    setMapObjects(objects);
+    setMapObjects((currentObjects) => [
+      ...currentObjects.filter(
+        (object) => object.venueSectorLocalId !== targetSectorId,
+      ),
+      ...createdObjects,
+    ]);
   }
 
-  function clearMapObjects() {
-    setMapObjects([]);
+  function clearMap() {
+    if (confirm("Deseja limpar o mapa gerado?")) {
+      setMapObjects([]);
+    }
   }
 
-  function handleGalleryUploaded(url: string) {
-    setLastGalleryUploadUrl(url);
-    setGalleryText((prev) => (prev ? `${prev}\n${url}` : url));
+  function buildPayload() {
+    const firstSessionStartsAt = sessions.find((session) => session.startsAt)
+      ?.startsAt;
+    const resolvedStartDate = startDate || firstSessionStartsAt || eventDate;
+
+    return {
+      organizerId,
+      name: name.trim(),
+      description: normalizeText(description),
+      shortDescription: normalizeText(shortDescription),
+      slug: normalizeText(slug),
+      category,
+      occupancyMode,
+      status,
+      visibility,
+      timezone,
+      eventDate: toIsoOrUndefined(eventDate || resolvedStartDate),
+      startDate: toIsoOrUndefined(resolvedStartDate),
+      endDate: toIsoOrUndefined(endDate),
+      saleStartAt: toIsoOrUndefined(saleStartAt),
+      saleEndAt: toIsoOrUndefined(saleEndAt),
+      capacity: toIntOrUndefined(capacity),
+      featured,
+      highlightTag: normalizeText(highlightTag),
+      checkoutTitle: normalizeText(checkoutTitle),
+      checkoutSubtitle: normalizeText(checkoutSubtitle),
+      allowSeatMap,
+      allowTableMap,
+      multiSession: sessions.length > 1,
+      content: {
+        headline: normalizeText(headline),
+        summary: normalizeText(summary),
+        fullDescription: normalizeText(fullDescription),
+        attractions: normalizeText(attractions),
+        schedule: normalizeText(schedule),
+        sectorDetails: normalizeText(sectorDetails),
+        importantInfo: normalizeText(importantInfo),
+        faq: normalizeText(faq),
+        producerDescription: normalizeText(producerDescription),
+        purchaseInstructions: normalizeText(purchaseInstructions),
+      },
+      location: {
+        mode,
+        venueName: normalizeText(venueName),
+        addressLine1: normalizeText(addressLine1),
+        addressLine2: normalizeText(addressLine2),
+        neighborhood: normalizeText(neighborhood),
+        city: normalizeText(city),
+        state: normalizeText(stateName),
+        zipCode: normalizeText(zipCode),
+        reference: normalizeText(reference),
+        mapUrl: normalizeText(mapUrl),
+        instructions: normalizeText(instructions),
+        latitude: toNumberOrUndefined(latitude),
+        longitude: toNumberOrUndefined(longitude),
+      },
+      media: {
+        coverImageUrl: normalizeText(coverImageUrl),
+        bannerImageUrl: normalizeText(bannerImageUrl),
+        thumbnailUrl: normalizeText(thumbnailUrl),
+        mobileBannerUrl: normalizeText(mobileBannerUrl),
+        sectorMapImageUrl: normalizeText(sectorMapImageUrl),
+        gallery: galleryPreview,
+      },
+      policy: {
+        ageRating: normalizeText(ageRating),
+        refundPolicy: normalizeText(refundPolicy),
+        halfEntryPolicy: normalizeText(halfEntryPolicy),
+        transferPolicy: normalizeText(transferPolicy),
+        termsNotes: normalizeText(termsNotes),
+        entryRules: normalizeText(entryRules),
+        documentRules: normalizeText(documentRules),
+      },
+      sessions: sessions
+        .filter((session) => session.name.trim() || session.startsAt)
+        .map((session, index) => ({
+          localId: session.localId,
+          name: session.name.trim() || `${preset.sessionLabel} ${index + 1}`,
+          description: normalizeText(session.description),
+          startsAt: toIsoOrUndefined(session.startsAt),
+          endsAt: toIsoOrUndefined(session.endsAt),
+          capacity: toIntOrUndefined(session.capacity),
+          status: session.status,
+          displayOrder: toIntOrUndefined(session.displayOrder) ?? index,
+        })),
+      sectors: sectors
+        .filter((sector) => sector.name.trim())
+        .map((sector, index) => ({
+          localId: sector.localId,
+          name: sector.name.trim(),
+          description: normalizeText(sector.description),
+          type: sector.type,
+          occupancyMode: sector.occupancyMode,
+          capacity: toIntOrUndefined(sector.capacity),
+          displayOrder: toIntOrUndefined(sector.displayOrder) ?? index,
+          color: normalizeText(sector.color),
+          gateName: normalizeText(sector.gateName),
+        })),
+      venueLayouts: showMapBuilder
+        ? [
+            {
+              localId: "layout-main",
+              name: allowSeatMap
+                ? "Mapa de cadeiras numeradas"
+                : "Mapa de mesas",
+              description: selectedOccupancyPreset.label,
+              occupancyMode,
+              width: 900,
+              height: 640,
+              isDefault: true,
+              status: "ACTIVE",
+            },
+          ]
+        : [],
+      seatMapObjects: showMapBuilder
+        ? mapObjects.map((object) => ({
+            localId: object.localId,
+            venueLayoutLocalId: "layout-main",
+            venueSectorLocalId: object.venueSectorLocalId,
+            code: object.code,
+            label: object.label,
+            type: object.type,
+            row: normalizeText(object.row),
+            number: normalizeText(object.number),
+            capacity: toIntOrUndefined(object.capacity),
+            x: object.x,
+            y: object.y,
+            width: object.width,
+            height: object.height,
+            rotation: object.rotation,
+            status: object.status,
+            metadata: object.metadata,
+          }))
+        : [],
+      ticketTypes: ticketTypes
+        .filter((ticketType) => ticketType.name.trim())
+        .map((ticketType, index) => {
+          const linkedSector = sectors.find(
+            (sector) => sector.localId === ticketType.venueSectorLocalId,
+          );
+
+          return {
+            localId: ticketType.localId,
+            eventSessionLocalId: normalizeText(ticketType.eventSessionLocalId),
+            venueSectorLocalId: normalizeText(ticketType.venueSectorLocalId),
+            occupancyMode:
+              linkedSector?.occupancyMode || ticketType.occupancyMode,
+            name: ticketType.name.trim(),
+            lotLabel: normalizeText(ticketType.lotLabel),
+            description: normalizeText(ticketType.description),
+            price: toNumberOrUndefined(ticketType.price),
+            quantity: toIntOrUndefined(ticketType.quantity),
+            salesStartAt: toIsoOrUndefined(ticketType.salesStartAt),
+            salesEndAt: toIsoOrUndefined(ticketType.salesEndAt),
+            minPerOrder: toIntOrUndefined(ticketType.minPerOrder),
+            maxPerOrder: toIntOrUndefined(ticketType.maxPerOrder),
+            displayOrder: toIntOrUndefined(ticketType.displayOrder) ?? index,
+            feeAmount: toNumberOrUndefined(ticketType.feeAmount),
+            feeDescription: normalizeText(ticketType.feeDescription),
+            benefitDescription: normalizeText(ticketType.benefitDescription),
+            isHidden: ticketType.isHidden,
+            status: ticketType.status,
+          };
+        }),
+    };
   }
 
-  async function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitAttempted(true);
 
-    const allRequiredStepsDone = stepDefinitions
-      .filter((step) => step.id !== "review")
-      .every((step) => stepCompletion[step.id]);
+    if (sectorCapacityErrorMessage) {
+      setActiveStepIndex(
+        stepDefinitions.findIndex((step) => step.id === "sectors"),
+      );
+      alert(sectorCapacityErrorMessage);
+      return;
+    }
 
-    if (!allRequiredStepsDone) {
-      const firstIncomplete = getFirstIncompleteStepIndex();
-      setActiveStepIndex(firstIncomplete);
-      alert("Conclua as etapas pendentes antes de criar o evento.");
+    const firstIncompleteStepIndex = getFirstIncompleteStepIndex();
+
+    if (firstIncompleteStepIndex !== stepDefinitions.length - 1) {
+      setActiveStepIndex(firstIncompleteStepIndex);
+      alert("Revise as etapas obrigatórias antes de salvar o evento.");
       return;
     }
 
@@ -1256,282 +1986,37 @@ export default function NewEventPage() {
       return;
     }
 
-    if (!organizerId) {
-      alert("Selecione a produtora responsável pelo evento.");
-      return;
-    }
-
-    if (!name.trim()) {
-      alert("Informe o nome do evento.");
-      return;
-    }
-
-    if (!primaryEventDate) {
-      alert("Informe pelo menos uma data/sessão do evento.");
-      return;
-    }
-
-    if (!capacity || Number(capacity) < 1) {
-      alert("Informe uma capacidade válida.");
-      return;
-    }
-
-    if (!venueName.trim()) {
-      alert("Informe o nome do local.");
-      return;
-    }
-
-    if (!city.trim()) {
-      alert("Informe a cidade do evento.");
-      return;
-    }
-
-    if (!stateName.trim()) {
-      alert("Informe o estado do evento.");
-      return;
-    }
-
-    const parsedSessions = sessions
-      .filter((session) => session.name.trim() && session.startsAt)
-      .map((session, index) => ({
-        localId: session.localId,
-        name: session.name.trim(),
-        description: normalizeText(session.description),
-        startsAt: new Date(session.startsAt).toISOString(),
-        endsAt: toIsoOrUndefined(session.endsAt),
-        capacity: toNumberOrUndefined(session.capacity),
-        status: normalizeText(session.status) || "ACTIVE",
-        displayOrder: toNumberOrUndefined(session.displayOrder) ?? index,
-      }));
-
-    const fallbackSession =
-      parsedSessions.length > 0
-        ? parsedSessions
-        : [
-            {
-              localId: "default-session",
-              name: "Data principal",
-              description: undefined,
-              startsAt: new Date(primaryEventDate).toISOString(),
-              endsAt: toIsoOrUndefined(endDate),
-              capacity: Number(capacity),
-              status: "ACTIVE",
-              displayOrder: 0,
-            },
-          ];
-
-    const parsedSectors = sectors
-      .filter((sector) => sector.name.trim())
-      .map((sector, index) => ({
-        localId: sector.localId,
-        name: sector.name.trim(),
-        description: normalizeText(sector.description),
-        type: normalizeText(sector.type),
-        occupancyMode: sector.occupancyMode,
-        capacity: toNumberOrUndefined(sector.capacity),
-        displayOrder: toNumberOrUndefined(sector.displayOrder) ?? index,
-        color: normalizeText(sector.color),
-        gateName: normalizeText(sector.gateName),
-      }));
-
-    const fallbackSectors =
-      parsedSectors.length > 0
-        ? parsedSectors
-        : [
-            {
-              localId: "default-sector",
-              name: preset.defaultSectorName,
-              description: undefined,
-              type: preset.defaultSectorType,
-              occupancyMode,
-              capacity: Number(capacity),
-              displayOrder: 0,
-              color: undefined,
-              gateName: undefined,
-            },
-          ];
-
-    const parsedTicketTypes = ticketTypes
-      .map((ticketType, index) => ({
-        eventSessionLocalId: normalizeText(ticketType.eventSessionLocalId),
-        venueSectorLocalId: normalizeText(ticketType.venueSectorLocalId),
-        occupancyMode: ticketType.occupancyMode,
-        name: ticketType.name.trim(),
-        lotLabel: normalizeText(ticketType.lotLabel),
-        description: normalizeText(ticketType.description),
-        price: normalizeText(ticketType.price.replace(",", ".")),
-        quantity: toNumberOrUndefined(ticketType.quantity),
-        salesStartAt: toIsoOrUndefined(ticketType.salesStartAt),
-        salesEndAt: toIsoOrUndefined(ticketType.salesEndAt),
-        minPerOrder: toNumberOrUndefined(ticketType.minPerOrder),
-        maxPerOrder: toNumberOrUndefined(ticketType.maxPerOrder),
-        displayOrder: toNumberOrUndefined(ticketType.displayOrder) ?? index,
-        feeAmount: normalizeText(ticketType.feeAmount.replace(",", ".")),
-        feeDescription: normalizeText(ticketType.feeDescription),
-        benefitDescription: normalizeText(ticketType.benefitDescription),
-        isHidden: ticketType.isHidden,
-        status: normalizeText(ticketType.status) || "ACTIVE",
-      }))
-      .filter(
-        (ticketType) =>
-          Boolean(ticketType.name) &&
-          Boolean(ticketType.price) &&
-          Boolean(ticketType.quantity && ticketType.quantity > 0),
-      );
-
-    const parsedMapObjects = mapObjects.map((object) => ({
-      localId: object.localId,
-      venueSectorLocalId: normalizeText(object.venueSectorLocalId),
-      code: object.code,
-      label: normalizeText(object.label),
-      type: object.type,
-      row: normalizeText(object.row),
-      number: normalizeText(object.number),
-      capacity: toNumberOrUndefined(object.capacity) || 1,
-      x: object.x,
-      y: object.y,
-      width: object.width,
-      height: object.height,
-      rotation: object.rotation,
-      status: normalizeText(object.status) || "AVAILABLE",
-      metadata: object.metadata,
-    }));
-
-    const content = {
-      headline: normalizeText(headline),
-      summary: normalizeText(summary),
-      fullDescription: normalizeText(fullDescription),
-      attractions: normalizeText(attractions),
-      schedule: normalizeText(schedule),
-      sectorDetails: normalizeText(sectorDetails),
-      importantInfo: normalizeText(importantInfo),
-      faq: normalizeText(faq),
-      producerDescription: normalizeText(producerDescription),
-      purchaseInstructions: normalizeText(purchaseInstructions),
-    };
-
-    const location = {
-      mode: normalizeText(mode) || "PRESENTIAL",
-      venueName: venueName.trim(),
-      addressLine1: normalizeText(addressLine1),
-      addressLine2: normalizeText(addressLine2),
-      neighborhood: normalizeText(neighborhood),
-      city: city.trim(),
-      state: stateName.trim().toUpperCase(),
-      zipCode: normalizeText(zipCode),
-      reference: normalizeText(reference),
-      mapUrl: normalizeText(mapUrl),
-      instructions: normalizeText(instructions),
-      latitude: normalizeText(latitude),
-      longitude: normalizeText(longitude),
-    };
-
-    const media = {
-      coverImageUrl: normalizeText(coverImageUrl),
-      bannerImageUrl: normalizeText(bannerImageUrl),
-      thumbnailUrl: normalizeText(thumbnailUrl),
-      mobileBannerUrl: normalizeText(mobileBannerUrl),
-      sectorMapImageUrl: normalizeText(sectorMapImageUrl),
-      gallery: galleryPreview.length > 0 ? galleryPreview : undefined,
-    };
-
-    const policy = {
-      ageRating: normalizeText(ageRating),
-      refundPolicy: normalizeText(refundPolicy),
-      halfEntryPolicy: normalizeText(halfEntryPolicy),
-      transferPolicy: normalizeText(transferPolicy),
-      termsNotes: normalizeText(termsNotes),
-      entryRules: normalizeText(entryRules),
-      documentRules: normalizeText(documentRules),
-    };
-
-    const payload = {
-      organizerId,
-      name: name.trim(),
-      description: normalizeText(description),
-      eventDate: new Date(primaryEventDate).toISOString(),
-      capacity: Number(capacity),
-
-      slug: normalizeText(slug),
-      shortDescription: normalizeText(shortDescription),
-      category,
-      occupancyMode,
-      multiSession: fallbackSession.length > 1,
-      allowSeatMap,
-      allowTableMap,
-      status: normalizeText(status),
-      visibility: normalizeText(visibility),
-      timezone: normalizeText(timezone),
-      startDate: toIsoOrUndefined(startDate || primaryEventDate),
-      endDate: toIsoOrUndefined(endDate),
-      saleStartAt: toIsoOrUndefined(saleStartAt),
-      saleEndAt: toIsoOrUndefined(saleEndAt),
-      featured,
-      highlightTag: normalizeText(highlightTag),
-      checkoutTitle: normalizeText(checkoutTitle),
-      checkoutSubtitle: normalizeText(checkoutSubtitle),
-
-      content: hasDefinedValue(content) ? content : undefined,
-      location,
-      media: hasDefinedValue(media) ? media : undefined,
-      policy: hasDefinedValue(policy) ? policy : undefined,
-      sessions: fallbackSession,
-      sectors: fallbackSectors,
-      venueLayouts:
-        showMapBuilder && parsedMapObjects.length > 0
-          ? [
-              {
-                localId: "default-layout",
-                name:
-                  occupancyMode === "RESERVED_TABLE"
-                    ? "Mapa de mesas"
-                    : occupancyMode === "RESERVED_SEATING"
-                      ? "Mapa de assentos"
-                      : "Mapa misto",
-                occupancyMode,
-                width: 1000,
-                height: 700,
-                isDefault: true,
-                status: "ACTIVE",
-                mapData: {
-                  source: "admin-event-create",
-                  category,
-                  generatedAt: new Date().toISOString(),
-                },
-                objects: parsedMapObjects,
-              },
-            ]
-          : undefined,
-      ticketTypes: parsedTicketTypes.length > 0 ? parsedTicketTypes : undefined,
-    };
-
     setSaving(true);
 
     try {
-      const res = await fetch("http://localhost:3001/v1/events", {
+      const response = await fetch(`${API_BASE_URL}/events`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(buildPayload()),
       });
 
-      const result = await res.json();
+      const result = await response.json();
 
-      if (!res.ok) {
+      if (!response.ok) {
         alert(
           typeof result?.message === "string"
             ? result.message
-            : JSON.stringify(result),
+            : Array.isArray(result?.message)
+              ? result.message.join("\n")
+              : "Erro ao criar evento",
         );
         return;
       }
 
-      alert("Evento criado com sucesso.");
+      alert("Evento criado com sucesso!");
 
-      if (result?.id) {
-        window.location.href = `/admin/events/${result.id}`;
+      const eventId = result?.id || result?.event?.id;
+
+      if (eventId) {
+        window.location.href = `/admin/events/${eventId}`;
         return;
       }
 
@@ -1544,242 +2029,173 @@ export default function NewEventPage() {
     }
   }
 
-  function StepNavigation() {
-    return (
-      <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
-        <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-sky-600">
-            Progresso
-          </p>
-
-          <h2 className="mt-2 text-2xl font-black text-slate-950">
-            Criação guiada
-          </h2>
-
-          <div className="mt-5 space-y-2">
-            {stepDefinitions.map((step, index) => {
-              const isActive = activeStepIndex === index;
-              const isAccessible = isStepAccessible(index);
-              const isComplete =
-                step.id === "review"
-                  ? stepDefinitions
-                      .filter((item) => item.id !== "review")
-                      .every((item) => stepCompletion[item.id])
-                  : stepCompletion[step.id];
-
-              return (
-                <button
-                  key={step.id}
-                  type="button"
-                  onClick={() => handleStepClick(index)}
-                  className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                    isActive
-                      ? "border-sky-300 bg-sky-50"
-                      : isComplete
-                        ? "border-emerald-200 bg-emerald-50/60"
-                        : isAccessible
-                          ? "border-slate-200 bg-white hover:bg-slate-50"
-                          : "border-slate-200 bg-slate-50 opacity-60"
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <span
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-black ${
-                        isComplete
-                          ? "bg-emerald-500 text-white"
-                          : isActive
-                            ? "bg-sky-600 text-white"
-                            : isAccessible
-                              ? "bg-slate-950 text-white"
-                              : "bg-slate-300 text-slate-600"
-                      }`}
-                    >
-                      {isComplete ? "✓" : index + 1}
-                    </span>
-
-                    <span className="min-w-0">
-                      <span className="block text-sm font-black text-slate-900">
-                        {step.title}
-                      </span>
-                      <span className="mt-1 block text-xs leading-5 text-slate-500">
-                        {isAccessible ? step.description : "Bloqueado"}
-                      </span>
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-sky-600">
-            Prévia
-          </p>
-
-          <h2 className="mt-2 line-clamp-2 text-2xl font-black text-slate-950">
-            {name || "Nome do evento"}
-          </h2>
-
-          <div className="mt-4 overflow-hidden rounded-2xl bg-slate-950">
-            {mainPreviewImage ? (
-              <img
-                src={mainPreviewImage}
-                alt="Prévia do evento"
-                className="h-36 w-full object-cover"
-              />
-            ) : (
-              <div className="h-36 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.45),transparent_34%),linear-gradient(135deg,#020617,#0f172a,#075985)]" />
-            )}
-          </div>
-
-          <div className="mt-4 space-y-2 text-sm text-slate-600">
-            <p>
-              <strong>Categoria:</strong> {preset.label}
-            </p>
-            <p>
-              <strong>Ocupação:</strong> {getOccupancyLabel(occupancyMode)}
-            </p>
-            <p>
-              <strong>Data:</strong> {formatDatePreview(primaryEventDate)}
-            </p>
-            <p>
-              <strong>Local:</strong>{" "}
-              {[venueName, city, stateName].filter(Boolean).join(", ") ||
-                "Local a confirmar"}
-            </p>
-          </div>
-        </section>
-      </aside>
-    );
-  }
-
-  function StepShell({
-    eyebrow,
-    title,
-    description,
-    children,
-    showPrevious = true,
-    nextLabel = "Continuar",
-    onNext,
-  }: {
-    eyebrow: string;
-    title: string;
-    description: string;
-    children: ReactNode;
-    showPrevious?: boolean;
-    nextLabel?: string;
-    onNext?: () => void;
-  }) {
-    return (
-      <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-        <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-sky-600">
-            {eyebrow}
-          </p>
-
-          <h2 className="mt-2 text-2xl font-black text-slate-950 md:text-3xl">
-            {title}
-          </h2>
-
-          <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
-        </div>
-
-        <div className="mt-7">{children}</div>
-
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-6">
-          {showPrevious ? (
-            <button
-              type="button"
-              onClick={goToPreviousStep}
-              className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-700 transition hover:bg-slate-50"
-            >
-              Voltar etapa
-            </button>
-          ) : (
-            <span />
-          )}
-
-          <button
-            type="button"
-            onClick={onNext || goToNextStep}
-            className="rounded-2xl bg-slate-950 px-6 py-4 text-sm font-black text-white transition hover:bg-slate-800"
-          >
-            {nextLabel}
-          </button>
-        </div>
-      </section>
-    );
-  }
-
   function renderTypeStep() {
     return (
       <StepShell
         eyebrow="Etapa 1"
-        title="Tipo de evento"
-        description="Escolha a categoria para liberar sessões, setores, assentos ou mesas conforme o tipo de operação."
-        showPrevious={false}
+        title="Escolha a categoria e o tipo de ocupação"
+        description="A categoria define quais modelos aparecem. Depois disso, a criação guiada libera apenas os campos que fazem sentido para esse modelo."
       >
-        <div className="grid gap-5 md:grid-cols-2">
-          <div className="md:col-span-2">
-            <label className="mb-2 block text-sm font-black text-slate-700">
+        <div className="grid gap-8">
+          <div>
+            <h3 className="text-sm font-black uppercase tracking-[0.18em] text-slate-400">
               Categoria do evento
-            </label>
+            </h3>
 
-            <select
-              value={category}
-              onChange={(event) =>
-                handleCategoryChange(event.target.value as EventCategory)
-              }
-              className={inputClass()}
-            >
-              {categoryOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              {preset.description}
-            </p>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-2 block text-sm font-black text-slate-700">
-              Tipo de ocupação
-            </label>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              {occupancyOptions.map((option) => {
-                const active = occupancyMode === option.value;
+            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {categoryOptions.map((option) => {
+                const active = option.value === category;
 
                 return (
                   <button
                     key={option.value}
                     type="button"
-                    onClick={() => handleOccupancyModeChange(option.value)}
-                    className={`rounded-[22px] border p-4 text-left transition ${
+                    onClick={() => handleCategoryChange(option.value)}
+                    className={`rounded-3xl border p-5 text-left transition ${
                       active
-                        ? "border-sky-300 bg-sky-50 shadow-sm"
-                        : "border-slate-200 bg-white hover:bg-slate-50"
+                        ? "border-sky-500 bg-sky-50 shadow-[0_18px_45px_rgba(14,165,233,0.18)]"
+                        : "border-slate-200 bg-white hover:border-sky-200 hover:bg-slate-50"
                     }`}
                   >
-                    <p
-                      className={`text-sm font-black ${
-                        active ? "text-sky-700" : "text-slate-900"
+                    <div
+                      className={`mb-4 flex h-11 w-11 items-center justify-center rounded-2xl text-lg font-black ${
+                        active
+                          ? "bg-sky-600 text-white"
+                          : "bg-slate-100 text-slate-700"
                       }`}
                     >
+                      {active ? "✓" : "•"}
+                    </div>
+
+                    <p className="text-base font-black text-slate-950">
                       {option.label}
                     </p>
-
-                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                    <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
                       {option.description}
                     </p>
                   </button>
                 );
               })}
             </div>
+          </div>
+
+          <div className="rounded-[2rem] border border-slate-200 bg-slate-950 p-6 text-white">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-300">
+                  Ocupações disponíveis para {getCategoryLabel(category)}
+                </p>
+                <h3 className="mt-2 text-2xl font-black">
+                  Tipos personalizados
+                </h3>
+                <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-300">
+                  Ao trocar a categoria, esta lista muda automaticamente. O
+                  restante do formulário acompanha a escolha.
+                </p>
+              </div>
+
+              <span className="rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-white">
+                {availableOccupancyPresets.length} opção
+                {availableOccupancyPresets.length === 1 ? "" : "ões"}
+              </span>
+            </div>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {availableOccupancyPresets.map((option) => {
+                const active = option.key === occupancyPresetKey;
+
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => applyOccupancyPreset(option.key)}
+                    className={`rounded-3xl border p-5 text-left transition ${
+                      active
+                        ? "border-sky-300 bg-sky-500 text-white shadow-[0_18px_45px_rgba(14,165,233,0.25)]"
+                        : "border-white/10 bg-white/5 text-white hover:border-white/30 hover:bg-white/10"
+                    }`}
+                  >
+                    <div className="mb-4 flex flex-wrap gap-2">
+                      {option.usesOpenAdmission ? (
+                        <span className="rounded-full bg-white/15 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em]">
+                          Livre
+                        </span>
+                      ) : null}
+
+                      {option.usesPlateia ? (
+                        <span className="rounded-full bg-white/15 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em]">
+                          Plateia
+                        </span>
+                      ) : null}
+
+                      {option.usesNumberedSeats ? (
+                        <span className="rounded-full bg-white/15 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em]">
+                          Cadeiras
+                        </span>
+                      ) : null}
+
+                      {option.usesTables ? (
+                        <span className="rounded-full bg-white/15 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em]">
+                          Mesas
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <p className="text-lg font-black">{option.label}</p>
+                    <p
+                      className={`mt-2 text-sm font-semibold leading-6 ${
+                        active ? "text-sky-50" : "text-slate-300"
+                      }`}
+                    >
+                      {option.description}
+                    </p>
+
+                    <div className="mt-5 grid grid-cols-2 gap-2 text-xs font-black">
+                      <span
+                        className={`rounded-2xl px-3 py-2 ${
+                          option.requiresMap
+                            ? "bg-amber-300 text-amber-950"
+                            : "bg-emerald-300 text-emerald-950"
+                        }`}
+                      >
+                        {option.requiresMap ? "Com mapa" : "Sem mapa"}
+                      </span>
+                      <span className="rounded-2xl bg-white/15 px-3 py-2 text-white">
+                        {option.supportsMultipleSectors
+                          ? "Setores"
+                          : "Área única"}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-4">
+            <MiniStat
+              label="Área livre / plateia"
+              value={
+                selectedOccupancyPreset.usesPlateia ||
+                selectedOccupancyPreset.usesOpenAdmission
+                  ? "Sim"
+                  : "Não"
+              }
+            />
+            <MiniStat
+              label="Cadeiras numeradas"
+              value={selectedOccupancyPreset.usesNumberedSeats ? "Sim" : "Não"}
+            />
+            <MiniStat
+              label="Mesas marcadas"
+              value={selectedOccupancyPreset.usesTables ? "Sim" : "Não"}
+            />
+            <MiniStat
+              label="Setores separados"
+              value={
+                selectedOccupancyPreset.supportsMultipleSectors ? "Sim" : "Não"
+              }
+            />
           </div>
         </div>
       </StepShell>
@@ -1791,86 +2207,69 @@ export default function NewEventPage() {
       <StepShell
         eyebrow="Etapa 2"
         title="Dados principais"
-        description="Defina a identidade do evento, produtora responsável e regras gerais de exibição."
+        description="Defina a produtora, o nome, status, visibilidade e informações principais do evento."
       >
         <div className="grid gap-5 md:grid-cols-2">
-          <div className="md:col-span-2">
-            <label className="mb-2 block text-sm font-black text-slate-700">
-              Produtora responsável <span className="text-rose-600">*</span>
-            </label>
+          <SelectField
+            label="Produtora"
+            value={organizerId}
+            onChange={setOrganizerId}
+            required
+            options={[
+              {
+                label: loadingOrganizers
+                  ? "Carregando produtoras..."
+                  : "Selecione a produtora",
+                value: "",
+              },
+              ...organizers.map((organizer) => ({
+                value: organizer.id,
+                label:
+                  organizer.tradeName ||
+                  organizer.legalName ||
+                  organizer.email ||
+                  "Produtora sem nome",
+              })),
+            ]}
+          />
 
-            <select
-              value={organizerId}
-              onChange={(event) => setOrganizerId(event.target.value)}
-              className={inputClass(requiredErrors.organizerId)}
-            >
-              <option value="">Selecione uma produtora</option>
-              {organizers.map((organizer) => (
-                <option key={organizer.id} value={organizer.id}>
-                  {organizer.tradeName || organizer.legalName || organizer.id}
-                </option>
-              ))}
-            </select>
+          <Field
+            label="Nome do evento"
+            value={name}
+            onChange={setName}
+            placeholder="Ex: Festival de Verão 2026"
+            required
+            error={requiredErrors.name}
+          />
 
-            {requiredErrors.organizerId ? (
-              <p className="mt-2 text-xs font-semibold text-rose-600">
-                Selecione a produtora responsável.
-              </p>
-            ) : null}
-          </div>
-
-          <div className="md:col-span-2">
-            <Field
-              label="Nome do evento"
-              value={name}
-              onChange={setName}
-              placeholder="Ex: Festival de Verão 2026"
-              required
-              error={requiredErrors.name}
-              helper={requiredErrors.name ? "Informe o nome do evento." : undefined}
-            />
-          </div>
-
-          <div>
-            <Field
-              label="Slug"
-              value={slug}
-              onChange={setSlug}
-              placeholder="festival-de-verao-2026"
-            />
-
-            <button
-              type="button"
-              onClick={generateSlugFromName}
-              className="mt-2 text-xs font-black text-sky-600 hover:text-sky-700"
-            >
-              Gerar pelo nome
-            </button>
-          </div>
+          <Field
+            label="Slug público"
+            value={slug}
+            onChange={setSlug}
+            placeholder="festival-de-verao-2026"
+            helper="Opcional. Se vazio, a API pode gerar automaticamente."
+          />
 
           <Field
             label="Capacidade geral"
-            type="number"
-            min={1}
             value={capacity}
             onChange={setCapacity}
-            placeholder="1000"
+            type="number"
+            min={1}
             required
             error={requiredErrors.capacity}
-            helper={
-              requiredErrors.capacity ? "Informe uma capacidade válida." : undefined
-            }
+            helper="A soma dos setores não pode ultrapassar esta capacidade."
           />
 
           <SelectField
-            label="Status"
+            label="Status inicial"
             value={status}
             onChange={setStatus}
             options={[
               { label: "Rascunho", value: "DRAFT" },
               { label: "Publicado", value: "PUBLISHED" },
-              { label: "Ativo", value: "ACTIVE" },
-              { label: "Cancelado", value: "CANCELED" },
+              { label: "Pausado", value: "PAUSED" },
+              { label: "Encerrado", value: "ENDED" },
             ]}
           />
 
@@ -1886,7 +2285,7 @@ export default function NewEventPage() {
           />
 
           <Field
-            label="Timezone"
+            label="Fuso horário"
             value={timezone}
             onChange={setTimezone}
             placeholder="America/Sao_Paulo"
@@ -1900,50 +2299,34 @@ export default function NewEventPage() {
           />
 
           <div className="md:col-span-2">
-            <Field
+            <TextAreaField
               label="Descrição curta"
               value={shortDescription}
               onChange={setShortDescription}
-              placeholder="Resumo rápido que aparece nos cards do evento"
+              placeholder="Resumo rápido para cards e listagens."
             />
           </div>
 
           <div className="md:col-span-2">
             <TextAreaField
-              label="Descrição base"
+              label="Descrição interna"
               value={description}
               onChange={setDescription}
-              placeholder="Descrição principal usada em cards, detalhes e resumo"
+              placeholder="Descrição geral usada no cadastro do evento."
             />
           </div>
 
-          <div className="flex h-[52px] items-center gap-3 rounded-2xl border border-slate-300 bg-white px-4">
-            <input
-              id="featured"
-              type="checkbox"
-              checked={featured}
-              onChange={(event) => setFeatured(event.target.checked)}
-              className="h-4 w-4"
-            />
-
-            <label htmlFor="featured" className="text-sm font-black text-slate-700">
-              Evento em destaque
+          <div className="md:col-span-2">
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-black text-slate-700">
+              <input
+                type="checkbox"
+                checked={featured}
+                onChange={(event) => setFeatured(event.target.checked)}
+                className="h-5 w-5 rounded border-slate-300"
+              />
+              Destacar evento na área pública
             </label>
           </div>
-
-          <Field
-            label="Título do checkout"
-            value={checkoutTitle}
-            onChange={setCheckoutTitle}
-            placeholder="Escolha seu ingresso"
-          />
-
-          <Field
-            label="Subtítulo do checkout"
-            value={checkoutSubtitle}
-            onChange={setCheckoutSubtitle}
-            placeholder="Selecione o lote ideal"
-          />
         </div>
       </StepShell>
     );
@@ -1953,121 +2336,144 @@ export default function NewEventPage() {
     return (
       <StepShell
         eyebrow="Etapa 3"
-        title={`Datas / ${preset.sessionLabel.toLowerCase()}s`}
-        description="Cadastre uma ou várias datas. Isso permite eventos de vários dias, turmas, sessões ou horários."
+        title={`Datas / ${preset.sessionLabel}s`}
+        description="Cadastre uma ou mais datas. Cada ingresso pode ser vinculado a uma sessão específica."
       >
-        <div className="space-y-5">
-          {sessions.map((session, index) => (
-            <div
-              key={session.localId}
-              className="rounded-[28px] border border-slate-200 bg-slate-50 p-5"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
-                    {preset.sessionLabel} {index + 1}
-                  </p>
+        <div className="grid gap-5">
+          <div className="grid gap-5 md:grid-cols-3">
+            <Field
+              label="Data principal"
+              value={eventDate}
+              onChange={setEventDate}
+              type="datetime-local"
+              helper="Opcional. Pode ser preenchida automaticamente pela primeira sessão."
+            />
+            <Field
+              label="Início geral"
+              value={startDate}
+              onChange={setStartDate}
+              type="datetime-local"
+            />
+            <Field
+              label="Fim geral"
+              value={endDate}
+              onChange={setEndDate}
+              type="datetime-local"
+            />
+          </div>
 
-                  <h3 className="mt-1 text-xl font-black text-slate-950">
-                    {session.name || `${preset.sessionLabel} ${index + 1}`}
-                  </h3>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleRemoveSession(session.localId)}
-                  className="rounded-2xl border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-600 transition hover:bg-rose-50"
-                >
-                  Remover
-                </button>
-              </div>
-
-              <div className="mt-5 grid gap-5 md:grid-cols-2">
-                <Field
-                  label={`Nome da ${preset.sessionLabel.toLowerCase()}`}
-                  value={session.name}
-                  onChange={(value) =>
-                    updateSession(session.localId, "name", value)
-                  }
-                  placeholder="Ex: Sexta-feira, Turma 20h, Sessão 1"
-                  required
-                />
-
-                <Field
-                  label="Capacidade da sessão"
-                  type="number"
-                  min={1}
-                  value={session.capacity}
-                  onChange={(value) =>
-                    updateSession(session.localId, "capacity", value)
-                  }
-                  placeholder="Opcional"
-                />
-
-                <Field
-                  label="Início"
-                  type="datetime-local"
-                  value={session.startsAt}
-                  onChange={(value) =>
-                    updateSession(session.localId, "startsAt", value)
-                  }
-                  required
-                  error={requiredErrors.sessions && !session.startsAt}
-                />
-
-                <Field
-                  label="Fim"
-                  type="datetime-local"
-                  value={session.endsAt}
-                  onChange={(value) =>
-                    updateSession(session.localId, "endsAt", value)
-                  }
-                />
-
-                <SelectField
-                  label="Status"
-                  value={session.status}
-                  onChange={(value) =>
-                    updateSession(session.localId, "status", value)
-                  }
-                  options={[
-                    { label: "Ativa", value: "ACTIVE" },
-                    { label: "Rascunho", value: "DRAFT" },
-                    { label: "Esgotada", value: "SOLD_OUT" },
-                    { label: "Cancelada", value: "CANCELED" },
-                  ]}
-                />
-
-                <Field
-                  label="Ordem"
-                  type="number"
-                  min={0}
-                  value={session.displayOrder}
-                  onChange={(value) =>
-                    updateSession(session.localId, "displayOrder", value)
-                  }
-                />
-
-                <div className="md:col-span-2">
-                  <TextAreaField
-                    label="Descrição"
-                    value={session.description}
-                    onChange={(value) =>
-                      updateSession(session.localId, "description", value)
-                    }
-                    placeholder="Ex: Abertura dos portões às 19h"
-                  />
-                </div>
-              </div>
+          {requiredErrors.sessions ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+              Cadastre pelo menos uma data ou sessão com início.
             </div>
-          ))}
+          ) : null}
+
+          <div className="space-y-4">
+            {sessions.map((session, index) => (
+              <div
+                key={session.localId}
+                className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
+              >
+                <div className="mb-5 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                      {preset.sessionLabel} {index + 1}
+                    </p>
+                    <h3 className="text-lg font-black text-slate-950">
+                      {session.name || `${preset.sessionLabel} ${index + 1}`}
+                    </h3>
+                  </div>
+
+                  {sessions.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => removeSession(session.localId)}
+                      className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                    >
+                      Remover
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field
+                    label="Nome"
+                    value={session.name}
+                    onChange={(value) =>
+                      updateSession(session.localId, "name", value)
+                    }
+                    placeholder="Ex: Sábado 20h"
+                    required
+                  />
+                  <Field
+                    label="Capacidade da sessão"
+                    value={session.capacity}
+                    onChange={(value) =>
+                      updateSession(session.localId, "capacity", value)
+                    }
+                    type="number"
+                    min={1}
+                  />
+                  <Field
+                    label="Início"
+                    value={session.startsAt}
+                    onChange={(value) =>
+                      updateSession(session.localId, "startsAt", value)
+                    }
+                    type="datetime-local"
+                    required
+                  />
+                  <Field
+                    label="Fim"
+                    value={session.endsAt}
+                    onChange={(value) =>
+                      updateSession(session.localId, "endsAt", value)
+                    }
+                    type="datetime-local"
+                  />
+                  <SelectField
+                    label="Status"
+                    value={session.status}
+                    onChange={(value) =>
+                      updateSession(session.localId, "status", value)
+                    }
+                    options={[
+                      { label: "Ativa", value: "ACTIVE" },
+                      { label: "Pausada", value: "PAUSED" },
+                      { label: "Cancelada", value: "CANCELED" },
+                      { label: "Encerrada", value: "ENDED" },
+                    ]}
+                  />
+                  <Field
+                    label="Ordem de exibição"
+                    value={session.displayOrder}
+                    onChange={(value) =>
+                      updateSession(session.localId, "displayOrder", value)
+                    }
+                    type="number"
+                    helper="Use 0 para aparecer primeiro, 1 para aparecer depois, e assim por diante."
+                  />
+                  <div className="md:col-span-2">
+                    <TextAreaField
+                      label="Descrição"
+                      value={session.description}
+                      onChange={(value) =>
+                        updateSession(session.localId, "description", value)
+                      }
+                      placeholder="Informações específicas desta data ou sessão."
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
 
           <button
             type="button"
-            onClick={handleAddSession}
-            className="w-full rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 transition hover:bg-sky-100"
+            onClick={addSession}
+            className="rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-100"
           >
-            Adicionar outra data/sessão
+            + Adicionar outra {preset.sessionLabel.toLowerCase()}
           </button>
         </div>
       </StepShell>
@@ -2078,301 +2484,457 @@ export default function NewEventPage() {
     return (
       <StepShell
         eyebrow="Etapa 4"
-        title="Setores / áreas"
-        description="Crie áreas como pista, camarote, plateia, salão, VIP, auditório ou turma."
+        title={isOpenAdmissionOnly ? "Área única do evento" : "Setores / áreas"}
+        description={
+          isOpenAdmissionOnly
+            ? "Este tipo usa o mesmo espaço para todos os ingressos, sem setores separados."
+            : "Configure os setores permitidos para o tipo de ocupação escolhido."
+        }
       >
-        <div className="space-y-5">
-          {sectors.map((sector, index) => (
-            <div
-              key={sector.localId}
-              className="rounded-[28px] border border-slate-200 bg-slate-50 p-5"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
-                    Setor {index + 1}
-                  </p>
-
-                  <h3 className="mt-1 text-xl font-black text-slate-950">
-                    {sector.name || `Setor ${index + 1}`}
-                  </h3>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleRemoveSector(sector.localId)}
-                  className="rounded-2xl border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-600 transition hover:bg-rose-50"
-                >
-                  Remover
-                </button>
-              </div>
-
-              <div className="mt-5 grid gap-5 md:grid-cols-2">
-                <Field
-                  label="Nome do setor"
-                  value={sector.name}
-                  onChange={(value) =>
-                    updateSector(sector.localId, "name", value)
-                  }
-                  placeholder="Pista, Camarote, Plateia, Salão..."
-                  required
-                  error={requiredErrors.sectors && !sector.name}
-                />
-
-                <Field
-                  label="Tipo interno"
-                  value={sector.type}
-                  onChange={(value) =>
-                    updateSector(sector.localId, "type", value)
-                  }
-                  placeholder="GENERAL, VIP, AUDITORIUM..."
-                />
-
-                <SelectField
-                  label="Tipo de ocupação do setor"
-                  value={sector.occupancyMode}
-                  onChange={(value) =>
-                    updateSector(sector.localId, "occupancyMode", value)
-                  }
-                  options={occupancyOptions.map((option) => ({
-                    label: option.label,
-                    value: option.value,
-                  }))}
-                />
-
-                <Field
-                  label="Capacidade"
-                  type="number"
-                  min={1}
-                  value={sector.capacity}
-                  onChange={(value) =>
-                    updateSector(sector.localId, "capacity", value)
-                  }
-                  placeholder="Opcional"
-                />
-
-                <Field
-                  label="Cor"
-                  value={sector.color}
-                  onChange={(value) =>
-                    updateSector(sector.localId, "color", value)
-                  }
-                  placeholder="#0ea5e9"
-                />
-
-                <Field
-                  label="Portão"
-                  value={sector.gateName}
-                  onChange={(value) =>
-                    updateSector(sector.localId, "gateName", value)
-                  }
-                  placeholder="Portão A"
-                />
-
-                <Field
-                  label="Ordem"
-                  type="number"
-                  min={0}
-                  value={sector.displayOrder}
-                  onChange={(value) =>
-                    updateSector(sector.localId, "displayOrder", value)
-                  }
-                />
-
-                <div className="md:col-span-2">
-                  <TextAreaField
-                    label="Descrição"
-                    value={sector.description}
-                    onChange={(value) =>
-                      updateSector(sector.localId, "description", value)
-                    }
-                    placeholder="Explique o que este setor inclui"
-                  />
-                </div>
-              </div>
-            </div>
-          ))}
-
-          <button
-            type="button"
-            onClick={handleAddSector}
-            className="w-full rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 transition hover:bg-sky-100"
-          >
-            Adicionar outro setor
-          </button>
+        <div className="mb-6 rounded-3xl border border-sky-100 bg-sky-50 p-5">
+          <p className="text-sm font-black text-sky-950">
+            Tipo escolhido: {selectedOccupancyPreset.label}
+          </p>
+          <p className="mt-1 text-sm font-semibold leading-6 text-sky-800">
+            {selectedOccupancyPreset.description}
+          </p>
         </div>
+
+        <div
+          className={`mb-6 rounded-3xl border p-5 ${
+            sectorCapacityErrorMessage
+              ? "border-rose-200 bg-rose-50"
+              : "border-slate-200 bg-slate-50"
+          }`}
+        >
+          <div className="grid gap-4 md:grid-cols-3">
+            <MiniStat label="Capacidade geral" value={capacity || "0"} />
+            <MiniStat label="Soma dos setores" value={sectorCapacityTotal} />
+            <MiniStat
+              label="Disponível"
+              value={Math.max(generalCapacityNumber - sectorCapacityTotal, 0)}
+            />
+          </div>
+
+          {sectorCapacityErrorMessage ? (
+            <p className="mt-4 text-sm font-black text-rose-700">
+              {sectorCapacityErrorMessage}
+            </p>
+          ) : (
+            <p className="mt-4 text-sm font-semibold text-slate-500">
+              A soma das capacidades dos setores deve ficar dentro da capacidade
+              geral configurada na etapa de dados principais.
+            </p>
+          )}
+        </div>
+
+        {isOpenAdmissionOnly ? (
+          <div className="rounded-[2rem] border border-emerald-200 bg-emerald-50 p-6">
+            <p className="text-xl font-black text-emerald-950">
+              Evento aberto, sem setores separados.
+            </p>
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-emerald-800">
+              Todos os ingressos compartilham a mesma capacidade geral. Use a
+              etapa de ingressos para criar lotes, tipos de ingresso e preços.
+            </p>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <Field
+                label="Tipo do espaço"
+                value="Livre / evento aberto"
+                onChange={() => undefined}
+                disabled
+                helper="Travado porque este tipo não usa setores separados."
+              />
+              <Field
+                label="Nome da área"
+                value={sectors[0]?.name || "Livre / evento aberto"}
+                onChange={(value) =>
+                  updateSector(sectors[0].localId, "name", value)
+                }
+                helper="Este nome é apenas interno."
+              />
+              <Field
+                label="Capacidade da área"
+                value={sectors[0]?.capacity || ""}
+                onChange={(value) =>
+                  updateSector(sectors[0].localId, "capacity", value)
+                }
+                type="number"
+                min={1}
+                error={Boolean(sectorCapacityErrorMessage)}
+                helper="Opcional. Se vazio, usa a capacidade geral do evento."
+              />
+            </div>
+          </div>
+        ) : (
+          <>
+            {requiredErrors.sectors ? (
+              <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+                {sectorCapacityErrorMessage ||
+                  "Cadastre pelo menos um setor ou área."}
+              </div>
+            ) : null}
+
+            <div className="space-y-4">
+              {sectors.map((sector, index) => {
+                const currentSectorKind = getSectorKindConfig(sector.sectorKind);
+                const canChooseKind =
+                  selectedOccupancyPreset.allowedSectorKinds.length > 1;
+                const sectorCapacity = getNumericValue(sector.capacity);
+                const sectorHasCapacityError =
+                  generalCapacityNumber > 0 &&
+                  sectorCapacity > generalCapacityNumber;
+
+                return (
+                  <div
+                    key={sector.localId}
+                    className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
+                  >
+                    <div className="mb-5 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                          Setor {index + 1}
+                        </p>
+                        <h3 className="text-lg font-black text-slate-950">
+                          {sector.name || `Setor ${index + 1}`}
+                        </h3>
+                        <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-sky-700">
+                          {currentSectorKind.label}
+                        </p>
+                      </div>
+
+                      {sectors.length > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => removeSector(sector.localId)}
+                          className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                        >
+                          Remover
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Field
+                        label="Nome"
+                        value={sector.name}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "name", value)
+                        }
+                        required
+                      />
+
+                      {canChooseKind ? (
+                        <SelectField
+                          label="Tipo do setor"
+                          value={sector.sectorKind}
+                          onChange={(value) =>
+                            updateSectorKind(sector.localId, value as SectorKind)
+                          }
+                          options={selectedOccupancyPreset.allowedSectorKinds.map(
+                            (sectorKind) => {
+                              const config = getSectorKindConfig(sectorKind);
+
+                              return {
+                                value: sectorKind,
+                                label: config.label,
+                              };
+                            },
+                          )}
+                        />
+                      ) : (
+                        <Field
+                          label="Tipo do setor"
+                          value={currentSectorKind.label}
+                          onChange={() => undefined}
+                          disabled
+                          helper="Travado porque este modelo permite apenas este tipo de setor."
+                        />
+                      )}
+
+                      <Field
+                        label="Capacidade"
+                        value={sector.capacity}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "capacity", value)
+                        }
+                        type="number"
+                        min={1}
+                        error={
+                          sectorHasCapacityError || hasSectorTotalOverCapacity
+                        }
+                        helper={
+                          sectorHasCapacityError
+                            ? "Este setor excede a capacidade geral."
+                            : "A soma dos setores não pode passar da capacidade geral."
+                        }
+                      />
+
+                      <SectorColorPicker
+                        value={sector.color}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "color", value)
+                        }
+                      />
+
+                      <Field
+                        label="Portão de acesso"
+                        value={sector.gateName}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "gateName", value)
+                        }
+                        placeholder="Ex: Portão A"
+                      />
+                      <Field
+                        label="Ordem de exibição"
+                        value={sector.displayOrder}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "displayOrder", value)
+                        }
+                        type="number"
+                        helper="Use 0 para aparecer primeiro, 1 para aparecer depois."
+                      />
+                      <div className="md:col-span-2">
+                        <TextAreaField
+                          label="Descrição"
+                          value={sector.description}
+                          onChange={(value) =>
+                            updateSector(sector.localId, "description", value)
+                          }
+                          placeholder="Detalhes, regras e observações do setor."
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={addSector}
+              className="mt-5 rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-100"
+            >
+              + Adicionar setor ou área
+            </button>
+          </>
+        )}
       </StepShell>
     );
   }
 
   function renderMapStep() {
-    if (!showMapBuilder) {
-      return (
-        <StepShell
-          eyebrow="Etapa 5"
-          title="Mapa não necessário"
-          description="Para entrada geral, o comprador escolhe apenas quantidade de ingressos."
-        >
-          <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-6">
-            <h3 className="text-xl font-black text-slate-950">
-              Esta categoria não exige assento ou mesa.
-            </h3>
-
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              Você pode continuar para os ingressos. Se precisar de assentos ou
-              mesas, volte na etapa 1 e altere o tipo de ocupação.
-            </p>
-          </div>
-        </StepShell>
-      );
-    }
-
     return (
       <StepShell
         eyebrow="Etapa 5"
-        title={
-          allowTableMap && !allowSeatMap
-            ? "Mapa de mesas"
-            : allowSeatMap && !allowTableMap
-              ? "Mapa de assentos"
-              : "Mapa misto"
+        title="Mapa do evento"
+        description={
+          showMapBuilder
+            ? "Gere o mapa inicial somente para setores de cadeiras numeradas ou mesas."
+            : "Este tipo de ocupação não precisa de mapa. Você pode seguir para ingressos."
         }
-        description="Gere um mapa inicial de assentos ou mesas. Depois vamos evoluir para um editor visual mais avançado."
       >
-        <div className="grid gap-5 md:grid-cols-2">
-          {allowSeatMap ? (
-            <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5">
-              <h3 className="text-lg font-black text-slate-950">
-                Gerar assentos
-              </h3>
-
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                Ideal para teatro, congresso, auditório, stand-up sentado e
-                eventos com cadeira numerada.
-              </p>
-
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <Field
-                  label="Fileiras"
-                  type="number"
-                  min={1}
-                  value={seatRows}
-                  onChange={setSeatRows}
-                />
-
-                <Field
-                  label="Assentos por fileira"
-                  type="number"
-                  min={1}
-                  value={seatColumns}
-                  onChange={setSeatColumns}
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={generateSeatMap}
-                className="mt-5 w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white transition hover:bg-slate-800"
-              >
-                Gerar mapa de assentos
-              </button>
-            </div>
-          ) : null}
-
-          {allowTableMap ? (
-            <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5">
-              <h3 className="text-lg font-black text-slate-950">Gerar mesas</h3>
-
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                Ideal para bar, restaurante, gastronomia, camarote e eventos com
-                reserva de mesa.
-              </p>
-
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <Field
-                  label="Quantidade de mesas"
-                  type="number"
-                  min={1}
-                  value={tableCount}
-                  onChange={setTableCount}
-                />
-
-                <Field
-                  label="Lugares por mesa"
-                  type="number"
-                  min={1}
-                  value={seatsPerTable}
-                  onChange={setSeatsPerTable}
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={generateTableMap}
-                className="mt-5 w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white transition hover:bg-slate-800"
-              >
-                Gerar mapa de mesas
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-6 rounded-[28px] border border-slate-200 bg-white p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
-                Prévia do mapa
-              </p>
-
-              <h3 className="mt-1 text-xl font-black text-slate-950">
-                {mapObjects.length} objeto(s)
-              </h3>
-            </div>
-
-            <button
-              type="button"
-              onClick={clearMapObjects}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50"
-            >
-              Limpar mapa
-            </button>
+        {!showMapBuilder ? (
+          <div className="rounded-[2rem] border border-emerald-200 bg-emerald-50 p-8">
+            <p className="text-xl font-black text-emerald-950">
+              Mapa desativado para este tipo de evento.
+            </p>
+            <p className="mt-2 text-sm font-semibold leading-6 text-emerald-800">
+              Como o tipo escolhido é {selectedOccupancyPreset.label}, a venda
+              será feita por quantidade, sem cadeira ou mesa marcada.
+            </p>
           </div>
-
-          {mapObjects.length === 0 ? (
-            <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-semibold text-slate-500">
-              Nenhum assento ou mesa gerado ainda.
-            </div>
-          ) : (
-            <div className="mt-5 max-h-[360px] overflow-auto rounded-2xl bg-slate-950 p-5">
-              <div className="grid grid-cols-4 gap-3 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10">
-                {mapObjects.slice(0, 180).map((object) => (
-                  <div
-                    key={object.localId}
-                    className={`flex h-12 items-center justify-center rounded-xl text-xs font-black ${
-                      object.type === "TABLE"
-                        ? "bg-amber-300 text-amber-950"
-                        : "bg-sky-300 text-sky-950"
-                    }`}
-                  >
-                    {object.label || object.code}
-                  </div>
-                ))}
+        ) : (
+          <div className="grid gap-6">
+            {requiredErrors.map ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+                Gere o mapa de cadeiras ou mesas para continuar.
               </div>
+            ) : null}
 
-              {mapObjects.length > 180 ? (
-                <p className="mt-4 text-center text-xs font-bold text-white/60">
-                  Mostrando 180 de {mapObjects.length} objetos.
-                </p>
+            <div className="grid gap-5 md:grid-cols-2">
+              {allowSeatMap ? (
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                  <h3 className="text-lg font-black text-slate-950">
+                    Gerar cadeiras numeradas
+                  </h3>
+                  <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+                    Escolha o setor de cadeiras e gere uma grade inicial.
+                  </p>
+
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    <SelectField
+                      label="Setor de cadeiras"
+                      value={
+                        selectedSeatMapSectorId ||
+                        seatMapSectors[0]?.localId ||
+                        ""
+                      }
+                      onChange={setSelectedSeatMapSectorId}
+                      options={
+                        seatMapSectors.length > 0
+                          ? seatMapSectors.map((sector) => ({
+                              value: sector.localId,
+                              label: sector.name,
+                            }))
+                          : [
+                              {
+                                value: "",
+                                label: "Nenhum setor de cadeiras criado",
+                              },
+                            ]
+                      }
+                    />
+                    <Field
+                      label="Fileiras"
+                      value={seatRows}
+                      onChange={setSeatRows}
+                      type="number"
+                      min={1}
+                    />
+                    <Field
+                      label="Cadeiras por fileira"
+                      value={seatColumns}
+                      onChange={setSeatColumns}
+                      type="number"
+                      min={1}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={generateSeatMap}
+                    className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-sky-700"
+                  >
+                    Gerar mapa de cadeiras
+                  </button>
+                </div>
+              ) : null}
+
+              {allowTableMap ? (
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                  <h3 className="text-lg font-black text-slate-950">
+                    Gerar mesas
+                  </h3>
+                  <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+                    Escolha o setor de mesas e gere um mapa inicial.
+                  </p>
+
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    <SelectField
+                      label="Setor de mesas"
+                      value={
+                        selectedTableMapSectorId ||
+                        tableMapSectors[0]?.localId ||
+                        ""
+                      }
+                      onChange={setSelectedTableMapSectorId}
+                      options={
+                        tableMapSectors.length > 0
+                          ? tableMapSectors.map((sector) => ({
+                              value: sector.localId,
+                              label: sector.name,
+                            }))
+                          : [
+                              {
+                                value: "",
+                                label: "Nenhum setor de mesas criado",
+                              },
+                            ]
+                      }
+                    />
+                    <Field
+                      label="Quantidade de mesas"
+                      value={tableCount}
+                      onChange={setTableCount}
+                      type="number"
+                      min={1}
+                    />
+                    <Field
+                      label="Lugares por mesa"
+                      value={seatsPerTable}
+                      onChange={setSeatsPerTable}
+                      type="number"
+                      min={1}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={generateTableMap}
+                    className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-sky-700"
+                  >
+                    Gerar mapa de mesas
+                  </button>
+                </div>
               ) : null}
             </div>
-          )}
 
-          {requiredErrors.map ? (
-            <p className="mt-3 text-sm font-bold text-rose-600">
-              Gere um mapa para continuar.
-            </p>
-          ) : null}
-        </div>
+            <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
+              <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center">
+                <div>
+                  <h3 className="text-lg font-black text-slate-950">
+                    Prévia do mapa
+                  </h3>
+                  <p className="text-sm font-semibold text-slate-500">
+                    {mapObjects.length} objeto
+                    {mapObjects.length === 1 ? "" : "s"} gerado
+                    {mapObjects.length === 1 ? "" : "s"}.
+                  </p>
+                </div>
+
+                {mapObjects.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={clearMap}
+                    className="rounded-full border border-rose-200 px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                  >
+                    Limpar mapa
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="relative min-h-[360px] overflow-auto rounded-3xl bg-slate-100 p-6">
+                {mapObjects.length === 0 ? (
+                  <div className="flex h-[300px] items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white text-center">
+                    <div>
+                      <p className="text-lg font-black text-slate-950">
+                        Nenhum item no mapa ainda
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-slate-500">
+                        Use o gerador acima para criar cadeiras ou mesas.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="relative h-[620px] w-[900px] rounded-3xl bg-white">
+                    {mapObjects.map((object) => (
+                      <div
+                        key={object.localId}
+                        className={`absolute flex items-center justify-center border text-[10px] font-black ${
+                          object.type === "TABLE"
+                            ? "rounded-full border-amber-300 bg-amber-100 text-amber-950"
+                            : "rounded-xl border-sky-300 bg-sky-100 text-sky-950"
+                        }`}
+                        style={{
+                          left: object.x,
+                          top: object.y,
+                          width: object.width,
+                          height: object.height,
+                          transform: `rotate(${object.rotation}deg)`,
+                        }}
+                        title={object.label}
+                      >
+                        {object.code}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </StepShell>
     );
   }
@@ -2382,198 +2944,168 @@ export default function NewEventPage() {
       <StepShell
         eyebrow="Etapa 6"
         title="Ingressos / lotes"
-        description="Crie ingressos vinculados ao evento inteiro, a uma data, a um setor ou ao modelo de ocupação."
+        description="Configure preços, quantidades e vínculos com sessão e setor."
       >
-        <div className="space-y-5">
+        {requiredErrors.tickets ? (
+          <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+            Cadastre pelo menos um ingresso válido com nome, preço e quantidade.
+          </div>
+        ) : null}
+
+        <div className="mb-6 grid gap-4 md:grid-cols-3">
+          <MiniStat label="Tipos válidos" value={validTicketTypes.length} />
+          <MiniStat label="Quantidade total" value={totalTicketQuantity} />
+          <MiniStat label="Modelo" value={selectedOccupancyPreset.label} />
+        </div>
+
+        <div className="space-y-4">
           {ticketTypes.map((ticketType, index) => (
             <div
               key={ticketType.localId}
-              className="rounded-[28px] border border-slate-200 bg-slate-50 p-5"
+              className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="mb-5 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
-                    Ingresso {index + 1}
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                    Ingresso / lote {index + 1}
                   </p>
-
-                  <h3 className="mt-1 text-xl font-black text-slate-950">
-                    {ticketType.name || "Novo ingresso"}
+                  <h3 className="text-lg font-black text-slate-950">
+                    {ticketType.name || `Ingresso ${index + 1}`}
                   </h3>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleRemoveTicketType(ticketType.localId)}
-                  className="rounded-2xl border border-rose-200 bg-white px-4 py-2 text-sm font-black text-rose-600 transition hover:bg-rose-50"
-                >
-                  Remover
-                </button>
+                {ticketTypes.length > 1 ? (
+                  <button
+                    type="button"
+                    onClick={() => removeTicketType(ticketType.localId)}
+                    className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                  >
+                    Remover
+                  </button>
+                ) : null}
               </div>
 
-              <div className="mt-5 grid gap-5 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-2">
                 <Field
-                  label="Nome do ingresso"
+                  label="Nome"
                   value={ticketType.name}
                   onChange={(value) =>
                     updateTicketType(ticketType.localId, "name", value)
                   }
-                  placeholder="Inteira, Meia, VIP, Mesa..."
-                  error={requiredErrors.tickets && !ticketType.name}
+                  placeholder="Ex: Inteira"
+                  required
                 />
-
                 <Field
                   label="Lote"
                   value={ticketType.lotLabel}
                   onChange={(value) =>
                     updateTicketType(ticketType.localId, "lotLabel", value)
                   }
-                  placeholder="1º Lote"
+                  placeholder="Ex: 1º Lote"
                 />
-
-                <div>
-                  <label className="mb-2 block text-sm font-black text-slate-700">
-                    Data/sessão
-                  </label>
-
-                  <select
-                    value={ticketType.eventSessionLocalId}
-                    onChange={(event) =>
-                      updateTicketType(
-                        ticketType.localId,
-                        "eventSessionLocalId",
-                        event.target.value,
-                      )
-                    }
-                    className={inputClass()}
-                  >
-                    <option value="">Todas as datas</option>
-                    {sessions.map((session) => (
-                      <option key={session.localId} value={session.localId}>
-                        {session.name || "Sessão"} - {formatDatePreview(session.startsAt)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-sm font-black text-slate-700">
-                    Setor
-                  </label>
-
-                  <select
-                    value={ticketType.venueSectorLocalId}
-                    onChange={(event) =>
-                      updateTicketType(
-                        ticketType.localId,
-                        "venueSectorLocalId",
-                        event.target.value,
-                      )
-                    }
-                    className={inputClass()}
-                  >
-                    <option value="">Setor padrão</option>
-                    {sectors.map((sector) => (
-                      <option key={sector.localId} value={sector.localId}>
-                        {sector.name || "Setor"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <SelectField
-                  label="Ocupação do ingresso"
-                  value={ticketType.occupancyMode}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "occupancyMode", value)
-                  }
-                  options={occupancyOptions.map((option) => ({
-                    label: option.label,
-                    value: option.value,
-                  }))}
-                />
-
                 <Field
                   label="Preço"
                   value={ticketType.price}
                   onChange={(value) =>
                     updateTicketType(ticketType.localId, "price", value)
                   }
-                  placeholder="100.00"
-                  error={requiredErrors.tickets && !ticketType.price}
+                  placeholder="Ex: 50,00"
+                  required
                 />
-
                 <Field
                   label="Quantidade"
-                  type="number"
-                  min={1}
                   value={ticketType.quantity}
                   onChange={(value) =>
                     updateTicketType(ticketType.localId, "quantity", value)
                   }
-                  placeholder="100"
-                  error={requiredErrors.tickets && Number(ticketType.quantity) <= 0}
-                />
-
-                <Field
-                  label="Mínimo por pedido"
                   type="number"
                   min={1}
-                  value={ticketType.minPerOrder}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "minPerOrder", value)
-                  }
-                  placeholder="1"
+                  required
                 />
-
-                <Field
-                  label="Máximo por pedido"
-                  type="number"
-                  min={1}
-                  value={ticketType.maxPerOrder}
+                <SelectField
+                  label="Sessão"
+                  value={ticketType.eventSessionLocalId}
                   onChange={(value) =>
-                    updateTicketType(ticketType.localId, "maxPerOrder", value)
+                    updateTicketType(
+                      ticketType.localId,
+                      "eventSessionLocalId",
+                      value,
+                    )
                   }
-                  placeholder="4"
+                  options={[
+                    { label: "Todas as sessões", value: "" },
+                    ...sessions.map((session) => ({
+                      value: session.localId,
+                      label: session.name || "Sessão sem nome",
+                    })),
+                  ]}
                 />
-
+                <SelectField
+                  label="Setor"
+                  value={ticketType.venueSectorLocalId}
+                  onChange={(value) =>
+                    updateTicketType(
+                      ticketType.localId,
+                      "venueSectorLocalId",
+                      value,
+                    )
+                  }
+                  options={
+                    isOpenAdmissionOnly
+                      ? [{ label: "Área única do evento", value: "" }]
+                      : [
+                          { label: "Todos os setores", value: "" },
+                          ...sectors.map((sector) => ({
+                            value: sector.localId,
+                            label: `${sector.name} - ${
+                              getSectorKindConfig(sector.sectorKind).label
+                            }`,
+                          })),
+                        ]
+                  }
+                />
                 <Field
                   label="Início das vendas"
-                  type="datetime-local"
                   value={ticketType.salesStartAt}
                   onChange={(value) =>
                     updateTicketType(ticketType.localId, "salesStartAt", value)
                   }
+                  type="datetime-local"
                 />
-
                 <Field
                   label="Fim das vendas"
-                  type="datetime-local"
                   value={ticketType.salesEndAt}
                   onChange={(value) =>
                     updateTicketType(ticketType.localId, "salesEndAt", value)
                   }
+                  type="datetime-local"
                 />
-
                 <Field
-                  label="Taxa adicional"
+                  label="Mínimo por pedido"
+                  value={ticketType.minPerOrder}
+                  onChange={(value) =>
+                    updateTicketType(ticketType.localId, "minPerOrder", value)
+                  }
+                  type="number"
+                  min={1}
+                />
+                <Field
+                  label="Máximo por pedido"
+                  value={ticketType.maxPerOrder}
+                  onChange={(value) =>
+                    updateTicketType(ticketType.localId, "maxPerOrder", value)
+                  }
+                  type="number"
+                  min={1}
+                />
+                <Field
+                  label="Taxa"
                   value={ticketType.feeAmount}
                   onChange={(value) =>
                     updateTicketType(ticketType.localId, "feeAmount", value)
                   }
-                  placeholder="0.00"
+                  placeholder="Ex: 5,00"
                 />
-
-                <Field
-                  label="Ordem"
-                  type="number"
-                  min={0}
-                  value={ticketType.displayOrder}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "displayOrder", value)
-                  }
-                  placeholder="0"
-                />
-
                 <SelectField
                   label="Status"
                   value={ticketType.status}
@@ -2582,58 +3114,23 @@ export default function NewEventPage() {
                   }
                   options={[
                     { label: "Ativo", value: "ACTIVE" },
-                    { label: "Inativo", value: "INACTIVE" },
+                    { label: "Pausado", value: "PAUSED" },
                     { label: "Esgotado", value: "SOLD_OUT" },
+                    { label: "Encerrado", value: "ENDED" },
                   ]}
                 />
-
-                <div className="flex h-[52px] items-center gap-3 rounded-2xl border border-slate-300 bg-white px-4">
-                  <input
-                    id={`hidden-${ticketType.localId}`}
-                    type="checkbox"
-                    checked={ticketType.isHidden}
-                    onChange={(event) =>
-                      updateTicketType(
-                        ticketType.localId,
-                        "isHidden",
-                        event.target.checked,
-                      )
-                    }
-                    className="h-4 w-4"
-                  />
-
-                  <label
-                    htmlFor={`hidden-${ticketType.localId}`}
-                    className="text-sm font-black text-slate-700"
-                  >
-                    Ocultar da vitrine
-                  </label>
-                </div>
-
                 <div className="md:col-span-2">
                   <TextAreaField
-                    label="Descrição do ingresso"
+                    label="Descrição"
                     value={ticketType.description}
                     onChange={(value) =>
                       updateTicketType(ticketType.localId, "description", value)
                     }
-                    placeholder="Descreva o que este ingresso inclui"
+                    placeholder="Descrição do ingresso, lote ou benefício."
                   />
                 </div>
-
                 <div className="md:col-span-2">
-                  <Field
-                    label="Descrição da taxa"
-                    value={ticketType.feeDescription}
-                    onChange={(value) =>
-                      updateTicketType(ticketType.localId, "feeDescription", value)
-                    }
-                    placeholder="Ex: Taxa de serviço"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <Field
+                  <TextAreaField
                     label="Benefícios"
                     value={ticketType.benefitDescription}
                     onChange={(value) =>
@@ -2643,43 +3140,41 @@ export default function NewEventPage() {
                         value,
                       )
                     }
-                    placeholder="Ex: Acesso ao camarote, open bar..."
+                    placeholder="Ex: acesso à área VIP, open bar, kit..."
                   />
                 </div>
+                <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700 md:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={ticketType.isHidden}
+                    onChange={(event) =>
+                      updateTicketType(
+                        ticketType.localId,
+                        "isHidden",
+                        event.target.checked,
+                      )
+                    }
+                    className="h-5 w-5 rounded border-slate-300"
+                  />
+                  Ocultar este ingresso na página pública
+                </label>
               </div>
 
-              <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
-                <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">
-                  Prévia
-                </p>
-
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-lg font-black text-slate-950">
-                      {ticketType.name || "Nome do ingresso"}
-                    </p>
-
-                    <p className="mt-1 text-xs font-bold text-slate-500">
-                      {getOccupancyLabel(ticketType.occupancyMode)}
-                    </p>
-                  </div>
-
-                  <p className="text-lg font-black text-sky-600">
-                    {formatMoneyPreview(ticketType.price)}
-                  </p>
-                </div>
+              <div className="mt-5 rounded-2xl bg-white p-4 text-sm font-black text-slate-700">
+                Prévia: {ticketType.name || "Ingresso"} por{" "}
+                {formatMoneyPreview(ticketType.price)}.
               </div>
             </div>
           ))}
-
-          <button
-            type="button"
-            onClick={handleAddTicketType}
-            className="w-full rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 transition hover:bg-sky-100"
-          >
-            Adicionar outro ingresso
-          </button>
         </div>
+
+        <button
+          type="button"
+          onClick={addTicketType}
+          className="mt-5 rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-100"
+        >
+          + Adicionar ingresso ou lote
+        </button>
       </StepShell>
     );
   }
@@ -2689,11 +3184,11 @@ export default function NewEventPage() {
       <StepShell
         eyebrow="Etapa 7"
         title="Local e acesso"
-        description="Dados usados na página do evento, filtros por cidade e orientação do comprador."
+        description="Informe onde o evento acontece e como o comprador deve chegar."
       >
         <div className="grid gap-5 md:grid-cols-2">
           <SelectField
-            label="Formato"
+            label="Modo do evento"
             value={mode}
             onChange={setMode}
             options={[
@@ -2707,55 +3202,46 @@ export default function NewEventPage() {
             label="Nome do local"
             value={venueName}
             onChange={setVenueName}
-            placeholder="Ex: Arena Central"
+            placeholder="Ex: Teatro Municipal"
             required
             error={requiredErrors.venueName}
-            helper={requiredErrors.venueName ? "Informe o nome do local." : undefined}
           />
 
-          <div className="md:col-span-2">
-            <Field
-              label="Endereço principal"
-              value={addressLine1}
-              onChange={setAddressLine1}
-              placeholder="Rua, avenida, número"
-            />
-          </div>
+          <Field
+            label="Endereço"
+            value={addressLine1}
+            onChange={setAddressLine1}
+            placeholder="Rua, avenida, número..."
+          />
 
-          <div className="md:col-span-2">
-            <Field
-              label="Complemento"
-              value={addressLine2}
-              onChange={setAddressLine2}
-              placeholder="Bloco, sala, portão, setor..."
-            />
-          </div>
+          <Field
+            label="Complemento"
+            value={addressLine2}
+            onChange={setAddressLine2}
+            placeholder="Bloco, sala, portão..."
+          />
 
           <Field
             label="Bairro"
             value={neighborhood}
             onChange={setNeighborhood}
-            placeholder="Centro"
           />
 
           <Field
             label="Cidade"
             value={city}
             onChange={setCity}
-            placeholder="São Paulo"
             required
             error={requiredErrors.city}
-            helper={requiredErrors.city ? "Informe a cidade do evento." : undefined}
           />
 
           <Field
             label="Estado"
             value={stateName}
             onChange={setStateName}
-            placeholder="SP"
+            placeholder="Ex: SP"
             required
             error={requiredErrors.stateName}
-            helper={requiredErrors.stateName ? "Informe o estado do evento." : undefined}
           />
 
           <Field
@@ -2765,36 +3251,32 @@ export default function NewEventPage() {
             placeholder="00000-000"
           />
 
-          <div className="md:col-span-2">
-            <Field
-              label="Referência"
-              value={reference}
-              onChange={setReference}
-              placeholder="Ex: Entrada pelo portão 2"
-            />
-          </div>
+          <Field
+            label="Referência"
+            value={reference}
+            onChange={setReference}
+            placeholder="Ex: Em frente à praça"
+          />
 
-          <div className="md:col-span-2">
-            <Field
-              label="Link do mapa"
-              value={mapUrl}
-              onChange={setMapUrl}
-              placeholder="https://maps.google.com/..."
-            />
-          </div>
+          <Field
+            label="URL do mapa"
+            value={mapUrl}
+            onChange={setMapUrl}
+            placeholder="Link do Google Maps"
+          />
 
           <Field
             label="Latitude"
             value={latitude}
             onChange={setLatitude}
-            placeholder="-23.550520"
+            placeholder="-23.5505"
           />
 
           <Field
             label="Longitude"
             value={longitude}
             onChange={setLongitude}
-            placeholder="-46.633308"
+            placeholder="-46.6333"
           />
 
           <div className="md:col-span-2">
@@ -2802,7 +3284,7 @@ export default function NewEventPage() {
               label="Instruções de acesso"
               value={instructions}
               onChange={setInstructions}
-              placeholder="Descreva portões, estacionamento, retirada de credencial, acesso especial..."
+              placeholder="Estacionamento, entrada, portões, retirada de credencial..."
             />
           </div>
         </div>
@@ -2814,235 +3296,183 @@ export default function NewEventPage() {
     return (
       <StepShell
         eyebrow="Etapa 8"
-        title="Imagens, página e políticas"
-        description="Faça upload das imagens e complete textos extras, regras e políticas do evento."
+        title="Imagens e políticas"
+        description="Envie imagens do evento e configure regras importantes para o comprador."
       >
-        <div className="space-y-8">
+        <div className="grid gap-8">
           <div>
-            <h3 className="text-xl font-black text-slate-950">
+            <h3 className="text-lg font-black text-slate-950">
               Imagens do evento
             </h3>
 
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              Envie imagens direto do computador. A API salva e devolve uma URL
-              interna para o evento.
-            </p>
-
-            <div className="mt-5 grid gap-5 md:grid-cols-2">
-              <EventImageUploadField
-                label="Imagem de capa"
+            <div className="mt-4 grid gap-5 md:grid-cols-2">
+              <ImageUploadField
+                label="Capa"
+                helper="Imagem principal do evento."
                 kind="cover"
                 value={coverImageUrl}
                 onChange={setCoverImageUrl}
-                helper="Usada em cards e listagens."
               />
-
-              <EventImageUploadField
-                label="Banner principal"
+              <ImageUploadField
+                label="Banner"
+                helper="Imagem horizontal para hero e destaque."
                 kind="banner"
                 value={bannerImageUrl}
                 onChange={setBannerImageUrl}
-                helper="Usado no topo da página do evento."
               />
-
-              <EventImageUploadField
+              <ImageUploadField
                 label="Thumbnail"
+                helper="Imagem para cards e listas."
                 kind="thumbnail"
                 value={thumbnailUrl}
                 onChange={setThumbnailUrl}
-                helper="Imagem menor para áreas compactas."
               />
-
-              <EventImageUploadField
+              <ImageUploadField
                 label="Banner mobile"
+                helper="Imagem otimizada para celular."
                 kind="mobile-banner"
                 value={mobileBannerUrl}
                 onChange={setMobileBannerUrl}
-                helper="Imagem otimizada para celular."
               />
 
-              <EventImageUploadField
-                label="Mapa de setores em imagem"
-                kind="sector-map"
-                value={sectorMapImageUrl}
-                onChange={setSectorMapImageUrl}
-                helper="Opcional para mostrar visão geral de setores."
-              />
-
-              <EventImageUploadField
-                label="Adicionar foto à galeria"
-                kind="gallery"
-                value={lastGalleryUploadUrl}
-                onChange={handleGalleryUploaded}
-                helper="Cada upload entra na galeria do evento."
-              />
+              {(allowSeatMap || allowTableMap) && (
+                <ImageUploadField
+                  label="Imagem do mapa/setor"
+                  helper="Opcional. Pode ser usada como referência visual."
+                  kind="sector-map"
+                  value={sectorMapImageUrl}
+                  onChange={setSectorMapImageUrl}
+                />
+              )}
             </div>
 
-            {galleryPreview.length > 0 ? (
-              <div className="mt-5 rounded-[26px] border border-slate-200 bg-white p-5">
-                <p className="text-sm font-black text-slate-800">
-                  Galeria enviada
-                </p>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-4">
-                  {galleryPreview.map((url) => (
-                    <div
-                      key={url}
-                      className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
-                    >
-                      <img
-                        src={url}
-                        alt="Imagem da galeria"
-                        className="h-28 w-full object-cover"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+            <div className="mt-5">
+              <TextAreaField
+                label="Galeria"
+                value={galleryText}
+                onChange={setGalleryText}
+                placeholder="Cole uma URL por linha."
+                helper="Cada linha vira uma imagem da galeria."
+              />
+            </div>
           </div>
 
           <div>
-            <h3 className="text-xl font-black text-slate-950">
-              Conteúdo da página
+            <h3 className="text-lg font-black text-slate-950">
+              Conteúdo público
             </h3>
 
-            <div className="mt-5 grid gap-5">
+            <div className="mt-4 grid gap-5 md:grid-cols-2">
               <Field
-                label="Headline"
+                label="Título de checkout"
+                value={checkoutTitle}
+                onChange={setCheckoutTitle}
+                placeholder="Ex: Escolha seus ingressos"
+              />
+              <Field
+                label="Subtítulo de checkout"
+                value={checkoutSubtitle}
+                onChange={setCheckoutSubtitle}
+                placeholder="Ex: Garanta seu lugar"
+              />
+              <Field
+                label="Chamada principal"
                 value={headline}
                 onChange={setHeadline}
-                placeholder="Uma chamada forte para vender o evento"
+                placeholder="Headline da página pública"
               />
-
-              <TextAreaField
+              <Field
                 label="Resumo"
                 value={summary}
                 onChange={setSummary}
-                placeholder="Resumo do evento para o topo da página"
+                placeholder="Resumo comercial do evento"
               />
-
-              <TextAreaField
-                label="Descrição completa"
-                value={fullDescription}
-                onChange={setFullDescription}
-                placeholder="Conteúdo principal da página de compra"
-                minHeight="min-h-[180px]"
-              />
-
+              <div className="md:col-span-2">
+                <TextAreaField
+                  label="Descrição completa"
+                  value={fullDescription}
+                  onChange={setFullDescription}
+                  minHeight="min-h-[180px]"
+                />
+              </div>
               <TextAreaField
                 label="Atrações"
                 value={attractions}
                 onChange={setAttractions}
-                placeholder="Line-up, artistas, convidados, atividades..."
               />
-
               <TextAreaField
                 label="Programação"
                 value={schedule}
                 onChange={setSchedule}
-                placeholder="Horários, abertura, shows, intervalos..."
               />
-
               <TextAreaField
-                label="Detalhes de setores"
+                label="Detalhes dos setores"
                 value={sectorDetails}
                 onChange={setSectorDetails}
-                placeholder="Informações sobre pistas, camarotes, mesas..."
               />
-
               <TextAreaField
                 label="Informações importantes"
                 value={importantInfo}
                 onChange={setImportantInfo}
-                placeholder="Regras de acesso, horários, abertura dos portões..."
               />
-
+              <TextAreaField label="FAQ" value={faq} onChange={setFaq} />
               <TextAreaField
-                label="FAQ"
-                value={faq}
-                onChange={setFaq}
-                placeholder="Dúvidas frequentes"
-              />
-
-              <TextAreaField
-                label="Sobre o produtor"
+                label="Sobre a produtora"
                 value={producerDescription}
                 onChange={setProducerDescription}
-                placeholder="Descrição do organizador/produtor"
               />
-
-              <TextAreaField
-                label="Instruções de compra"
-                value={purchaseInstructions}
-                onChange={setPurchaseInstructions}
-                placeholder="Mensagens para orientar o comprador"
-              />
+              <div className="md:col-span-2">
+                <TextAreaField
+                  label="Instruções de compra"
+                  value={purchaseInstructions}
+                  onChange={setPurchaseInstructions}
+                />
+              </div>
             </div>
           </div>
 
           <div>
-            <h3 className="text-xl font-black text-slate-950">
+            <h3 className="text-lg font-black text-slate-950">
               Políticas e regras
             </h3>
 
-            <div className="mt-5 grid gap-5 md:grid-cols-2">
+            <div className="mt-4 grid gap-5 md:grid-cols-2">
               <Field
                 label="Classificação indicativa"
                 value={ageRating}
                 onChange={setAgeRating}
-                placeholder="Livre, 16 anos, 18 anos..."
+                placeholder="Ex: 18 anos"
               />
-
-              <Field
-                label="Observações dos termos"
-                value={termsNotes}
-                onChange={setTermsNotes}
-                placeholder="Notas gerais dos termos"
+              <TextAreaField
+                label="Política de reembolso"
+                value={refundPolicy}
+                onChange={setRefundPolicy}
               />
-
+              <TextAreaField
+                label="Política de meia-entrada"
+                value={halfEntryPolicy}
+                onChange={setHalfEntryPolicy}
+              />
+              <TextAreaField
+                label="Política de transferência"
+                value={transferPolicy}
+                onChange={setTransferPolicy}
+              />
+              <TextAreaField
+                label="Regras de entrada"
+                value={entryRules}
+                onChange={setEntryRules}
+              />
+              <TextAreaField
+                label="Documentos obrigatórios"
+                value={documentRules}
+                onChange={setDocumentRules}
+              />
               <div className="md:col-span-2">
                 <TextAreaField
-                  label="Política de reembolso"
-                  value={refundPolicy}
-                  onChange={setRefundPolicy}
-                  placeholder="Explique as regras de cancelamento e reembolso"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <TextAreaField
-                  label="Política de meia-entrada"
-                  value={halfEntryPolicy}
-                  onChange={setHalfEntryPolicy}
-                  placeholder="Explique documentos aceitos e validação"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <TextAreaField
-                  label="Política de transferência"
-                  value={transferPolicy}
-                  onChange={setTransferPolicy}
-                  placeholder="Explique se o ingresso pode ser transferido"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <TextAreaField
-                  label="Regras de entrada"
-                  value={entryRules}
-                  onChange={setEntryRules}
-                  placeholder="Documento obrigatório, horários, pulseiras, revista..."
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <TextAreaField
-                  label="Regras de documentos"
-                  value={documentRules}
-                  onChange={setDocumentRules}
-                  placeholder="Documento com foto, comprovantes, credenciais..."
+                  label="Termos e observações"
+                  value={termsNotes}
+                  onChange={setTermsNotes}
                 />
               </div>
             </div>
@@ -3053,83 +3483,136 @@ export default function NewEventPage() {
   }
 
   function renderReviewStep() {
-    const allRequiredStepsDone = stepDefinitions
-      .filter((step) => step.id !== "review")
-      .every((step) => stepCompletion[step.id]);
-
     return (
       <StepShell
         eyebrow="Etapa 9"
-        title="Revisão final"
+        title="Revisão e salvar"
         description="Confira os principais dados antes de criar o evento."
-        nextLabel={saving ? "Salvando..." : "Criar evento"}
-        onNext={() => {
-          const fakeEvent = {
-            preventDefault: () => undefined,
-          } as FormEvent;
-
-          void handleSubmit(fakeEvent);
-        }}
       >
-        <div className="grid gap-5 md:grid-cols-2">
-          <MiniStat label="Categoria" value={preset.label} />
-          <MiniStat label="Ocupação" value={getOccupancyLabel(occupancyMode)} />
-          <MiniStat label="Sessões" value={sessions.length} />
-          <MiniStat label="Setores" value={sectors.length} />
-          <MiniStat label="Mapa" value={`${mapObjects.length} objeto(s)`} />
-          <MiniStat label="Ingressos" value={validTicketTypes.length} />
-          <MiniStat label="Quantidade total" value={totalTicketQuantity} />
-          <MiniStat label="Data principal" value={formatDatePreview(primaryEventDate)} />
-        </div>
+        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5">
+            <div className="overflow-hidden rounded-[1.5rem] bg-slate-950">
+              {mainPreviewImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={mainPreviewImage}
+                  alt={name || "Prévia do evento"}
+                  className="h-64 w-full object-cover"
+                />
+              ) : (
+                <div className="flex h-64 items-center justify-center text-center">
+                  <div>
+                    <p className="text-xl font-black text-white">
+                      {name || "Nome do evento"}
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-slate-400">
+                      Nenhuma imagem principal adicionada.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
 
-        <div className="mt-6 rounded-[28px] border border-slate-200 bg-slate-50 p-5">
-          <h3 className="text-xl font-black text-slate-950">
-            {name || "Evento sem nome"}
-          </h3>
+            <div className="mt-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">
+                {getCategoryLabel(category)}
+              </p>
+              <h3 className="mt-2 text-3xl font-black text-slate-950">
+                {name || "Evento sem nome"}
+              </h3>
+              <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+                {shortDescription ||
+                  summary ||
+                  description ||
+                  "Sem descrição curta."}
+              </p>
+            </div>
 
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            {shortDescription || description || "Sem descrição cadastrada."}
-          </p>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <MiniStat label="Data" value={formatDatePreview(primaryEventDate)} />
+              <MiniStat label="Capacidade" value={capacity || "A definir"} />
+              <MiniStat label="Ingressos" value={validTicketTypes.length} />
+              <MiniStat label="Quantidade" value={totalTicketQuantity} />
+            </div>
+          </div>
 
-          <div className="mt-5 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
-            <p>
-              <strong>Produtora:</strong>{" "}
-              {selectedOrganizer?.tradeName ||
-                selectedOrganizer?.legalName ||
-                "Não selecionada"}
-            </p>
-            <p>
-              <strong>Local:</strong>{" "}
-              {[venueName, city, stateName].filter(Boolean).join(", ") ||
-                "Local a confirmar"}
-            </p>
-            <p>
-              <strong>Status:</strong> {status}
-            </p>
-            <p>
-              <strong>Capacidade:</strong> {Number(capacity || 0).toLocaleString("pt-BR")}
-            </p>
+          <div className="grid gap-4">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                Produtora
+              </p>
+              <p className="mt-2 text-lg font-black text-slate-950">
+                {selectedOrganizer?.tradeName ||
+                  selectedOrganizer?.legalName ||
+                  "Produtora não selecionada"}
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                Ocupação
+              </p>
+              <p className="mt-2 text-lg font-black text-slate-950">
+                {selectedOccupancyPreset.label}
+              </p>
+              <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+                {selectedOccupancyPreset.description}
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                Local
+              </p>
+              <p className="mt-2 text-lg font-black text-slate-950">
+                {venueName || "Local não informado"}
+              </p>
+              <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+                {[city, stateName].filter(Boolean).join(" - ") ||
+                  "Cidade/estado não informados"}
+              </p>
+            </div>
+
+            <div
+              className={`rounded-3xl border p-5 ${
+                sectorCapacityErrorMessage
+                  ? "border-rose-200 bg-rose-50"
+                  : "border-slate-200 bg-white"
+              }`}
+            >
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                Resumo técnico
+              </p>
+              <ul className="mt-3 space-y-2 text-sm font-semibold text-slate-600">
+                <li>Sessões: {sessions.length}</li>
+                <li>
+                  {isOpenAdmissionOnly
+                    ? "Área única: sim"
+                    : `Setores: ${sectors.length}`}
+                </li>
+                <li>Capacidade geral: {capacity || "0"}</li>
+                <li>Soma dos setores: {sectorCapacityTotal}</li>
+                <li>Itens no mapa: {mapObjects.length}</li>
+                <li>Galeria: {galleryPreview.length} imagem(ns)</li>
+                <li>Status: {status}</li>
+              </ul>
+
+              {sectorCapacityErrorMessage ? (
+                <p className="mt-4 text-sm font-black text-rose-700">
+                  {sectorCapacityErrorMessage}
+                </p>
+              ) : null}
+            </div>
           </div>
         </div>
-
-        {!allRequiredStepsDone ? (
-          <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">
-            Ainda existem etapas pendentes. Volte no menu lateral e conclua antes
-            de salvar.
-          </div>
-        ) : (
-          <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
-            Tudo pronto para criar o evento.
-          </div>
-        )}
       </StepShell>
     );
   }
 
-  function renderActiveStep() {
+  function renderCurrentStep() {
     const currentStep = stepDefinitions[activeStepIndex];
 
-    if (!currentStep) return renderTypeStep();
+    if (!currentStep) return null;
 
     if (currentStep.id === "type") return renderTypeStep();
     if (currentStep.id === "basic") return renderBasicStep();
@@ -3141,108 +3624,133 @@ export default function NewEventPage() {
     if (currentStep.id === "extras") return renderExtrasStep();
     if (currentStep.id === "review") return renderReviewStep();
 
-    return renderTypeStep();
-  }
-
-  if (loadingOrganizers) {
-    return (
-      <main className="mx-auto max-w-[1180px] px-4 py-8">
-        <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
-          <p className="text-sm font-bold text-slate-600">
-            Carregando produtoras...
-          </p>
-        </section>
-      </main>
-    );
-  }
-
-  if (organizers.length === 0) {
-    return (
-      <main className="mx-auto max-w-[1180px] px-4 pb-14 pt-8">
-        <section className="relative overflow-hidden rounded-[36px] bg-slate-950 p-8 text-white shadow-sm md:p-10">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.25),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.28),transparent_32%)]" />
-
-          <div className="relative z-10">
-            <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/60">
-              Novo evento
-            </p>
-
-            <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight md:text-5xl">
-              Antes de criar eventos, cadastre sua produtora.
-            </h1>
-
-            <p className="mt-5 max-w-2xl text-sm leading-7 text-white/70">
-              A produtora será usada para separar eventos, pedidos, operadores,
-              relatórios e regras comerciais.
-            </p>
-
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href="/admin/organizers/new"
-                className="rounded-2xl bg-white px-5 py-4 text-sm font-black text-slate-950 transition hover:bg-slate-100"
-              >
-                Cadastrar produtora
-              </Link>
-
-              <Link
-                href="/admin/events"
-                className="rounded-2xl border border-white/20 bg-white/10 px-5 py-4 text-sm font-black text-white transition hover:bg-white/15"
-              >
-                Voltar para eventos
-              </Link>
-            </div>
-          </div>
-        </section>
-      </main>
-    );
+    return null;
   }
 
   return (
-    <main className="mx-auto max-w-[1180px] px-4 pb-14 pt-8">
-      <section className="relative overflow-hidden rounded-[36px] bg-slate-950 p-8 text-white shadow-sm md:p-10">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.25),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.28),transparent_32%)]" />
-        <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-sky-500/20 blur-3xl" />
-        <div className="absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-violet-500/20 blur-3xl" />
-
-        <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+    <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-950 md:px-8">
+      <form onSubmit={handleSubmit} className="mx-auto max-w-7xl">
+        <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/60">
-              Cadastro de evento
-            </p>
-
-            <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight md:text-6xl">
-              Crie o evento por etapas.
+            <Link
+              href="/admin/events"
+              className="text-sm font-black text-sky-700 hover:text-sky-900"
+            >
+              ← Voltar para eventos
+            </Link>
+            <h1 className="mt-3 text-3xl font-black text-slate-950 md:text-4xl">
+              Criar evento
             </h1>
-
-            <p className="mt-5 max-w-2xl text-sm leading-7 text-white/70">
-              Cada etapa libera a próxima. Assim o cadastro fica organizado e
-              evita campos demais aparecendo de uma só vez.
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+              Criação guiada com categoria, ocupação personalizada, sessões,
+              setores, mapa, ingressos, local, imagens e políticas.
             </p>
           </div>
 
-          <Link
-            href="/admin/events"
-            className="rounded-2xl border border-white/20 bg-white/10 px-5 py-4 text-center text-sm font-black text-white transition hover:bg-white/15"
-          >
-            Voltar para eventos
-          </Link>
+          <div className="rounded-2xl bg-slate-950 px-5 py-4 text-white">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+              Etapa atual
+            </p>
+            <p className="mt-1 text-lg font-black">
+              {activeStepIndex + 1} de {stepDefinitions.length}
+            </p>
+          </div>
         </div>
-      </section>
 
-      <section className="mt-7 grid gap-4 md:grid-cols-4">
-        <MiniStat label="Categoria" value={preset.label} />
-        <MiniStat label="Ocupação" value={getOccupancyLabel(occupancyMode)} />
-        <MiniStat label="Etapa atual" value={`${activeStepIndex + 1}/9`} />
-        <MiniStat label="Mapa" value={`${mapObjects.length} lugar(es)`} />
-      </section>
+        <div className="mb-6 rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-9">
+            {stepDefinitions.map((step, index) => {
+              const active = index === activeStepIndex;
+              const completed =
+                step.id === "review" ? false : stepCompletion[step.id];
+              const accessible = isStepAccessible(index);
 
-      <form
-        onSubmit={handleSubmit}
-        className="mt-8 grid gap-7 lg:grid-cols-[360px_minmax(0,1fr)]"
-      >
-        <StepNavigation />
+              return (
+                <button
+                  key={step.id}
+                  type="button"
+                  onClick={() => handleStepClick(index)}
+                  className={`rounded-2xl border p-3 text-left transition ${
+                    active
+                      ? "border-sky-500 bg-sky-50"
+                      : completed
+                        ? "border-emerald-200 bg-emerald-50"
+                        : accessible
+                          ? "border-slate-200 bg-white hover:bg-slate-50"
+                          : "border-slate-100 bg-slate-50 opacity-60"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-black ${
+                        active
+                          ? "bg-sky-600 text-white"
+                          : completed
+                            ? "bg-emerald-600 text-white"
+                            : "bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {completed ? "✓" : index + 1}
+                    </span>
+                    {step.optional ? (
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">
+                        Opcional
+                      </span>
+                    ) : null}
+                  </div>
 
-        <div>{renderActiveStep()}</div>
+                  <p className="mt-3 text-xs font-black text-slate-950">
+                    {step.title}
+                  </p>
+                  <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-500">
+                    {step.description}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {renderCurrentStep()}
+
+        <div className="mt-6 flex flex-col-reverse justify-between gap-3 rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm md:flex-row md:items-center">
+          <button
+            type="button"
+            onClick={goPreviousStep}
+            disabled={activeStepIndex === 0 || saving}
+            className="rounded-2xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Voltar
+          </button>
+
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <Link
+              href="/admin/events"
+              className="rounded-2xl border border-slate-300 px-5 py-3 text-center text-sm font-black text-slate-700 transition hover:bg-slate-50"
+            >
+              Cancelar
+            </Link>
+
+            {activeStepIndex < stepDefinitions.length - 1 ? (
+              <button
+                type="button"
+                onClick={goNextStep}
+                disabled={saving}
+                className="rounded-2xl bg-slate-950 px-6 py-3 text-sm font-black text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Continuar
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={saving || Boolean(sectorCapacityErrorMessage)}
+                className="rounded-2xl bg-sky-600 px-6 py-3 text-sm font-black text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Salvando..." : "Criar evento"}
+              </button>
+            )}
+          </div>
+        </div>
       </form>
     </main>
   );
