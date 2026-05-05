@@ -37,8 +37,12 @@ type BuiltTicketCreate = {
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private orderInclude = {
-    event: true,
+   private orderInclude = {
+    event: {
+      include: {
+       media: true,
+      },
+    },
     items: {
       include: {
         ticketType: true,
@@ -47,7 +51,7 @@ export class OrdersService {
     },
     payments: true,
     cancellations: true,
-    transferRequests: true,
+   transferRequests: true,
   } as const;
 
   private normalizeCpf(value?: string | null) {

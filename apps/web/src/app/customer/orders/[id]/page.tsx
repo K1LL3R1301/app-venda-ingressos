@@ -17,6 +17,15 @@ type StoredUser = {
   role?: string;
 };
 
+type EventMedia = {
+  coverImageUrl?: string;
+  bannerImageUrl?: string;
+  thumbnailUrl?: string;
+  mobileBannerUrl?: string;
+  sectorMapImageUrl?: string;
+  gallery?: string[];
+};
+
 type TicketTransferUser = {
   id?: string;
   name?: string;
@@ -114,6 +123,7 @@ type OrderDetail = {
     description?: string;
     eventDate?: string;
     startDate?: string;
+    media?: EventMedia | null;
   };
   items?: OrderItemEntry[];
   payments?: PaymentItem[];
@@ -157,6 +167,7 @@ type TransferDetail = {
       description?: string;
       eventDate?: string;
       startDate?: string;
+      media?: EventMedia | null;
     };
   };
   ticket?: {
@@ -213,21 +224,6 @@ function formatDate(value?: string | null) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  });
-}
-
-function formatDateOnly(value?: string | null) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return value;
-
-  return date.toLocaleDateString("pt-BR", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
   });
 }
 
@@ -446,7 +442,6 @@ export default function CustomerOrderDetailPage() {
     (order?.status === "PENDING" || order?.status === "PENDING_PAYMENT");
 
   const isPaidOrder = !isTransferPage && order?.status === "PAID";
-  const isCanceledOrder = !isTransferPage && order?.status === "CANCELED";
 
   const isPendingCountdownExpired =
     isPendingOrder && timeLeftMs !== null && timeLeftMs <= 0;
@@ -637,6 +632,25 @@ export default function CustomerOrderDetailPage() {
     }
 
     return order?.event?.startDate || order?.event?.eventDate;
+  }
+
+  function getEventImageFromMedia(media?: EventMedia | null) {
+    return (
+      media?.bannerImageUrl ||
+      media?.coverImageUrl ||
+      media?.mobileBannerUrl ||
+      media?.thumbnailUrl ||
+      media?.gallery?.[0] ||
+      ""
+    );
+  }
+
+  function getCurrentEventImage() {
+    if (isTransferPage) {
+      return getEventImageFromMedia(transfer?.order?.event?.media);
+    }
+
+    return getEventImageFromMedia(order?.event?.media);
   }
 
   function getBackPath() {
@@ -1351,6 +1365,8 @@ export default function CustomerOrderDetailPage() {
     );
   }
 
+  const currentEventImage = getCurrentEventImage();
+
   return (
     <main className="min-h-screen bg-[#f7f7f7] text-slate-950">
       <div className="mx-auto max-w-[1180px] px-4 pb-14 pt-7">
@@ -1378,10 +1394,21 @@ export default function CustomerOrderDetailPage() {
 
         <section className="overflow-hidden rounded-[30px] bg-white shadow-sm">
           <div className="grid gap-0 lg:grid-cols-[1fr_390px]">
-            <div className="relative min-h-[280px] bg-gradient-to-br from-slate-950 via-blue-950 to-sky-800 p-7 text-white md:p-9">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.35),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.35),transparent_30%)]" />
+            <div className="relative min-h-[280px] overflow-hidden bg-slate-950 p-7 text-white md:p-9">
+              {currentEventImage ? (
+                <img
+                  src={currentEventImage}
+                  alt={getEventName()}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              ) : (
+                <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-blue-950 to-sky-800" />
+              )}
 
-              <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/70 to-slate-950/30" />
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.25),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.28),transparent_30%)]" />
+
+              <div className="relative z-10">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-white">
                     {isTransferPage ? "Transferência" : "Detalhes do pedido"}
@@ -1400,7 +1427,7 @@ export default function CustomerOrderDetailPage() {
                   {getEventName()}
                 </h1>
 
-                <p className="mt-4 max-w-2xl text-sm leading-7 text-white/80">
+                <p className="mt-4 max-w-2xl text-sm leading-7 text-white/90">
                   {getEventDescription()}
                 </p>
 

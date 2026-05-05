@@ -10,6 +10,36 @@ type StoredUser = {
   role?: string;
 };
 
+type EventMedia = {
+  coverImageUrl?: string;
+  bannerImageUrl?: string;
+  thumbnailUrl?: string;
+  mobileBannerUrl?: string;
+  sectorMapImageUrl?: string;
+  gallery?: string[];
+};
+
+type EventLocation = {
+  mode?: string;
+  venueName?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+};
+
+type EventBasic = {
+  id?: string;
+  name?: string;
+  description?: string;
+  eventDate?: string;
+  startDate?: string;
+  media?: EventMedia | null;
+  location?: EventLocation | null;
+};
+
 type OrderItem = {
   id: string;
   customerName?: string;
@@ -18,13 +48,7 @@ type OrderItem = {
   status?: string;
   createdAt?: string;
   expiresAt?: string | null;
-  event?: {
-    id: string;
-    name?: string;
-    description?: string;
-    eventDate?: string;
-    startDate?: string;
-  };
+  event?: EventBasic;
   items?: Array<{
     id: string;
     quantity?: number;
@@ -90,25 +114,13 @@ type TicketTransferRequestItem = {
       };
       order?: {
         id?: string;
-        event?: {
-          id?: string;
-          name?: string;
-          description?: string;
-          eventDate?: string;
-          startDate?: string;
-        };
+        event?: EventBasic;
       };
     };
   };
   order?: {
     id?: string;
-    event?: {
-      id?: string;
-      name?: string;
-      description?: string;
-      eventDate?: string;
-      startDate?: string;
-    };
+    event?: EventBasic;
   };
   requestedByUser?: TransferUserInfo;
   fromUser?: TransferUserInfo;
@@ -136,13 +148,7 @@ type TicketItem = {
       status?: string;
       customerName?: string;
       customerEmail?: string;
-      event?: {
-        id?: string;
-        name?: string;
-        description?: string;
-        eventDate?: string;
-        startDate?: string;
-      };
+      event?: EventBasic;
     };
   };
   transferRequests?: TicketTransferRequestItem[];
@@ -162,7 +168,7 @@ type UnifiedEntry =
       sortDate: string;
     };
 
-type ViewFilter = "all" | "orders" | "pending" | "paid" | "transfers";
+type ViewFilter = "active" | "pending" | "canceled" | "closed" | "all";
 
 function toNumber(value?: string | number) {
   if (value === undefined || value === null) return 0;
@@ -174,26 +180,23 @@ function toNumber(value?: string | number) {
 }
 
 function formatMoney(value?: string | number) {
-  if (value === undefined || value === null) return "R$ 0,00";
-
-  const numeric = toNumber(value);
-
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
-  }).format(numeric);
+  }).format(toNumber(value));
 }
 
 function formatDate(value?: string) {
   if (!value) return "-";
 
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return value;
 
   return date.toLocaleString("pt-BR", {
+    weekday: "short",
     day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
+    month: "short",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -214,13 +217,8 @@ function formatCountdown(ms?: number | null) {
 }
 
 function getCountdownNumberClass(ms?: number | null) {
-  if (ms === null || ms === undefined) {
-    return "text-slate-700";
-  }
-
-  if (ms <= 5 * 60 * 1000) {
-    return "text-rose-600";
-  }
+  if (ms === null || ms === undefined) return "text-slate-700";
+  if (ms <= 5 * 60 * 1000) return "text-rose-600";
 
   return "text-emerald-600";
 }
@@ -235,28 +233,12 @@ function getOrderTimeLeftMs(order: OrderItem, nowMs: number) {
   return Math.max(0, expiresAt - nowMs);
 }
 
-function isPendingOrder(order?: OrderItem | null) {
-  return order?.status === "PENDING" || order?.status === "PENDING_PAYMENT";
-}
-
 function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
 
-function formatCpf(value?: string | null) {
-  const digits = onlyDigits(value);
-
-  if (!digits) return "-";
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
-  if (digits.length <= 9) {
-    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
-  }
-
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(
-    6,
-    9,
-  )}-${digits.slice(9, 11)}`;
+function isPendingOrder(order?: OrderItem | null) {
+  return order?.status === "PENDING" || order?.status === "PENDING_PAYMENT";
 }
 
 function getStatusLabel(status?: string) {
@@ -318,32 +300,30 @@ function getStatusClasses(status?: string) {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
-function getRelativeLabel(value?: string) {
-  if (!value) return "Sem data";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Em breve";
-
-  const diffMs = date.getTime() - Date.now();
-  const diffHours = Math.round(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffHours < 0) return "Já aconteceu";
-  if (diffHours <= 24) return "Hoje";
-  if (diffDays <= 3) return "Próximos dias";
-  if (diffDays <= 7) return "Nesta semana";
-
-  return "Agendado";
+function getEventImage(event?: EventBasic | null) {
+  return (
+    event?.media?.bannerImageUrl ||
+    event?.media?.coverImageUrl ||
+    event?.media?.mobileBannerUrl ||
+    event?.media?.thumbnailUrl ||
+    event?.media?.gallery?.[0] ||
+    ""
+  );
 }
 
-function previewText(value?: string, max = 130) {
-  if (!value) {
-    return "Acompanhe os detalhes deste registro na sua área do cliente.";
+function getLocationLabel(event?: EventBasic | null) {
+  if (!event?.location) return "Local a confirmar";
+
+  if (String(event.location.mode || "").toUpperCase() === "ONLINE") {
+    return "Evento online";
   }
 
-  if (value.length <= max) return value;
+  const cityState = [event.location.city, event.location.state]
+    .filter(Boolean)
+    .join(", ");
 
-  return `${value.slice(0, max).trim()}...`;
+  return [event.location.venueName, cityState].filter(Boolean).join(" · ") ||
+    "Local a confirmar";
 }
 
 function gradientByIndex(index: number) {
@@ -353,13 +333,10 @@ function gradientByIndex(index: number) {
     "from-emerald-500 via-teal-500 to-cyan-700",
     "from-orange-500 via-amber-500 to-yellow-500",
     "from-slate-800 via-slate-900 to-slate-950",
+    "from-rose-500 via-pink-600 to-purple-800",
   ];
 
   return gradients[index % gradients.length];
-}
-
-function cardClass() {
-  return "rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm";
 }
 
 async function safeJson<T>(response: Response): Promise<T | null> {
@@ -379,6 +356,80 @@ function isTransferVisibleOnMainList(transfer?: TicketTransferRequestItem | null
   return true;
 }
 
+function getTransferEvent(transfer: TicketTransferRequestItem) {
+  return (
+    transfer.ticket?.orderItem?.order?.event ||
+    transfer.order?.event ||
+    undefined
+  );
+}
+
+function getTransferTitle(transfer: TicketTransferRequestItem) {
+  return (
+    transfer.ticket?.orderItem?.order?.event?.name ||
+    transfer.order?.event?.name ||
+    "Transferência recebida"
+  );
+}
+
+function getTransferTicketTypeName(transfer: TicketTransferRequestItem) {
+  return transfer.ticket?.orderItem?.ticketType?.name || "Ingresso transferido";
+}
+
+function getOrderTicketTotal(order: OrderItem) {
+  return (
+    order.items?.reduce((sum, item) => {
+      const quantity =
+        typeof item.quantity === "number"
+          ? item.quantity
+          : (item.tickets || []).length;
+
+      return sum + quantity;
+    }, 0) || 0
+  );
+}
+
+function getOrderPaidAmount(order: OrderItem) {
+  return (
+    order.payments?.reduce(
+      (sum, payment) => sum + toNumber(payment.amount),
+      0,
+    ) || 0
+  );
+}
+
+function isClosedEntry(entry: UnifiedEntry) {
+  if (entry.type === "transfer") {
+    return ["ACCEPTED", "REJECTED", "CANCELED", "RETURNED"].includes(
+      String(entry.transfer.status || "").toUpperCase(),
+    );
+  }
+
+  return ["PAID", "USED"].includes(String(entry.order.status || "").toUpperCase());
+}
+
+function isCanceledEntry(entry: UnifiedEntry) {
+  if (entry.type === "transfer") {
+    return ["REJECTED", "CANCELED", "RETURNED"].includes(
+      String(entry.transfer.status || "").toUpperCase(),
+    );
+  }
+
+  return ["CANCELED"].includes(String(entry.order.status || "").toUpperCase());
+}
+
+function isActiveEntry(entry: UnifiedEntry) {
+  if (entry.type === "transfer") {
+    return ["PENDING_ACCEPTANCE", "ACCEPTED"].includes(
+      String(entry.transfer.status || "").toUpperCase(),
+    );
+  }
+
+  return ["PAID", "PENDING", "PENDING_PAYMENT"].includes(
+    String(entry.order.status || "").toUpperCase(),
+  );
+}
+
 export default function CustomerOrdersPage() {
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [incomingTransfers, setIncomingTransfers] = useState<
@@ -388,7 +439,7 @@ export default function CustomerOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [user, setUser] = useState<StoredUser | null>(null);
-  const [activeView, setActiveView] = useState<ViewFilter>("all");
+  const [activeView, setActiveView] = useState<ViewFilter>("active");
   const [pageWarning, setPageWarning] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -599,6 +650,7 @@ export default function CustomerOrdersPage() {
     return Array.from(map.values()).sort((a, b) => {
       const aTime = new Date(a.respondedAt || a.requestedAt || 0).getTime();
       const bTime = new Date(b.respondedAt || b.requestedAt || 0).getTime();
+
       return bTime - aTime;
     });
   }, [ownedTickets, user]);
@@ -644,17 +696,9 @@ export default function CustomerOrdersPage() {
     return Array.from(deduped.values()).sort((a, b) => {
       const aTime = new Date(a.sortDate || 0).getTime();
       const bTime = new Date(b.sortDate || 0).getTime();
+
       return bTime - aTime;
     });
-  }, [orders, visibleIncomingTransfers, acceptedTransfers]);
-
-  const summary = useMemo(() => {
-    return {
-      totalOrders: orders.length,
-      paidOrders: orders.filter((order) => order.status === "PAID").length,
-      pendingOrders: orders.filter((order) => isPendingOrder(order)).length,
-      receivedTransfers: visibleIncomingTransfers.length + acceptedTransfers.length,
-    };
   }, [orders, visibleIncomingTransfers, acceptedTransfers]);
 
   const filteredEntries = useMemo(() => {
@@ -664,14 +708,16 @@ export default function CustomerOrdersPage() {
       const matchesView =
         activeView === "all"
           ? true
-          : activeView === "orders"
-            ? entry.type === "order"
-            : activeView === "transfers"
-              ? entry.type === "transfer"
-              : activeView === "paid"
-                ? entry.type === "order" && entry.order.status === "PAID"
-                : activeView === "pending"
-                  ? entry.type === "order" && isPendingOrder(entry.order)
+          : activeView === "active"
+            ? isActiveEntry(entry)
+            : activeView === "pending"
+              ? entry.type === "order"
+                ? isPendingOrder(entry.order)
+                : entry.transfer.status === "PENDING_ACCEPTANCE"
+              : activeView === "canceled"
+                ? isCanceledEntry(entry)
+                : activeView === "closed"
+                  ? isClosedEntry(entry)
                   : true;
 
       if (!matchesView) return false;
@@ -719,13 +765,27 @@ export default function CustomerOrdersPage() {
     });
   }, [unifiedEntries, search, activeView]);
 
+  const filterCounts = useMemo(() => {
+    return {
+      active: unifiedEntries.filter(isActiveEntry).length,
+      pending: unifiedEntries.filter((entry) =>
+        entry.type === "order"
+          ? isPendingOrder(entry.order)
+          : entry.transfer.status === "PENDING_ACCEPTANCE",
+      ).length,
+      canceled: unifiedEntries.filter(isCanceledEntry).length,
+      closed: unifiedEntries.filter(isClosedEntry).length,
+      all: unifiedEntries.length,
+    };
+  }, [unifiedEntries]);
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
+      <div className="min-h-screen bg-[#f3f5f8]">
+        <div className="mx-auto max-w-[1180px] px-4 py-10">
+          <div className="rounded-[22px] border border-slate-200 bg-white p-8 shadow-sm">
             <p className="text-lg font-medium text-slate-800">
-              Carregando seus pedidos...
+              Carregando seus ingressos...
             </p>
           </div>
         </div>
@@ -734,249 +794,122 @@ export default function CustomerOrdersPage() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
-      <section className="overflow-hidden rounded-[36px] bg-gradient-to-r from-slate-950 via-slate-900 to-sky-900 text-white shadow-sm">
-        <div className="grid gap-8 p-8 md:p-10 xl:grid-cols-[1.15fr_0.85fr]">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/70">
-              Área do cliente
-            </p>
+    <main className="min-h-screen bg-[#f3f5f8] text-slate-950">
+      <section className="bg-white">
+        <div className="mx-auto max-w-[1180px] px-4 pb-10 pt-8">
+          <h1 className="text-center text-[34px] font-black text-slate-950 md:text-[40px]">
+            Ingressos
+          </h1>
 
-            <h1 className="mt-4 text-4xl font-black leading-tight md:text-6xl">
-              Meus pedidos
-            </h1>
-
-            <p className="mt-5 max-w-3xl text-sm leading-7 text-white/85 md:text-base">
-              Aqui você acompanha compras, pagamentos pendentes, ingressos
-              recebidos por transferência e o histórico completo da sua jornada.
-            </p>
-
-            <div className="mt-8 flex flex-wrap gap-3">
+          <div className="mt-8 flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
+            <div className="flex h-11 w-full items-center rounded border border-slate-300 bg-white md:max-w-[420px]">
+              <input
+                type="text"
+                placeholder="Buscar pelo nome, email, ingresso ou pedido"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-full flex-1 bg-transparent px-4 text-sm text-slate-700 outline-none placeholder:text-slate-400"
+              />
               <button
                 type="button"
-                onClick={() => goTo("/customer/dashboard")}
-                className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-900 shadow-sm hover:bg-slate-100"
+                className="h-full border-l border-slate-200 px-4 text-[11px] font-bold uppercase text-slate-400"
               >
-                Voltar para dashboard
+                Buscar
               </button>
-
-              <button
-                type="button"
-                onClick={() => goTo("/customer/events")}
-                className="rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white hover:bg-white/15"
-              >
-                Explorar eventos
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-4 self-start">
-            <div className="rounded-[28px] border border-white/15 bg-white/10 p-5 backdrop-blur">
-              <p className="text-xs uppercase tracking-[0.18em] text-white/65">
-                Perfil logado
-              </p>
-              <p className="mt-3 text-lg font-black text-white">
-                {user?.name || "Cliente"}
-              </p>
-              <p className="mt-1 text-sm text-white/80">
-                {user?.email || "-"}
-              </p>
-            </div>
-
-            <div className="rounded-[28px] border border-white/15 bg-white/10 p-5 backdrop-blur">
-              <p className="text-xs uppercase tracking-[0.18em] text-white/65">
-                Visão atual
-              </p>
-              <p className="mt-3 text-2xl font-black text-white">
-                {filteredEntries.length}
-              </p>
-              <p className="mt-1 text-sm text-white/80">
-                registro(s) na tela
-              </p>
             </div>
           </div>
         </div>
       </section>
 
-      {pageWarning ? (
-        <section className="mt-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm">
-          {pageWarning}
+      <div className="mx-auto max-w-[1180px] px-4 pb-16 pt-8">
+        {pageWarning ? (
+          <section className="mb-6 rounded-[16px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm">
+            {pageWarning}
+          </section>
+        ) : null}
+
+        <section className="flex flex-wrap gap-2">
+          {[
+            { id: "active", label: "Ativos", count: filterCounts.active },
+            { id: "pending", label: "Pendentes", count: filterCounts.pending },
+            { id: "canceled", label: "Cancelados", count: filterCounts.canceled },
+            { id: "closed", label: "Encerrados", count: filterCounts.closed },
+            { id: "all", label: "Todos", count: filterCounts.all },
+          ].map((filter) => {
+            const active = activeView === filter.id;
+
+            return (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => setActiveView(filter.id as ViewFilter)}
+                className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                  active
+                    ? "border-sky-500 bg-sky-50 text-sky-600"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-600"
+                }`}
+              >
+                {filter.label}
+                <span className="ml-1 text-xs opacity-70">({filter.count})</span>
+              </button>
+            );
+          })}
         </section>
-      ) : null}
-
-      <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <div className={cardClass()}>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Pedidos
-          </p>
-          <p className="mt-3 text-3xl font-black text-slate-950">
-            {summary.totalOrders}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            Compras feitas na plataforma.
-          </p>
-        </div>
-
-        <div className={cardClass()}>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Pedidos pagos
-          </p>
-          <p className="mt-3 text-3xl font-black text-emerald-600">
-            {summary.paidOrders}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            Ingressos já liberados.
-          </p>
-        </div>
-
-        <div className={cardClass()}>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Pendentes
-          </p>
-          <p className="mt-3 text-3xl font-black text-amber-600">
-            {summary.pendingOrders}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            Pedidos aguardando ação.
-          </p>
-        </div>
-
-        <div className={cardClass()}>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-            Transferências
-          </p>
-          <p className="mt-3 text-3xl font-black text-sky-600">
-            {summary.receivedTransfers}
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            Somente transferências ativas ou aceitas.
-          </p>
-        </div>
-      </section>
-
-      <section className="mt-8 rounded-[30px] border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 xl:grid-cols-[1fr_auto]">
-          <div className="flex h-14 items-center rounded-2xl border border-slate-200 bg-white px-4">
-            <span className="mr-3 text-slate-400">🔎</span>
-            <input
-              type="text"
-              placeholder="Buscar pedido, evento, email, transferência..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-            />
-          </div>
-
-          <div className="flex gap-2 overflow-x-auto pb-1 xl:justify-end">
-            {[
-              { id: "all", label: "Tudo" },
-              { id: "orders", label: "Pedidos" },
-              { id: "pending", label: "Pendentes" },
-              { id: "paid", label: "Pagos" },
-              { id: "transfers", label: "Transferências" },
-            ].map((filter) => {
-              const active = activeView === filter.id;
-
-              return (
-                <button
-                  key={filter.id}
-                  type="button"
-                  onClick={() => setActiveView(filter.id as ViewFilter)}
-                  className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                    active
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  {filter.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section className="mt-10">
-        <div className="mb-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-600">
-            Histórico
-          </p>
-          <h2 className="mt-1 text-2xl font-black text-slate-950 md:text-3xl">
-            Compras e transferências no mesmo lugar
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Devoluções ficam só no histórico interno, sem virar card novo aqui.
-          </p>
-        </div>
 
         {filteredEntries.length === 0 ? (
-          <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500 shadow-sm">
-            Nenhum registro encontrado com esse filtro.
+          <div className="mt-8 rounded-[22px] border border-dashed border-slate-300 bg-white p-10 text-center text-slate-500 shadow-sm">
+            Nenhum ingresso encontrado com esse filtro.
           </div>
         ) : (
-          <div className="space-y-5">
+          <section className="mt-8 grid gap-8 md:grid-cols-2 xl:grid-cols-3">
             {filteredEntries.map((entry, index) => {
-              const gradient = gradientByIndex(index);
-
               if (entry.type === "order") {
                 const order = entry.order;
-
-                const totalTickets =
-                  order.items?.reduce((sum, item) => {
-                    const quantity =
-                      typeof item.quantity === "number"
-                        ? item.quantity
-                        : (item.tickets || []).length;
-                    return sum + quantity;
-                  }, 0) || 0;
-
-                const isPaid = order.status === "PAID";
+                const event = order.event;
+                const eventImage = getEventImage(event);
+                const totalTickets = getOrderTicketTotal(order);
+                const paidAmount = getOrderPaidAmount(order);
                 const isPending = isPendingOrder(order);
                 const timeLeftMs = getOrderTimeLeftMs(order, nowMs);
                 const showCountdown = isPending && timeLeftMs !== null;
-                const eventDate = order.event?.startDate || order.event?.eventDate;
+                const eventDate = event?.startDate || event?.eventDate;
+                const gradient = gradientByIndex(index);
 
                 return (
-                  <div
+                  <article
                     key={`order-${order.id}`}
-                    className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm"
+                    className="overflow-hidden rounded-[8px] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.12)]"
                   >
-                    <div
-                      className={`relative bg-gradient-to-r ${gradient} p-6 text-white md:min-h-[150px] md:pr-52`}
-                    >
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold backdrop-blur">
-                          Pedido
-                        </span>
+                    <div className={`relative h-[170px] bg-gradient-to-br ${gradient}`}>
+                      {eventImage ? (
+                        <img
+                          src={eventImage}
+                          alt={event?.name || "Evento"}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center px-6 text-center text-2xl font-black text-white">
+                          {event?.name || "Evento"}
+                        </div>
+                      )}
 
+                      <div className="absolute left-3 top-3">
                         <span
-                          className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(
+                          className={`rounded-full border px-3 py-1 text-[11px] font-black ${getStatusClasses(
                             order.status,
                           )}`}
                         >
                           {getStatusLabel(order.status)}
                         </span>
-
-                        <span className="text-xs font-medium text-white/75">
-                          #{order.id.slice(0, 8)}
-                        </span>
                       </div>
 
-                      <h3 className="mt-4 text-3xl font-black">
-                        {order.event?.name || "Evento sem nome"}
-                      </h3>
-
-                      <p className="mt-2 max-w-3xl text-sm text-white/80">
-                        {previewText(order.event?.description, 150)}
-                      </p>
-
                       {showCountdown ? (
-                        <div className="mt-5 flex h-[72px] w-[142px] flex-col items-center justify-center rounded-2xl border border-white/25 bg-white text-center text-slate-900 shadow-sm md:absolute md:right-6 md:top-1/2 md:mt-0 md:-translate-y-1/2">
-                          <p className="text-[10px] font-black uppercase leading-none tracking-[0.18em] text-slate-500">
-                            Tempo restante
+                        <div className="absolute right-3 top-3 rounded bg-white px-3 py-2 shadow-sm">
+                          <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">
+                            Restante
                           </p>
                           <p
-                            className={`mt-2 text-3xl font-black leading-none ${getCountdownNumberClass(
+                            className={`text-lg font-black ${getCountdownNumberClass(
                               timeLeftMs,
                             )}`}
                           >
@@ -986,218 +919,169 @@ export default function CustomerOrdersPage() {
                       ) : null}
                     </div>
 
-                    <div className="grid gap-6 p-6 xl:grid-cols-[1.2fr_0.8fr]">
-                      <div className="space-y-4">
-                        <div className="flex flex-wrap gap-5 text-sm text-slate-600">
-                          <span>📅 {formatDate(eventDate)}</span>
-                          <span>🛒 Compra em {formatDate(order.createdAt)}</span>
-                          <span>🎟️ {totalTickets} ingresso(s)</span>
-                          <span>{getRelativeLabel(eventDate)}</span>
-                        </div>
-
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="rounded-2xl bg-slate-50 p-4">
-                            <p className="text-sm text-slate-500">Comprador</p>
-                            <p className="mt-2 font-semibold text-slate-900">
-                              {order.customerName || "-"}
-                            </p>
-                            <p className="mt-1 break-all text-sm text-slate-500">
-                              {order.customerEmail || "-"}
-                            </p>
-                          </div>
-
-                          <div className="rounded-2xl bg-slate-50 p-4">
-                            <p className="text-sm text-slate-500">Valor total</p>
-                            <p className="mt-2 text-2xl font-black text-slate-950">
-                              {formatMoney(order.totalAmount)}
-                            </p>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {isPaid
-                                ? "Pagamento confirmado"
-                                : "Aguardando conclusão do pedido"}
-                            </p>
-                          </div>
-                        </div>
-
-                        {(order.items || []).length > 0 ? (
-                          <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-                            <p className="text-sm font-semibold text-slate-900">
-                              Itens deste pedido
-                            </p>
-
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {(order.items || []).map((item) => (
-                                <span
-                                  key={item.id}
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
-                                >
-                                  {item.ticketType?.name || "Ingresso"} ·{" "}
-                                  {item.quantity ?? 0}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div className="flex flex-col gap-3 rounded-[24px] bg-slate-50 p-5">
-                        <span
-                          className={`inline-flex w-fit rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(
-                            order.status,
-                          )}`}
-                        >
-                          {getStatusLabel(order.status)}
-                        </span>
-
-                        <p className="text-sm text-slate-600">
-                          {isPaid
-                            ? "Abra para ver ingressos, transferências e histórico completo."
-                            : "Abra para finalizar pagamento ou acompanhar o andamento do pedido."}
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={() => goTo(`/customer/orders/${order.id}`)}
-                          className="mt-auto rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
-                        >
-                          Abrir pedido
-                        </button>
-                      </div>
+                    <div className="border-b border-slate-200 p-5">
+                      <h2 className="min-h-[48px] text-[17px] font-black leading-6 text-slate-950">
+                        {event?.name || "Evento sem nome"}
+                      </h2>
                     </div>
-                  </div>
+
+                    <div className="p-5">
+                      <div className="space-y-4 text-sm text-slate-600">
+                        <div className="flex gap-3">
+                          <span className="text-slate-400">◷</span>
+                          <div>
+                            <p className="font-medium text-slate-700">
+                              {formatDate(eventDate)}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Compra em {formatDate(order.createdAt)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-3">
+                          <span className="text-slate-400">⌖</span>
+                          <div className="flex-1">
+                            <p className="font-medium text-slate-700">
+                              {getLocationLabel(event)}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                event?.id
+                                  ? goTo(`/customer/events/${event.id}`)
+                                  : undefined
+                              }
+                              className="mt-1 text-sm font-bold text-sky-600 hover:text-sky-700"
+                            >
+                              Ver evento
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-3">
+                          <span className="text-slate-400">🎟️</span>
+                          <div>
+                            <p className="font-medium text-slate-700">
+                              {totalTickets} ingresso(s)
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Total {formatMoney(order.totalAmount)} · Pago{" "}
+                              {formatMoney(paidAmount)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => goTo(`/customer/orders/${order.id}`)}
+                        className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-[#242424] px-4 py-3 text-sm font-bold text-white hover:bg-black"
+                      >
+                        <span className="h-4 w-6 rounded-sm bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400" />
+                        Ver detalhes do pedido
+                      </button>
+                    </div>
+                  </article>
                 );
               }
 
               const transfer = entry.transfer;
-              const transferEvent =
-                transfer.ticket?.orderItem?.order?.event || transfer.order?.event;
-              const transferTicketName =
-                transfer.ticket?.orderItem?.ticketType?.name || "Ingresso";
-              const senderName =
-                transfer.fromName ||
-                transfer.requestedByName ||
-                transfer.fromUser?.name ||
-                "-";
-              const senderEmail =
-                transfer.fromEmail ||
-                transfer.requestedByEmail ||
-                transfer.fromUser?.email ||
-                "-";
+              const event = getTransferEvent(transfer);
+              const eventImage = getEventImage(event);
+              const gradient = gradientByIndex(index);
+              const transferDate = transfer.respondedAt || transfer.requestedAt;
+              const routeId = `transfer_${transfer.id}`;
 
               return (
-                <div
+                <article
                   key={`transfer-${transfer.id}`}
-                  className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm"
+                  className="overflow-hidden rounded-[8px] bg-white shadow-[0_8px_24px_rgba(15,23,42,0.12)]"
                 >
-                  <div className={`bg-gradient-to-r ${gradient} p-6 text-white`}>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold backdrop-blur">
-                        Transferência
-                      </span>
+                  <div className={`relative h-[170px] bg-gradient-to-br ${gradient}`}>
+                    {eventImage ? (
+                      <img
+                        src={eventImage}
+                        alt={getTransferTitle(transfer)}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center px-6 text-center text-2xl font-black text-white">
+                        {getTransferTitle(transfer)}
+                      </div>
+                    )}
 
+                    <div className="absolute left-3 top-3">
                       <span
-                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(
+                        className={`rounded-full border px-3 py-1 text-[11px] font-black ${getStatusClasses(
                           transfer.status,
                         )}`}
                       >
                         {getStatusLabel(transfer.status)}
                       </span>
-
-                      <span className="text-xs font-medium text-white/75">
-                        #{transfer.id.slice(0, 8)}
-                      </span>
                     </div>
-
-                    <h3 className="mt-4 text-3xl font-black">
-                      {transferEvent?.name || "Transferência recebida"}
-                    </h3>
-
-                    <p className="mt-2 max-w-3xl text-sm text-white/80">
-                      Você recebeu um ingresso por transferência e pode revisar
-                      esse recebimento.
-                    </p>
                   </div>
 
-                  <div className="grid gap-6 p-6 xl:grid-cols-[1.2fr_0.8fr]">
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap gap-5 text-sm text-slate-600">
-                        <span>
-                          📅{" "}
-                          {formatDate(
-                            transferEvent?.startDate || transferEvent?.eventDate,
-                          )}
-                        </span>
-                        <span>📨 {formatDate(transfer.requestedAt)}</span>
-                        <span>🎟️ {transferTicketName}</span>
-                      </div>
+                  <div className="border-b border-slate-200 p-5">
+                    <h2 className="min-h-[48px] text-[17px] font-black leading-6 text-slate-950">
+                      {getTransferTitle(transfer)}
+                    </h2>
+                  </div>
 
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="rounded-2xl bg-slate-50 p-4">
-                          <p className="text-sm text-slate-500">Enviado por</p>
-                          <p className="mt-2 font-semibold text-slate-900">
-                            {senderName}
+                  <div className="p-5">
+                    <div className="space-y-4 text-sm text-slate-600">
+                      <div className="flex gap-3">
+                        <span className="text-slate-400">◷</span>
+                        <div>
+                          <p className="font-medium text-slate-700">
+                            {formatDate(event?.startDate || event?.eventDate)}
                           </p>
-                          <p className="mt-1 break-all text-sm text-slate-500">
-                            {senderEmail}
-                          </p>
-                          <p className="mt-1 text-sm text-slate-400">
-                            CPF:{" "}
-                            {formatCpf(
-                              transfer.fromCpf ||
-                                transfer.requestedByCpf ||
-                                transfer.fromUser?.cpfNormalized,
-                            )}
+                          <p className="mt-1 text-xs text-slate-500">
+                            Transferência em {formatDate(transferDate)}
                           </p>
                         </div>
+                      </div>
 
-                        <div className="rounded-2xl bg-slate-50 p-4">
-                          <p className="text-sm text-slate-500">
-                            Situação atual
+                      <div className="flex gap-3">
+                        <span className="text-slate-400">⌖</span>
+                        <div className="flex-1">
+                          <p className="font-medium text-slate-700">
+                            {getLocationLabel(event)}
                           </p>
-                          <p className="mt-2 text-2xl font-black text-slate-950">
-                            {getStatusLabel(transfer.status)}
+                          <p className="mt-1 text-xs text-slate-500">
+                            De: {transfer.fromName || transfer.fromUser?.name || "-"}
                           </p>
-                          <p className="mt-1 text-sm text-slate-500">
-                            {transfer.status === "PENDING_ACCEPTANCE"
-                              ? "Aguardando sua ação"
-                              : "Ingresso incorporado à sua conta"}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <span className="text-slate-400">🎟️</span>
+                        <div>
+                          <p className="font-medium text-slate-700">
+                            {getTransferTicketTypeName(transfer)}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Para: {transfer.toName || transfer.toUser?.name || "-"}
                           </p>
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-3 rounded-[24px] bg-slate-50 p-5">
-                      <span
-                        className={`inline-flex w-fit rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(
-                          transfer.status,
-                        )}`}
-                      >
-                        {getStatusLabel(transfer.status)}
-                      </span>
-
-                      <p className="text-sm text-slate-600">
-                        {transfer.status === "PENDING_ACCEPTANCE"
-                          ? "Abra para aceitar ou recusar essa transferência."
-                          : "Abra para ver o relatório completo da transferência."}
-                      </p>
-
-                      <button
-                        type="button"
-                        onClick={() => goTo(`/customer/orders/transfer_${transfer.id}`)}
-                        className="mt-auto rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
-                      >
-                        {transfer.status === "PENDING_ACCEPTANCE"
-                          ? "Abrir recebimento"
-                          : "Abrir transferência"}
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => goTo(`/customer/orders/${routeId}`)}
+                      className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-[#242424] px-4 py-3 text-sm font-bold text-white hover:bg-black"
+                    >
+                      <span className="h-4 w-6 rounded-sm bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400" />
+                      Ver detalhes
+                    </button>
                   </div>
-                </div>
+                </article>
               );
             })}
-          </div>
+          </section>
         )}
-      </section>
+      </div>
     </main>
   );
 }
