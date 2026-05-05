@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 type EventMedia = {
@@ -661,7 +661,7 @@ function WideEventCard({
   );
 }
 
-export default function CustomerEventsPage() {
+function CustomerEventsPageContent() {
   const searchParams = useSearchParams();
 
   const queryTitle = searchParams.get("title") || "";
@@ -1162,6 +1162,7 @@ export default function CustomerEventsPage() {
             </section>
           </>
         )}
+        
 
         <section className="mb-8">
           <SectionTitle title="Descubra o que fazer na sua cidade" actionLabel="" />
@@ -1195,5 +1196,25 @@ export default function CustomerEventsPage() {
         </section>
       </div>
     </main>
+    
+  );
+}
+function EventsPageLoading() {
+  return (
+    <main className="mx-auto max-w-[980px] px-4 py-10">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="text-sm font-semibold text-slate-700">
+          Carregando eventos...
+        </p>
+      </div>
+    </main>
+  );
+}
+
+export default function CustomerEventsPage() {
+  return (
+    <Suspense fallback={<EventsPageLoading />}>
+      <CustomerEventsPageContent />
+    </Suspense>
   );
 }

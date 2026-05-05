@@ -88,7 +88,7 @@ type StoredUser = CustomerHeaderUser & {
   cpf?: string;
 };
 
-function onlyDigits(value?: string) {
+function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
 
