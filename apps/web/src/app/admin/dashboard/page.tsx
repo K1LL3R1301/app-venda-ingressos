@@ -20,6 +20,7 @@ type EventItem = {
   name?: string;
   description?: string;
   eventDate?: string;
+  startDate?: string;
   capacity?: number;
   organizer?: {
     id: string;
@@ -27,35 +28,113 @@ type EventItem = {
   };
 };
 
-function formatValue(value: unknown): string | number {
-  if (typeof value === "string" || typeof value === "number") return value;
+function toNumber(value?: string | number) {
+  if (value === undefined || value === null) return 0;
 
+  const numeric =
+    typeof value === "number" ? value : Number(String(value).replace(",", "."));
+
+  return Number.isNaN(numeric) ? 0 : numeric;
+}
+
+function formatMoney(value?: string | number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(toNumber(value));
+}
+
+function formatRevenue(
+  value?: string | number | { paidTotal?: string | number },
+  paidTotal?: string | number,
+) {
   if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-
-    if (
-      typeof obj.paidTotal === "string" ||
-      typeof obj.paidTotal === "number"
-    ) {
-      return obj.paidTotal;
-    }
-
-    return JSON.stringify(obj);
+    return formatMoney(value.paidTotal);
   }
 
-  return "-";
+  if (value !== undefined && value !== null) {
+    return formatMoney(value);
+  }
+
+  if (paidTotal !== undefined && paidTotal !== null) {
+    return formatMoney(paidTotal);
+  }
+
+  return "R$ 0,00";
 }
 
 function formatDate(value?: string) {
   if (!value) return "-";
 
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return value;
 
-  return date.toLocaleString("pt-BR");
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-export default function DashboardPage() {
+function getStatusLabel(status: string) {
+  const normalized = String(status || "").toUpperCase();
+
+  if (normalized === "PAID") return "Pago";
+  if (normalized === "PENDING") return "Pendente";
+  if (normalized === "PENDING_PAYMENT") return "Aguardando pagamento";
+  if (normalized === "CANCELED") return "Cancelado";
+  if (normalized === "REFUND_REQUESTED") return "Reembolso solicitado";
+  if (normalized === "CREDITED") return "Creditado";
+  if (normalized === "NO_REFUND") return "Sem reembolso";
+
+  return status || "-";
+}
+
+function MetricCard({
+  label,
+  value,
+  detail,
+  icon,
+  href,
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  icon: string;
+  href: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group relative flex min-h-[148px] flex-col justify-between rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:border-sky-200 hover:shadow-lg"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <p className="min-w-0 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
+          {label}
+        </p>
+
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-lg text-white shadow-sm transition group-hover:bg-sky-600">
+          {icon}
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <h2 className="whitespace-nowrap text-[24px] font-black leading-none text-slate-950">
+          {value}
+        </h2>
+
+        <p className="mt-3 text-sm font-medium leading-5 text-slate-500">
+          {detail}
+        </p>
+      </div>
+    </Link>
+  );
+}
+
+export default function AdminDashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,8 +190,8 @@ export default function DashboardPage() {
 
         setSummary(summaryResult);
         setEvents(Array.isArray(eventsResult) ? eventsResult : []);
-      } catch (err) {
-        console.error(err);
+      } catch (error) {
+        console.error("ADMIN DASHBOARD ERROR:", error);
         alert("Erro ao conectar com a API");
       } finally {
         setLoading(false);
@@ -123,229 +202,254 @@ export default function DashboardPage() {
   }, []);
 
   const revenueValue = useMemo(() => {
-    if (!summary) return "-";
-    if (summary.revenue !== undefined) return formatValue(summary.revenue);
-    if (summary.paidTotal !== undefined) return formatValue(summary.paidTotal);
-    return "-";
+    if (!summary) return "R$ 0,00";
+
+    return formatRevenue(summary.revenue, summary.paidTotal);
   }, [summary]);
+
+  const previewEvents = useMemo(() => {
+    return [...events].slice(0, 2);
+  }, [events]);
+
+  const metrics = [
+    {
+      label: "Organizadores",
+      value: summary?.organizers ?? 0,
+      detail: "Contas produtoras cadastradas",
+      icon: "🏢",
+      href: "/admin/organizers",
+    },
+    {
+      label: "Eventos",
+      value: summary?.events ?? 0,
+      detail: "Eventos ativos ou cadastrados",
+      icon: "🎫",
+      href: "/admin/events",
+    },
+    {
+      label: "Pedidos",
+      value: summary?.orders ?? 0,
+      detail: "Compras registradas na plataforma",
+      icon: "🧾",
+      href: "/admin/orders",
+    },
+    {
+      label: "Receita",
+      value: revenueValue,
+      detail: "Total confirmado em pagamentos",
+      icon: "💰",
+      href: "/admin/orders",
+    },
+  ];
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div className="rounded-3xl bg-white p-8 shadow-sm border border-gray-200">
-          <p className="text-lg font-medium">Carregando dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!summary) {
-    return (
-      <div className="space-y-6">
-        <div className="rounded-3xl bg-white p-8 shadow-sm border border-gray-200">
-          <p className="text-lg font-medium">
-            Não foi possível carregar o dashboard.
+      <main className="mx-auto max-w-[1180px] px-4 py-8">
+        <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
+          <p className="text-sm font-bold text-slate-600">
+            Carregando dashboard admin...
           </p>
-        </div>
-      </div>
+        </section>
+      </main>
     );
   }
-
-  const cards = [
-    { label: "Organizadores", value: summary.organizers ?? 0, icon: "🏢" },
-    { label: "Eventos", value: summary.events ?? 0, icon: "🎫" },
-    { label: "Pedidos", value: summary.orders ?? 0, icon: "🧾" },
-    { label: "Receita", value: revenueValue, icon: "💰" },
-  ];
-
-  const quickActions = [
-    {
-      title: "Novo organizador",
-      description: "Cadastre um novo organizador para operar eventos",
-      href: "/organizers/new",
-    },
-    {
-      title: "Novo evento",
-      description: "Crie um novo evento dentro da plataforma",
-      href: "/events/new",
-    },
-    {
-      title: "Ver pedidos",
-      description: "Acompanhe todos os pedidos realizados",
-      href: "/orders",
-    },
-    {
-      title: "Check-in manual",
-      description: "Valide tickets manualmente pelo código",
-      href: "/checkin",
-    },
-  ];
 
   return (
-    <div className="space-y-8">
-      <section className="rounded-3xl bg-white border border-gray-200 shadow-sm p-8">
-        <div className="flex flex-col gap-6">
+    <main className="mx-auto max-w-[1180px] px-4 pb-14 pt-8">
+      <section className="relative overflow-hidden rounded-[36px] bg-slate-950 p-8 text-white shadow-sm md:p-10">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.25),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.28),transparent_32%)]" />
+        <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-sky-500/20 blur-3xl" />
+        <div className="absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-violet-500/20 blur-3xl" />
+
+        <div className="relative z-10 flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-gray-500 font-semibold">
+            <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/60">
               Painel administrativo
             </p>
-            <h1 className="mt-2 text-4xl font-bold text-gray-900">
-              Dashboard Admin
+
+            <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight md:text-6xl">
+              Controle a plataforma sem sair da cabine.
             </h1>
-            <p className="mt-3 text-gray-600 max-w-2xl">
-              Gerencie organizadores, eventos, pedidos e receita da plataforma
-              em um só lugar.
+
+            <p className="mt-5 max-w-2xl text-sm leading-7 text-white/70">
+              Gerencie organizadores, eventos, pedidos, receita e validação de
+              ingressos em um painel único.
             </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[360px]">
+            <Link
+              href="/admin/events/new"
+              className="rounded-2xl bg-white px-5 py-4 text-center text-sm font-black text-slate-950 transition hover:bg-slate-100"
+            >
+              Criar evento
+            </Link>
+
+            <Link
+              href="/admin/validation"
+              className="rounded-2xl border border-white/20 bg-white/10 px-5 py-4 text-center text-sm font-black text-white transition hover:bg-white/15"
+            >
+              Validar ingresso
+            </Link>
           </div>
         </div>
       </section>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-        {cards.map((card) => (
-          <div
-            key={card.label}
-            className="rounded-3xl bg-white border border-gray-200 shadow-sm p-6"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm text-gray-500">{card.label}</p>
-                <h2 className="mt-3 text-3xl font-bold text-gray-900">
-                  {card.value}
-                </h2>
-              </div>
-
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gray-100 text-xl">
-                {card.icon}
-              </div>
-            </div>
-          </div>
+      <section className="mt-7 grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {metrics.map((metric) => (
+          <MetricCard
+            key={metric.label}
+            label={metric.label}
+            value={metric.value}
+            detail={metric.detail}
+            icon={metric.icon}
+            href={metric.href}
+          />
         ))}
       </section>
 
-      <section className="rounded-3xl bg-white border border-gray-200 shadow-sm p-8">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">Ações rápidas</h2>
-            <p className="text-gray-600 mt-1">
-              Atalhos para os principais fluxos do admin
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {quickActions.map((action) => (
-            <Link
-              key={action.title}
-              href={action.href}
-              className="rounded-2xl border border-gray-200 bg-gray-50 p-5 hover:bg-gray-100 transition"
-            >
-              <h3 className="text-lg font-semibold text-gray-900">
-                {action.title}
-              </h3>
-              <p className="mt-2 text-sm text-gray-600">
-                {action.description}
-              </p>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-3xl bg-white border border-gray-200 shadow-sm p-8">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">Eventos</h2>
-            <p className="text-gray-600 mt-1">
-              Selecione um evento para continuar a operação
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/organizers/new"
-              className="rounded-2xl border border-gray-300 bg-white px-5 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50"
-            >
-              Novo organizador
-            </Link>
-
-            <Link
-              href="/events/new"
-              className="rounded-2xl bg-black px-5 py-3 text-sm font-medium text-white hover:opacity-90"
-            >
-              Novo evento
-            </Link>
-          </div>
-        </div>
-
-        {events.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-gray-300 p-8 text-center text-gray-600">
-            Nenhum evento encontrado.
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-4">
-            {events.map((event) => (
-              <div
-                key={event.id}
-                className="w-full max-w-[360px] rounded-2xl border border-gray-200 bg-gray-50 p-5"
-              >
-                <h3 className="text-lg font-semibold text-gray-900">
-                  {event.name || "-"}
-                </h3>
-
-                <p className="mt-2 text-sm text-gray-600 line-clamp-3 min-h-[60px]">
-                  {event.description || "Sem descrição"}
+      <section className="mt-8 grid gap-7 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-7">
+          <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-sky-600">
+                  Operação
                 </p>
 
-                <div className="mt-4 space-y-2 text-sm text-gray-800">
-                  <p>
-                    <strong>Data:</strong> {formatDate(event.eventDate)}
-                  </p>
-                  <p>
-                    <strong>Capacidade:</strong> {event.capacity ?? "-"}
-                  </p>
-                  <p>
-                    <strong>Organizador:</strong>{" "}
-                    {event.organizer?.tradeName || "-"}
-                  </p>
-                </div>
+                <h2 className="mt-2 text-2xl font-black text-slate-950">
+                  Meus eventos
+                </h2>
 
-                <div className="mt-5">
-                  <Link
-                    href={`/events/${event.id}`}
-                    className="block rounded-2xl bg-black px-4 py-3 text-center text-sm font-medium text-white hover:opacity-90"
-                  >
-                    Abrir evento
-                  </Link>
-                </div>
+                <p className="mt-2 text-sm text-slate-500">
+                  Uma prévia dos seus eventos mais recentes.
+                </p>
               </div>
-            ))}
-          </div>
-        )}
-      </section>
 
-      <section className="rounded-3xl bg-white border border-gray-200 shadow-sm p-8">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">
-          Pedidos por status
-        </h2>
-
-        {summary.ordersByStatus &&
-        Object.keys(summary.ordersByStatus).length > 0 ? (
-          <div className="space-y-3">
-            {Object.entries(summary.ordersByStatus).map(([status, value]) => (
-              <div
-                key={status}
-                className="flex items-center justify-between rounded-2xl border border-gray-200 px-4 py-3"
+              <Link
+                href="/admin/events"
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
               >
-                <span className="font-medium text-gray-700">{status}</span>
-                <span className="text-lg font-bold text-gray-900">{value}</span>
+                Ver todos
+              </Link>
+            </div>
+
+            {previewEvents.length === 0 ? (
+              <div className="mt-6 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-semibold text-slate-500">
+                Nenhum evento encontrado.
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-dashed border-gray-300 p-8 text-center text-gray-600">
-            Nenhum dado disponível.
-          </div>
-        )}
+            ) : (
+              <div className="mt-6 grid gap-4 md:grid-cols-2">
+                {previewEvents.map((event) => (
+                  <article
+                    key={event.id}
+                    className="rounded-[26px] border border-slate-200 bg-slate-50 p-5 transition hover:bg-white hover:shadow-md"
+                  >
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
+                      Evento
+                    </p>
+
+                    <h3 className="mt-2 text-xl font-black leading-tight text-slate-950">
+                      {event.name || "-"}
+                    </h3>
+
+                    <p className="mt-3 line-clamp-3 min-h-[66px] text-sm leading-6 text-slate-500">
+                      {event.description || "Sem descrição cadastrada."}
+                    </p>
+
+                    <div className="mt-5 space-y-2 text-sm text-slate-600">
+                      <p>
+                        <strong>Data:</strong>{" "}
+                        {formatDate(event.startDate || event.eventDate)}
+                      </p>
+
+                      <p>
+                        <strong>Capacidade:</strong> {event.capacity ?? "-"}
+                      </p>
+
+                      <p>
+                        <strong>Organizador:</strong>{" "}
+                        {event.organizer?.tradeName || "-"}
+                      </p>
+                    </div>
+
+                    <Link
+                      href={`/admin/events/${event.id}`}
+                      className="mt-5 block rounded-2xl bg-slate-950 px-4 py-3 text-center text-sm font-black text-white transition hover:bg-slate-800"
+                    >
+                      Abrir evento
+                    </Link>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+
+        <aside className="space-y-7 lg:sticky lg:top-24 lg:self-start">
+          <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-sky-600">
+              Pedidos
+            </p>
+
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Status dos pedidos
+            </h2>
+
+            <p className="mt-2 text-sm text-slate-500">
+              Visão rápida da esteira de compras.
+            </p>
+
+            {summary?.ordersByStatus &&
+            Object.keys(summary.ordersByStatus).length > 0 ? (
+              <div className="mt-6 space-y-3">
+                {Object.entries(summary.ordersByStatus).map(
+                  ([status, value]) => (
+                    <div
+                      key={status}
+                      className="flex items-center justify-between rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-4"
+                    >
+                      <span className="text-sm font-black text-slate-700">
+                        {getStatusLabel(status)}
+                      </span>
+
+                      <span className="rounded-full bg-white px-3 py-1 text-sm font-black text-slate-950 shadow-sm">
+                        {value}
+                      </span>
+                    </div>
+                  ),
+                )}
+              </div>
+            ) : (
+              <div className="mt-6 rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-semibold text-slate-500">
+                Nenhum dado disponível.
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-sky-600">
+              Portaria
+            </p>
+
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Validação rápida
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Use a tela de validação para colar ou ler o token seguro do QR
+              Code e marcar entrada.
+            </p>
+
+            <Link
+              href="/admin/validation"
+              className="mt-6 block rounded-2xl bg-slate-950 px-5 py-4 text-center text-sm font-black text-white transition hover:bg-slate-800"
+            >
+              Abrir validação
+            </Link>
+          </section>
+        </aside>
       </section>
-    </div>
+    </main>
   );
 }

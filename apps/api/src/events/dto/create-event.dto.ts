@@ -5,7 +5,9 @@ import {
   IsDateString,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsNumberString,
+  IsObject,
   IsOptional,
   IsString,
   IsUrl,
@@ -13,7 +15,224 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+export class CreateEventSessionDto {
+  @IsOptional()
+  @IsString()
+  localId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsDateString()
+  startsAt: string;
+
+  @IsOptional()
+  @IsDateString()
+  endsAt?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  capacity?: number;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  displayOrder?: number;
+}
+
+export class CreateVenueSectorDto {
+  @IsOptional()
+  @IsString()
+  localId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @IsOptional()
+  @IsString()
+  occupancyMode?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  capacity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  displayOrder?: number;
+
+  @IsOptional()
+  @IsString()
+  color?: string;
+
+  @IsOptional()
+  @IsString()
+  gateName?: string;
+}
+
+export class CreateSeatMapObjectDto {
+  @IsOptional()
+  @IsString()
+  localId?: string;
+
+  @IsOptional()
+  @IsString()
+  venueSectorId?: string;
+
+  @IsOptional()
+  @IsString()
+  venueSectorLocalId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  code: string;
+
+  @IsOptional()
+  @IsString()
+  label?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  type: string;
+
+  @IsOptional()
+  @IsString()
+  row?: string;
+
+  @IsOptional()
+  @IsString()
+  number?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  capacity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  x?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  y?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  width?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  height?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  rotation?: number;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
+}
+
+export class CreateVenueLayoutDto {
+  @IsOptional()
+  @IsString()
+  localId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  occupancyMode?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  width?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  height?: number;
+
+  @IsOptional()
+  @IsObject()
+  mapData?: Record<string, unknown>;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  isDefault?: boolean;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateSeatMapObjectDto)
+  objects?: CreateSeatMapObjectDto[];
+}
+
 export class CreateEventTicketTypeDto {
+  @IsOptional()
+  @IsString()
+  eventSessionId?: string;
+
+  @IsOptional()
+  @IsString()
+  eventSessionLocalId?: string;
+
+  @IsOptional()
+  @IsString()
+  venueSectorId?: string;
+
+  @IsOptional()
+  @IsString()
+  venueSectorLocalId?: string;
+
+  @IsOptional()
+  @IsString()
+  occupancyMode?: string;
+
   @IsString()
   name: string;
 
@@ -311,6 +530,25 @@ export class CreateEventDto {
   checkoutSubtitle?: string;
 
   @IsOptional()
+  @IsString()
+  occupancyMode?: string;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  multiSession?: boolean;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  allowSeatMap?: boolean;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  allowTableMap?: boolean;
+
+  @IsOptional()
   @ValidateNested()
   @Type(() => CreateEventContentDto)
   content?: CreateEventContentDto;
@@ -328,6 +566,24 @@ export class CreateEventDto {
   @ValidateNested()
   @Type(() => CreateEventPolicyDto)
   policy?: CreateEventPolicyDto;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateEventSessionDto)
+  sessions?: CreateEventSessionDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateVenueSectorDto)
+  sectors?: CreateVenueSectorDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateVenueLayoutDto)
+  venueLayouts?: CreateVenueLayoutDto[];
 
   @IsOptional()
   @IsArray()

@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsDateString,
   IsInt,
@@ -13,6 +14,10 @@ import {
   CreateEventLocationDto,
   CreateEventMediaDto,
   CreateEventPolicyDto,
+  CreateEventSessionDto,
+  CreateEventTicketTypeDto,
+  CreateVenueLayoutDto,
+  CreateVenueSectorDto,
 } from './create-event.dto';
 
 export class UpdateEventDto {
@@ -96,6 +101,25 @@ export class UpdateEventDto {
   checkoutSubtitle?: string;
 
   @IsOptional()
+  @IsString()
+  occupancyMode?: string;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  multiSession?: boolean;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  allowSeatMap?: boolean;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  allowTableMap?: boolean;
+
+  @IsOptional()
   @ValidateNested()
   @Type(() => CreateEventContentDto)
   content?: CreateEventContentDto;
@@ -114,4 +138,28 @@ export class UpdateEventDto {
   @ValidateNested()
   @Type(() => CreateEventPolicyDto)
   policy?: CreateEventPolicyDto;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateEventSessionDto)
+  sessions?: CreateEventSessionDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateVenueSectorDto)
+  sectors?: CreateVenueSectorDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateVenueLayoutDto)
+  venueLayouts?: CreateVenueLayoutDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateEventTicketTypeDto)
+  ticketTypes?: CreateEventTicketTypeDto[];
 }

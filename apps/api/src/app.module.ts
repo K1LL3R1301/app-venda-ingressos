@@ -14,6 +14,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SupportModule } from './support/support.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { TicketTypesModule } from './ticket-types/ticket-types.module';
+import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -34,6 +35,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     AuthModule,
     SupportModule,
+    UploadsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -18,6 +18,27 @@ enum EventCollection {
   GASTRONOMIA
 }
 
+enum EventOccupancyMode {
+  GENERAL_ADMISSION
+  RESERVED_SEATING
+  RESERVED_TABLE
+  MIXED
+}
+
+enum SeatMapObjectType {
+  SEAT
+  ACCESSIBLE_SEAT
+  COMPANION_SEAT
+  TABLE
+  BOOTH
+  COUNTER
+  AREA
+  STAGE
+  SCREEN
+  AISLE
+  BLOCKED_SPACE
+}
+
 model Organizer {
   id        String  @id @default(uuid())
   tradeName String
@@ -70,6 +91,11 @@ model Event {
   checkoutTitle    String?
   checkoutSubtitle String?
 
+  occupancyMode EventOccupancyMode @default(GENERAL_ADMISSION)
+  multiSession  Boolean            @default(false)
+  allowSeatMap  Boolean            @default(false)
+  allowTableMap Boolean            @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -82,6 +108,11 @@ model Event {
   location EventLocation?
   media    EventMedia?
   policy   EventPolicy?
+
+  sessions     EventSession[]
+  sectors      VenueSector[]
+  venueLayouts VenueLayout[]
+  seatHolds    SeatHold[]
 }
 
 model EventContent {
@@ -173,51 +204,213 @@ model EventPolicy {
   @@index([eventId])
 }
 
-model TicketType {
-  id          String  @id @default(uuid())
-  eventId     String
-  name        String
-  description String?
-  price       Decimal @db.Decimal(10, 2)
-  quantity    Int
-  status      String  @default("ACTIVE")
+model EventSession {
+  id      String @id @default(uuid())
+  eventId String
 
-  lotLabel           String?
-  salesStartAt       DateTime?
-  salesEndAt         DateTime?
-  minPerOrder        Int       @default(1)
-  maxPerOrder        Int?
-  displayOrder       Int       @default(0)
-  feeAmount          Decimal?  @db.Decimal(10, 2)
-  feeDescription     String?
-  benefitDescription String?
-  isHidden           Boolean   @default(false)
+  name         String
+  description  String?
+  startsAt     DateTime
+  endsAt       DateTime?
+  capacity     Int?
+  status       String    @default("ACTIVE")
+  displayOrder Int       @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  event      Event       @relation(fields: [eventId], references: [id])
-  orderItems OrderItem[]
+  event       Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketTypes TicketType[]
+  orders      Order[]
+  tickets     Ticket[]
+  seatHolds   SeatHold[]
 
   @@index([eventId])
+  @@index([startsAt])
   @@index([status])
   @@index([displayOrder])
 }
 
-model Order {
-  id             String   @id @default(uuid())
+model VenueSector {
+  id      String @id @default(uuid())
+  eventId String
+
+  name          String
+  description   String?
+  type          String?
+  occupancyMode EventOccupancyMode @default(GENERAL_ADMISSION)
+  capacity      Int?
+  displayOrder  Int                @default(0)
+  color         String?
+  gateName      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event       Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketTypes TicketType[]
+  mapObjects  SeatMapObject[]
+  tickets     Ticket[]
+  seatHolds   SeatHold[]
+
+  @@index([eventId])
+  @@index([occupancyMode])
+  @@index([displayOrder])
+}
+
+model VenueLayout {
+  id      String @id @default(uuid())
+  eventId String
+
+  name          String
+  occupancyMode EventOccupancyMode @default(GENERAL_ADMISSION)
+  width         Int?
+  height        Int?
+  mapData       Json?
+  isDefault     Boolean            @default(false)
+  status        String             @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event      Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  mapObjects SeatMapObject[]
+
+  @@index([eventId])
+  @@index([occupancyMode])
+  @@index([isDefault])
+  @@index([status])
+}
+
+model SeatMapObject {
+  id       String @id @default(uuid())
+  layoutId String
+
+  venueSectorId String?
+
+  code     String
+  label    String?
+  type     SeatMapObjectType
+  row      String?
+  number   String?
+  capacity Int               @default(1)
+
+  x        Decimal? @db.Decimal(10, 2)
+  y        Decimal? @db.Decimal(10, 2)
+  width    Decimal? @db.Decimal(10, 2)
+  height   Decimal? @db.Decimal(10, 2)
+  rotation Decimal? @db.Decimal(10, 2)
+
+  status   String @default("AVAILABLE")
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  layout      VenueLayout  @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+  venueSector VenueSector? @relation(fields: [venueSectorId], references: [id], onDelete: SetNull)
+  tickets     Ticket[]
+  seatHolds   SeatHold[]
+
+  @@unique([layoutId, code])
+  @@index([layoutId])
+  @@index([venueSectorId])
+  @@index([type])
+  @@index([status])
+}
+
+model SeatHold {
+  id      String @id @default(uuid())
+  eventId String
+
+  eventSessionId  String?
+  venueSectorId   String?
+  seatMapObjectId String?
+  ticketTypeId    String?
+  userId          String?
+
+  token     String
+  quantity  Int      @default(1)
+  status    String   @default("ACTIVE")
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventSession  EventSession?  @relation(fields: [eventSessionId], references: [id], onDelete: Cascade)
+  venueSector   VenueSector?   @relation(fields: [venueSectorId], references: [id], onDelete: SetNull)
+  seatMapObject SeatMapObject? @relation(fields: [seatMapObjectId], references: [id], onDelete: SetNull)
+  ticketType    TicketType?    @relation(fields: [ticketTypeId], references: [id], onDelete: SetNull)
+  user          User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([eventId])
+  @@index([eventSessionId])
+  @@index([venueSectorId])
+  @@index([seatMapObjectId])
+  @@index([ticketTypeId])
+  @@index([userId])
+  @@index([token])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model TicketType {
+  id             String  @id @default(uuid())
   eventId        String
+  eventSessionId String?
+  venueSectorId  String?
+  name           String
+  description    String?
+  price          Decimal @db.Decimal(10, 2)
+  quantity       Int
+  status         String  @default("ACTIVE")
+
+  lotLabel           String?
+  salesStartAt       DateTime?
+  salesEndAt         DateTime?
+  minPerOrder        Int                @default(1)
+  maxPerOrder        Int?
+  displayOrder       Int                @default(0)
+  feeAmount          Decimal?           @db.Decimal(10, 2)
+  feeDescription     String?
+  benefitDescription String?
+  isHidden           Boolean            @default(false)
+  occupancyMode      EventOccupancyMode @default(GENERAL_ADMISSION)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event        Event         @relation(fields: [eventId], references: [id])
+  eventSession EventSession? @relation(fields: [eventSessionId], references: [id], onDelete: SetNull)
+  venueSector  VenueSector?  @relation(fields: [venueSectorId], references: [id], onDelete: SetNull)
+  orderItems   OrderItem[]
+  seatHolds    SeatHold[]
+
+  @@index([eventId])
+  @@index([eventSessionId])
+  @@index([venueSectorId])
+  @@index([status])
+  @@index([displayOrder])
+  @@index([occupancyMode])
+}
+
+model Order {
+  id             String    @id @default(uuid())
+  eventId        String
+  eventSessionId String?
   customerUserId String?
   customerName   String
   customerEmail  String
   customerCpf    String?
-  status         String   @default("PENDING")
-  totalAmount    Decimal  @db.Decimal(10, 2)
+  status         String    @default("PENDING")
+  totalAmount    Decimal   @db.Decimal(10, 2)
   expiresAt      DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   event            Event                   @relation(fields: [eventId], references: [id])
+  eventSession     EventSession?           @relation(fields: [eventSessionId], references: [id], onDelete: SetNull)
   customerUser     User?                   @relation("OrderCustomerUser", fields: [customerUserId], references: [id])
   items            OrderItem[]
   payments         Payment[]
@@ -226,6 +419,7 @@ model Order {
   transferRequests TicketTransferRequest[]
 
   @@index([eventId])
+  @@index([eventSessionId])
   @@index([customerUserId])
   @@index([customerEmail])
   @@index([customerCpf])
@@ -251,27 +445,36 @@ model OrderItem {
 }
 
 model Ticket {
-  id                          String    @id @default(uuid())
-  orderItemId                 String
-  currentOwnerUserId          String?
+  id                           String    @id @default(uuid())
+  orderItemId                  String
+  eventSessionId               String?
+  venueSectorId                String?
+  seatMapObjectId              String?
+  currentOwnerUserId           String?
   receivedViaTransferRequestId String?
-  receivedViaTransferLocked   Boolean   @default(false)
-  code                        String    @unique
-  status                      String    @default("AVAILABLE")
-  holderName                  String?
-  holderEmail                 String?
-  holderCpf                   String?
-  usedAt                      DateTime?
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
+  receivedViaTransferLocked    Boolean   @default(false)
+  code                         String    @unique
+  status                       String    @default("AVAILABLE")
+  holderName                   String?
+  holderEmail                  String?
+  holderCpf                    String?
+  usedAt                       DateTime?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
 
   orderItem        OrderItem               @relation(fields: [orderItemId], references: [id])
+  eventSession     EventSession?           @relation(fields: [eventSessionId], references: [id], onDelete: SetNull)
+  venueSector      VenueSector?            @relation(fields: [venueSectorId], references: [id], onDelete: SetNull)
+  seatMapObject    SeatMapObject?          @relation(fields: [seatMapObjectId], references: [id], onDelete: SetNull)
   currentOwnerUser User?                   @relation("TicketCurrentOwner", fields: [currentOwnerUserId], references: [id])
   checkins         Checkin[]
   cancellations    TicketCancellation[]
   transferRequests TicketTransferRequest[]
 
   @@index([orderItemId])
+  @@index([eventSessionId])
+  @@index([venueSectorId])
+  @@index([seatMapObjectId])
   @@index([currentOwnerUserId])
   @@index([holderEmail])
   @@index([holderCpf])
@@ -280,13 +483,13 @@ model Ticket {
 }
 
 model TicketTransferRequest {
-  id                        String   @id @default(uuid())
+  id                        String  @id @default(uuid())
   ticketId                  String
   orderId                   String
   requestedByUserId         String
   fromUserId                String
   toUserId                  String
-  mode                      String   @default("FORWARD")
+  mode                      String  @default("FORWARD")
   returnOfTransferRequestId String?
 
   requestedByName  String?
@@ -299,13 +502,13 @@ model TicketTransferRequest {
   toEmail          String?
   toCpf            String?
 
-  status         String   @default("PENDING_PAYMENT")
+  status         String    @default("PENDING_PAYMENT")
   responseReason String?
-  requestedAt    DateTime @default(now())
+  requestedAt    DateTime  @default(now())
   respondedAt    DateTime?
   expiresAt      DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   ticket          Ticket @relation(fields: [ticketId], references: [id])
   order           Order  @relation(fields: [orderId], references: [id])
@@ -340,14 +543,14 @@ model Checkin {
 }
 
 model Payment {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   orderId   String
-  amount    Decimal  @db.Decimal(10, 2)
+  amount    Decimal   @db.Decimal(10, 2)
   method    String
-  status    String   @default("PENDING")
+  status    String    @default("PENDING")
   paidAt    DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
 
@@ -355,22 +558,22 @@ model Payment {
 }
 
 model User {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   name            String
-  email           String   @unique
+  email           String    @unique
   passwordHash    String?
   cpf             String?
-  cpfNormalized   String?  @unique
-  googleId        String?  @unique
+  cpfNormalized   String?   @unique
+  googleId        String?   @unique
   avatarUrl       String?
-  authProvider    String   @default("PASSWORD")
-  role            String   @default("ADMIN")
-  status          String   @default("ACTIVE")
+  authProvider    String    @default("PASSWORD")
+  role            String    @default("ADMIN")
+  status          String    @default("ACTIVE")
   emailVerifiedAt DateTime?
   cpfVerifiedAt   DateTime?
   lastLoginAt     DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   orders                   Order[]         @relation("OrderCustomerUser")
   ownedTickets             Ticket[]        @relation("TicketCurrentOwner")
@@ -382,6 +585,7 @@ model User {
 
   walletTransactions  WalletTransaction[]
   ticketCancellations TicketCancellation[]
+  seatHolds           SeatHold[]
 
   sentMessages    SupportMessage[] @relation("SupportMessageSender")
   assignedThreads SupportThread[]  @relation("SupportThreadAssignedUser")
