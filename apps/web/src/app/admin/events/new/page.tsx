@@ -349,9 +349,16 @@ function isoOrUndefined(value: string) {
   return value ? new Date(value).toISOString() : undefined;
 }
 
+
 function getApiOrigin() {
   try {
-    return new URL(API_BASE_URL).origin;
+    const url = new URL(API_BASE_URL);
+
+    if (url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
+    }
+
+    return url.origin;
   } catch {
     return "";
   }
@@ -359,14 +366,46 @@ function getApiOrigin() {
 
 function normalizeUrl(value: string | undefined) {
   if (!value) return undefined;
+
   const trimmed = value.trim();
+
   if (!trimmed) return undefined;
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    try {
+      const url = new URL(trimmed);
+
+      if (url.hostname === "localhost") {
+        url.hostname = "127.0.0.1";
+      }
+
+      return url.toString();
+    } catch {
+      return undefined;
+    }
+  }
+
   const origin = getApiOrigin();
-  if (!origin) return trimmed;
-  if (trimmed.startsWith("/")) return `${origin}${trimmed}`;
-  if (trimmed.startsWith("uploads/")) return `${origin}/${trimmed}`;
-  return trimmed;
+
+  if (!origin) return undefined;
+
+  if (trimmed.startsWith("/")) {
+    return `${origin}${trimmed}`;
+  }
+
+  if (trimmed.startsWith("uploads/")) {
+    return `${origin}/${trimmed}`;
+  }
+
+  return undefined;
+}
+
+function urlOrUndefined(value: string | undefined) {
+  const normalized = normalizeUrl(value);
+
+  if (!normalized) return undefined;
+
+  return isHttpUrl(normalized) ? normalized : undefined;
 }
 
 function isHttpUrl(value: string | undefined) {
@@ -379,9 +418,34 @@ function isHttpUrl(value: string | undefined) {
   }
 }
 
+function normalizeExternalUrl(value: string | undefined) {
+  if (!value) return "";
+
+  const trimmed = value.trim();
+
+  if (!trimmed) return "";
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (
+    /^(www\.|google\.|maps\.app\.goo\.gl|goo\.gl|waze\.com|openstreetmap\.org|bing\.com)/i.test(
+      trimmed,
+    )
+  ) {
+    return `https://${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 function isMapUrl(value: string) {
+  const normalized = normalizeExternalUrl(value);
+
   try {
-    const host = new URL(value).hostname.toLowerCase();
+    const host = new URL(normalized).hostname.toLowerCase();
+
     return (
       host.includes("google.") ||
       host.includes("maps.app.goo.gl") ||
@@ -1480,14 +1544,70 @@ export default function NewEventPage() {
       .catch(() => alert("Não foi possível buscar o CEP agora."));
   }
 
-  function mapUrlChange(value: string) {
-    setMapUrl(value);
-    const match = value.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || value.match(/q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+function extractCoordinatesFromMapUrl(value: string) {
+  const decodedValue = decodeURIComponent(value);
+
+  const patterns = [
+    /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+    /[?&](?:q|query|center|ll|destination)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+    /\/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:\?|\/|$)/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = decodedValue.match(pattern);
+
     if (match?.[1] && match?.[2]) {
-      setLatitude(match[1]);
-      setLongitude(match[2]);
+      return {
+        latitude: match[1],
+        longitude: match[2],
+      };
     }
   }
+
+  return null;
+}
+
+  function extractCoordinatesFromMapUrl(value: string) {
+  const decodedValue = decodeURIComponent(normalizeExternalUrl(value));
+
+  const patterns = [
+    /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+    /[?&](?:q|query|center|ll|destination)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+    /\/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:\?|\/|$)/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = decodedValue.match(pattern);
+
+    if (match?.[1] && match?.[2]) {
+      return {
+        latitude: match[1],
+        longitude: match[2],
+      };
+    }
+  }
+
+  return null;
+}
+
+function mapUrlChange(value: string) {
+  const normalizedUrl = normalizeExternalUrl(value);
+
+  setMapUrl(normalizedUrl);
+
+  const coordinates = extractCoordinatesFromMapUrl(normalizedUrl);
+
+  if (coordinates) {
+    setLatitude(coordinates.latitude);
+    setLongitude(coordinates.longitude);
+    return;
+  }
+
+  setLatitude("");
+  setLongitude("");
+}
 
   function payload() {
     return {
@@ -1525,19 +1645,21 @@ export default function NewEventPage() {
         state: textOrUndefined(stateName),
         zipCode: textOrUndefined(zipCode),
         reference: textOrUndefined(reference),
-        mapUrl: textOrUndefined(mapUrl),
+        mapUrl: textOrUndefined(normalizeExternalUrl(mapUrl)),
         instructions: textOrUndefined(instructions),
         latitude: textOrUndefined(latitude),
         longitude: textOrUndefined(longitude),
       },
-      media: {
-        coverImageUrl: normalizeUrl(coverImageUrl),
-        bannerImageUrl: normalizeUrl(bannerImageUrl),
-        thumbnailUrl: normalizeUrl(thumbnailUrl),
-        mobileBannerUrl: normalizeUrl(mobileBannerUrl),
-        sectorMapImageUrl: normalizeUrl(sectorMapImageUrl),
-        gallery: gallery.map((item) => normalizeUrl(item)).filter(Boolean),
-      },
+     media: {
+       coverImageUrl: urlOrUndefined(coverImageUrl),
+        bannerImageUrl: urlOrUndefined(bannerImageUrl),
+        thumbnailUrl: urlOrUndefined(thumbnailUrl),
+        mobileBannerUrl: urlOrUndefined(mobileBannerUrl),
+        sectorMapImageUrl: urlOrUndefined(sectorMapImageUrl),
+        gallery: gallery
+         .map((item) => urlOrUndefined(item))
+          .filter((item): item is string => Boolean(item)),
+},
       policy: {
         ageRating: textOrUndefined(ageRating),
         refundPolicy: refundEnabled ? textOrUndefined(refundPolicy) : undefined,
@@ -1809,26 +1931,154 @@ export default function NewEventPage() {
               </div>
             </div>
           </div>
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6">
-            <h3 className="text-2xl font-black">Políticas e regras</h3>
-            <div className="mt-6 grid gap-5 md:grid-cols-2">
-              <Field label="Classificação indicativa" value={ageRating} onChange={setAgeRating} />
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black">
-                <input type="checkbox" checked={refundEnabled} onChange={(event) => setRefundEnabled(event.target.checked)} />
-                Permitir reembolso neste evento
-              </label>
-              {refundEnabled ? <TextArea label="Política de reembolso" value={refundPolicy} onChange={setRefundPolicy} /> : null}
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black">
-                <input type="checkbox" checked={transferEnabled} onChange={(event) => setTransferEnabled(event.target.checked)} />
-                Permitir transferência neste evento
-              </label>
-              {transferEnabled ? <TextArea label="Política de transferência" value={transferPolicy} onChange={setTransferPolicy} /> : null}
-              <TextArea label="Política de meia-entrada" value={halfEntryPolicy} onChange={setHalfEntryPolicy} />
-              <TextArea label="Regras de entrada" value={entryRules} onChange={setEntryRules} />
-              <TextArea label="Documentos obrigatórios" value={documentRules} onChange={setDocumentRules} />
-              <TextArea label="Termos e observações" value={termsNotes} onChange={setTermsNotes} />
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
+                Políticas do evento
+              </p>
+              <h3 className="mt-2 text-2xl font-black text-slate-950">
+                Regras, documentos e condições
+              </h3>
+              <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+                Configure regras específicas do evento, sempre respeitando as regras
+                gerais da plataforma.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-950 px-4 py-3 text-white">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                Controle
+              </p>
+              <p className="mt-1 text-sm font-black">
+                Reembolso e transferência opcionais
+              </p>
             </div>
           </div>
+
+          <div className="mt-6 grid gap-5 lg:grid-cols-2">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <h4 className="text-base font-black text-slate-950">
+                Classificação e meia-entrada
+              </h4>
+
+              <div className="mt-5 grid gap-4">
+                <Field
+                  label="Classificação indicativa"
+                  value={ageRating}
+                  onChange={setAgeRating}
+                  placeholder="Ex: 18 anos"
+                />
+
+                <TextArea
+                  label="Política de meia-entrada"
+                  value={halfEntryPolicy}
+                  onChange={setHalfEntryPolicy}
+                  placeholder="Ex: estudantes, idosos, PCD, professores..."
+                />
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <h4 className="text-base font-black text-slate-950">
+                Reembolso
+              </h4>
+
+              <label className="mt-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={refundEnabled}
+                  onChange={(event) => setRefundEnabled(event.target.checked)}
+                  className="h-5 w-5 rounded border-slate-300"
+                />
+                Permitir reembolso neste evento
+              </label>
+
+              {refundEnabled ? (
+                <div className="mt-4">
+                  <TextArea
+                    label="Política de reembolso"
+                    value={refundPolicy}
+                    onChange={setRefundPolicy}
+                    placeholder="Descreva prazo, condições e exceções."
+                  />
+                </div>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold leading-6 text-slate-500">
+                  Reembolso específico desativado. Valem as regras gerais da plataforma.
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <h4 className="text-base font-black text-slate-950">
+                Transferência de ingresso
+              </h4>
+
+              <label className="mt-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={transferEnabled}
+                  onChange={(event) => setTransferEnabled(event.target.checked)}
+                  className="h-5 w-5 rounded border-slate-300"
+                />
+                Permitir transferência neste evento
+              </label>
+
+              {transferEnabled ? (
+                <div className="mt-4">
+                  <TextArea
+                    label="Política de transferência"
+                    value={transferPolicy}
+                    onChange={setTransferPolicy}
+                    placeholder="Descreva prazo, limite e regras de transferência."
+                  />
+                </div>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold leading-6 text-slate-500">
+                  Transferência específica desativada. O evento segue o padrão da plataforma.
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <h4 className="text-base font-black text-slate-950">
+                Entrada e documentos
+              </h4>
+
+              <div className="mt-5 grid gap-4">
+                <TextArea
+                  label="Regras de entrada"
+                  value={entryRules}
+                  onChange={setEntryRules}
+                  placeholder="Ex: horário de abertura, portões, revista..."
+                />
+
+                <TextArea
+                  label="Documentos obrigatórios"
+                  value={documentRules}
+                  onChange={setDocumentRules}
+                  placeholder="Ex: documento com foto, comprovante de meia..."
+                />
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 lg:col-span-2">
+              <h4 className="text-base font-black text-slate-950">
+                Termos e observações gerais
+              </h4>
+
+              <div className="mt-5">
+                <TextArea
+                  label="Termos e observações"
+                  value={termsNotes}
+                  onChange={setTermsNotes}
+                  placeholder="Avisos finais que precisam aparecer para o comprador."
+                />
+              </div>
+            </div>
+          </div>
+</div>
         </div>
       </StepShell>
     );
@@ -2085,38 +2335,232 @@ export default function NewEventPage() {
     );
   }
 
-  function renderLocationStep() {
+    function renderLocationStep() {
     return (
-      <StepShell eyebrow="Etapa 8" title="Local e acesso" description="Endereço, CEP, mapa e instruções.">
-        <div className="grid gap-5 md:grid-cols-2">
-          <Select label="Modo do evento" value={mode} onChange={setMode} options={[{ label: "Presencial", value: "PRESENTIAL" }, { label: "Online", value: "ONLINE" }, { label: "Híbrido", value: "HYBRID" }]} />
-          <Field label={isOnline ? "Nome ou canal do evento" : "Nome do local"} value={venueName} onChange={setVenueName} required error={submitAttempted && !venueName.trim()} />
+      <StepShell
+        eyebrow="Etapa 8"
+        title="Local e acesso"
+        description="Endereço, referência, mapa e instruções para o comprador chegar ao evento."
+      >
+        <div className="grid gap-6">
+          <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
+                  Tipo de acesso
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-slate-950">
+                  Como o público vai acessar o evento?
+                </h3>
+                <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+                  Para eventos presenciais, CEP, nome do local, referência e link
+                  do mapa são obrigatórios. Para evento online, o endereço físico
+                  não é necessário.
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-950 px-4 py-3 text-white">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                  Modo atual
+                </p>
+                <p className="mt-1 text-sm font-black">
+                  {isOnline ? "Online" : mode === "HYBRID" ? "Híbrido" : "Presencial"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-5 md:grid-cols-2">
+              <Select
+                label="Modo do evento"
+                value={mode}
+                onChange={setMode}
+                options={[
+                  { label: "Presencial", value: "PRESENTIAL" },
+                  { label: "Online", value: "ONLINE" },
+                  { label: "Híbrido", value: "HYBRID" },
+                ]}
+              />
+
+              <Field
+                label={isOnline ? "Nome ou canal do evento" : "Nome do local"}
+                value={venueName}
+                onChange={setVenueName}
+                required
+                error={submitAttempted && !venueName.trim()}
+                placeholder={
+                  isOnline
+                    ? "Ex: Transmissão online, Zoom, YouTube..."
+                    : "Ex: Red Eventos"
+                }
+              />
+            </div>
+          </div>
+
           {!isOnline ? (
-            <>
-              <Field label="CEP" value={zipCode} onChange={cepChange} onlyNumbers required error={submitAttempted && !zipCode.trim()} />
-              <Field label="Endereço" value={addressLine1} onChange={setAddressLine1} />
-              <Field label="Complemento" value={addressLine2} onChange={setAddressLine2} />
-              <Field label="Bairro" value={neighborhood} onChange={setNeighborhood} />
-              <Field label="Cidade" value={city} onChange={setCity} />
-              <Field label="Estado" value={stateName} onChange={setStateName} />
-              <Field label="Referência" value={reference} onChange={setReference} required error={submitAttempted && !reference.trim()} />
-              <Field label="URL do mapa" value={mapUrl} onChange={mapUrlChange} required error={submitAttempted && !isMapUrl(mapUrl)} helper={submitAttempted && !isMapUrl(mapUrl) ? "Informe um link válido de mapa." : "Google Maps, Waze ou OpenStreetMap."} />
-              <Field label="Latitude" value={latitude} onChange={setLatitude} />
-              <Field label="Longitude" value={longitude} onChange={setLongitude} />
-            </>
+            <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
+                Endereço físico
+              </p>
+              <h3 className="mt-2 text-2xl font-black text-slate-950">
+                Dados do local
+              </h3>
+
+              <div className="mt-6 grid gap-5 md:grid-cols-2">
+                <Field
+                  label="CEP"
+                  value={zipCode}
+                  onChange={cepChange}
+                  onlyNumbers
+                  required
+                  error={submitAttempted && !zipCode.trim()}
+                  helper="Digite 8 números. O endereço será preenchido automaticamente."
+                />
+
+                <Field
+                  label="Endereço"
+                  value={addressLine1}
+                  onChange={setAddressLine1}
+                  placeholder="Rua, avenida..."
+                />
+
+                <Field
+                  label="Número / complemento"
+                  value={addressLine2}
+                  onChange={setAddressLine2}
+                  placeholder="Ex: nº 500, Portão B, Salão principal..."
+                />
+
+                <Field
+                  label="Bairro"
+                  value={neighborhood}
+                  onChange={setNeighborhood}
+                />
+
+                <Field label="Cidade" value={city} onChange={setCity} />
+
+                <Field
+                  label="Estado"
+                  value={stateName}
+                  onChange={setStateName}
+                  placeholder="Ex: SP"
+                />
+
+                <div className="md:col-span-2">
+                  <Field
+                    label="Referência"
+                    value={reference}
+                    onChange={setReference}
+                    required
+                    error={submitAttempted && !reference.trim()}
+                    placeholder="Ex: Entrada pela portaria principal, ao lado do estacionamento..."
+                  />
+                </div>
+              </div>
+            </div>
           ) : (
-            <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 md:col-span-2">
-              <p className="text-lg font-black text-emerald-950">Evento online</p>
-              <p className="mt-2 text-sm font-semibold leading-6 text-emerald-800">Para evento online, endereço físico e URL do mapa não são obrigatórios.</p>
+            <div className="rounded-[2rem] border border-emerald-200 bg-emerald-50 p-6">
+              <p className="text-xl font-black text-emerald-950">
+                Evento online
+              </p>
+              <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-emerald-800">
+                Para evento online, CEP, endereço, referência física, URL do mapa
+                e coordenadas não são obrigatórios. Use o campo de instruções para
+                colocar link, plataforma, senha ou regras de acesso.
+              </p>
             </div>
           )}
-          <div className="md:col-span-2">
-            <TextArea label={isOnline ? "Instruções de acesso online" : "Instruções de acesso"} value={instructions} onChange={setInstructions} />
+
+          {!isOnline ? (
+            <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
+                    Mapa e coordenadas
+                  </p>
+                  <h3 className="mt-2 text-2xl font-black text-slate-950">
+                    Link do mapa
+                  </h3>
+                  <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+                    Cole um link do Google Maps, Waze ou OpenStreetMap. Links
+                    completos podem preencher latitude e longitude automaticamente.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-slate-100 px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                    Coordenadas
+                  </p>
+                  <p className="mt-1 text-sm font-black text-slate-950">
+                    {latitude && longitude ? "Detectadas" : "Não detectadas"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-5 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <Field
+                    label="URL do mapa"
+                    value={mapUrl}
+                    onChange={mapUrlChange}
+                    required
+                    error={submitAttempted && !isMapUrl(mapUrl)}
+                    placeholder="Cole aqui o link completo do mapa"
+                    helper={
+                      submitAttempted && !isMapUrl(mapUrl)
+                        ? "Informe um link válido de mapa."
+                        : "Dica: se usar link encurtado, abra ele primeiro e copie a URL completa da barra do navegador."
+                    }
+                  />
+                </div>
+
+                <Field
+                  label="Latitude"
+                  value={latitude}
+                  onChange={setLatitude}
+                  placeholder="-22.7047"
+                  helper="Preenche automaticamente quando o link contém coordenadas."
+                />
+
+                <Field
+                  label="Longitude"
+                  value={longitude}
+                  onChange={setLongitude}
+                  placeholder="-47.0021"
+                  helper="Preenche automaticamente quando o link contém coordenadas."
+                />
+              </div>
+            </div>
+          ) : null}
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
+              Instruções finais
+            </p>
+            <h3 className="mt-2 text-2xl font-black text-slate-950">
+              Orientações para acesso
+            </h3>
+
+          <div className="mt-6">
+              <TextArea
+               label={
+                  isOnline
+                  ? "Instruções de acesso online"
+                  : "Instruções de acesso ao local"
+                }
+                value={instructions}
+                onChange={setInstructions}
+                placeholder={
+                  isOnline
+                    ? "Ex: link da transmissão, senha, horário de liberação..."
+                    : "Ex: estacionamento, portões, revista, acessibilidade, entrada VIP..."
+                }
+              />
+            </div>
           </div>
         </div>
       </StepShell>
-    );
-  }
+   );
+  } 
 
   function renderReviewStep() {
     const image = normalizeUrl(bannerImageUrl || coverImageUrl || thumbnailUrl || mobileBannerUrl);
