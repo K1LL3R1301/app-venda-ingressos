@@ -72,6 +72,10 @@ type SectorItem = {
   color: string;
   gateName: string;
   description: string;
+  chairRows: string;
+  chairsPerRow: string;
+  tableCount: string;
+  seatsPerTable: string;
 };
 
 type MapPoint = { x: number; y: number };
@@ -138,8 +142,8 @@ type StepId =
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
 
-const MAP_W = 1200;
-const MAP_H = 850;
+const MAP_W = 1280;
+const MAP_H = 900;
 const MAP_MIN = 54;
 const TIMEZONE = "America/Sao_Paulo";
 
@@ -326,6 +330,16 @@ function toNumber(value: string) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function positiveInt(value: string | undefined, fallback = 1) {
+  const parsed = Number.parseInt(value || "", 10);
+
+  if (Number.isNaN(parsed) || parsed < 1) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
 function moneyNumber(value: string) {
   const parsed = Number(value.replace(/\./g, "").replace(",", "."));
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -349,16 +363,9 @@ function isoOrUndefined(value: string) {
   return value ? new Date(value).toISOString() : undefined;
 }
 
-
 function getApiOrigin() {
   try {
-    const url = new URL(API_BASE_URL);
-
-    if (url.hostname === "localhost") {
-      url.hostname = "127.0.0.1";
-    }
-
-    return url.origin;
+    return new URL(API_BASE_URL).origin;
   } catch {
     return "";
   }
@@ -366,46 +373,14 @@ function getApiOrigin() {
 
 function normalizeUrl(value: string | undefined) {
   if (!value) return undefined;
-
   const trimmed = value.trim();
-
   if (!trimmed) return undefined;
-
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-    try {
-      const url = new URL(trimmed);
-
-      if (url.hostname === "localhost") {
-        url.hostname = "127.0.0.1";
-      }
-
-      return url.toString();
-    } catch {
-      return undefined;
-    }
-  }
-
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
   const origin = getApiOrigin();
-
-  if (!origin) return undefined;
-
-  if (trimmed.startsWith("/")) {
-    return `${origin}${trimmed}`;
-  }
-
-  if (trimmed.startsWith("uploads/")) {
-    return `${origin}/${trimmed}`;
-  }
-
-  return undefined;
-}
-
-function urlOrUndefined(value: string | undefined) {
-  const normalized = normalizeUrl(value);
-
-  if (!normalized) return undefined;
-
-  return isHttpUrl(normalized) ? normalized : undefined;
+  if (!origin) return trimmed;
+  if (trimmed.startsWith("/")) return `${origin}${trimmed}`;
+  if (trimmed.startsWith("uploads/")) return `${origin}/${trimmed}`;
+  return trimmed;
 }
 
 function isHttpUrl(value: string | undefined) {
@@ -418,34 +393,9 @@ function isHttpUrl(value: string | undefined) {
   }
 }
 
-function normalizeExternalUrl(value: string | undefined) {
-  if (!value) return "";
-
-  const trimmed = value.trim();
-
-  if (!trimmed) return "";
-
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed;
-  }
-
-  if (
-    /^(www\.|google\.|maps\.app\.goo\.gl|goo\.gl|waze\.com|openstreetmap\.org|bing\.com)/i.test(
-      trimmed,
-    )
-  ) {
-    return `https://${trimmed}`;
-  }
-
-  return trimmed;
-}
-
 function isMapUrl(value: string) {
-  const normalized = normalizeExternalUrl(value);
-
   try {
-    const host = new URL(normalized).hostname.toLowerCase();
-
+    const host = new URL(value).hostname.toLowerCase();
     return (
       host.includes("google.") ||
       host.includes("maps.app.goo.gl") ||
@@ -514,16 +464,31 @@ function newSession(index = 0): SessionItem {
 function newSector(category: Category, preset: OccupancyPreset, index = 0, forceKind?: SectorKind): SectorItem {
   const kind = forceKind || preset.defaultKind;
   const name = index === 0 ? KIND_LABEL[kind] : `${KIND_LABEL[kind]} ${index + 1}`;
+  const chairRows = kind === "NUMBERED_SEATS" ? "10" : "";
+  const chairsPerRow = kind === "NUMBERED_SEATS" ? "10" : "";
+  const tableCount = kind === "TABLES" ? "20" : "";
+  const seatsPerTable = kind === "TABLES" ? "4" : "";
+  const capacity =
+    kind === "NUMBERED_SEATS"
+      ? String(positiveInt(chairRows) * positiveInt(chairsPerRow))
+      : kind === "TABLES"
+        ? String(positiveInt(tableCount) * positiveInt(seatsPerTable))
+        : "";
+
   return {
     localId: id("sector"),
     name,
     kind,
     type: KIND_TYPE[kind],
     mode: KIND_MODE[kind],
-    capacity: "",
+    capacity,
     color: COLORS[index % COLORS.length],
     gateName: "",
     description: "",
+    chairRows,
+    chairsPerRow,
+    tableCount,
+    seatsPerTable,
   };
 }
 
@@ -806,6 +771,124 @@ function MediaField({
   );
 }
 
+
+function GalleryUploadField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const items = parseGallery(value);
+
+  function isVideo(url: string) {
+    return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
+  }
+
+  function removeItem(itemToRemove: string) {
+    onChange(items.filter((item) => item !== itemToRemove).join("\n"));
+  }
+
+  async function uploadOne(file: File) {
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+      throw new Error("A galeria aceita apenas imagem ou vídeo.");
+    }
+
+    const token = localStorage.getItem("token");
+    if (!token || token === "undefined") {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.location.href = "/login";
+      throw new Error("Sua sessão expirou. Faça login novamente.");
+    }
+
+    const data = new FormData();
+    data.append("file", file);
+    data.append("kind", "gallery");
+
+    const response = await fetch(`${API_BASE_URL}/uploads/event-image`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: data,
+    });
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(typeof result?.message === "string" ? result.message : "Erro ao enviar arquivo da galeria.");
+    }
+
+    const uploaded = result?.url || result?.publicUrl || result?.path || result?.fileUrl;
+    if (!uploaded) throw new Error("Upload concluído, mas a API não retornou URL.");
+
+    return normalizeUrl(uploaded) || uploaded;
+  }
+
+  async function uploadMany(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+
+    try {
+      const uploadedUrls: string[] = [];
+      for (const file of Array.from(files)) {
+        const uploadedUrl = await uploadOne(file);
+        if (uploadedUrl) uploadedUrls.push(uploadedUrl);
+      }
+      onChange([...items, ...uploadedUrls].join("\n"));
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : "Erro ao enviar galeria.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-[1.75rem] border border-slate-200 bg-white p-5">
+      <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+        <div>
+          <label className="block text-sm font-black text-slate-900">Galeria</label>
+          <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+            Escolha vários arquivos de imagem ou vídeo. Cada arquivo entra como um item da galeria.
+          </p>
+        </div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+          {items.length} arquivo(s)
+        </span>
+      </div>
+
+      <input
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        disabled={uploading}
+        onChange={(event) => void uploadMany(event.target.files)}
+        className="mt-4 block w-full cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 text-sm file:mr-4 file:h-[48px] file:border-0 file:bg-slate-950 file:px-5 file:text-sm file:font-black file:text-white hover:file:bg-sky-700"
+      />
+
+      {uploading ? <p className="mt-3 text-xs font-black text-sky-600">Enviando arquivos da galeria...</p> : null}
+
+      <textarea value={value} onChange={(event) => onChange(event.target.value)} placeholder="Ou cole uma URL por linha." className={`${textareaClass()} mt-4`} />
+
+      {items.length > 0 ? (
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          {items.map((item) => {
+            const url = normalizeUrl(item) || item;
+            return (
+              <div key={item} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                {isVideo(url) ? <video src={url} className="h-28 w-full object-cover" controls /> : <img src={url} alt="Arquivo da galeria" className="h-28 w-full object-cover" />}
+                <button type="button" onClick={() => removeItem(item)} className="w-full bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50">
+                  Remover
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function NewEventPage() {
   const [organizers, setOrganizers] = useState<Organizer[]>([]);
   const [loadingOrganizers, setLoadingOrganizers] = useState(true);
@@ -868,6 +951,7 @@ export default function NewEventPage() {
   const [stateName, setStateName] = useState("");
   const [reference, setReference] = useState("");
   const [mapUrl, setMapUrl] = useState("");
+  const [resolvingMapUrl, setResolvingMapUrl] = useState(false);
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -995,7 +1079,7 @@ export default function NewEventPage() {
     sectors: !sectorError,
     map: mapObjects.length > 0,
     tickets: tickets.some((item) => item.name.trim() && item.price.trim() && toNumber(item.quantity) > 0) && !ticketError,
-    location: isOnline ? Boolean(venueName.trim()) : Boolean(venueName.trim() && zipCode.trim() && reference.trim() && isMapUrl(mapUrl)),
+    location: isOnline ? Boolean(venueName.trim()) : Boolean(venueName.trim() && zipCode.trim() && reference.trim() && isMapUrl(mapUrl) && latitude.trim() && longitude.trim()),
     review: false,
   };
 
@@ -1125,20 +1209,75 @@ export default function NewEventPage() {
   }
 
   function updateSector(localId: string, patch: Partial<SectorItem>) {
+    const shouldResetMap =
+      patch.kind !== undefined ||
+      patch.chairRows !== undefined ||
+      patch.chairsPerRow !== undefined ||
+      patch.tableCount !== undefined ||
+      patch.seatsPerTable !== undefined;
+
     setSectors((current) =>
       current.map((item) => {
         if (item.localId !== localId) return item;
-        const next = { ...item, ...patch };
+
+        const next: SectorItem = { ...item, ...patch };
+
         if (patch.kind) {
           next.type = KIND_TYPE[patch.kind];
           next.mode = KIND_MODE[patch.kind];
+
+          if (patch.kind === "NUMBERED_SEATS") {
+            next.chairRows = next.chairRows || "10";
+            next.chairsPerRow = next.chairsPerRow || "10";
+            next.tableCount = "";
+            next.seatsPerTable = "";
+          }
+
+          if (patch.kind === "TABLES") {
+            next.tableCount = next.tableCount || "20";
+            next.seatsPerTable = next.seatsPerTable || "4";
+            next.chairRows = "";
+            next.chairsPerRow = "";
+          }
+
+          if (patch.kind === "PLATEIA" || patch.kind === "OPEN_ADMISSION") {
+            next.chairRows = "";
+            next.chairsPerRow = "";
+            next.tableCount = "";
+            next.seatsPerTable = "";
+          }
         }
+
         if (patch.capacity !== undefined) next.capacity = onlyDigits(patch.capacity);
+        if (patch.chairRows !== undefined) next.chairRows = onlyDigits(patch.chairRows);
+        if (patch.chairsPerRow !== undefined) next.chairsPerRow = onlyDigits(patch.chairsPerRow);
+        if (patch.tableCount !== undefined) next.tableCount = onlyDigits(patch.tableCount);
+        if (patch.seatsPerTable !== undefined) next.seatsPerTable = onlyDigits(patch.seatsPerTable);
+
+        if (next.kind === "NUMBERED_SEATS") {
+          next.capacity = String(positiveInt(next.chairRows) * positiveInt(next.chairsPerRow));
+        }
+
+        if (next.kind === "TABLES") {
+          next.capacity = String(positiveInt(next.tableCount) * positiveInt(next.seatsPerTable));
+        }
+
         return next;
       }),
     );
+
+    if (shouldResetMap) {
+      setMapObjects([]);
+      setSelectedMapObjectId("");
+      return;
+    }
+
     setMapObjects((current) =>
-      current.map((item) => (item.venueSectorLocalId === localId ? { ...item, label: patch.name || item.label, capacity: patch.capacity || item.capacity } : item)),
+      current.map((item) =>
+        item.venueSectorLocalId === localId
+          ? { ...item, label: patch.name || item.label, capacity: patch.capacity || item.capacity }
+          : item,
+      ),
     );
   }
 
@@ -1208,38 +1347,58 @@ export default function NewEventPage() {
     setTickets((current) =>
       current.map((item) => {
         if (item.localId !== localId) return item;
-        let next = { ...item, ...patch };
+
+        let next: TicketItem = { ...item, ...patch };
+
         if (patch.price !== undefined) next.price = onlyMoney(patch.price);
         if (patch.quantity !== undefined) next.quantity = onlyDigits(patch.quantity);
         if (patch.maxPerOrder !== undefined) next.maxPerOrder = onlyDigits(patch.maxPerOrder);
-        if (patch.ticketKind) next.name = TICKET_KIND_OPTIONS.find((option) => option.value === patch.ticketKind)?.label || next.name;
+
+        if (patch.ticketKind) {
+          next.name = TICKET_KIND_OPTIONS.find((option) => option.value === patch.ticketKind)?.label || next.name;
+        }
+
         if (patch.venueSectorLocalId !== undefined) {
           const sector = sectors.find((sectorItem) => sectorItem.localId === patch.venueSectorLocalId);
           next.occupancyMode = sector?.mode || preset.mode;
         }
-        if (patch.lotLabel) {
-          const autoStart = previousLotEnd(item, patch.lotLabel);
-          if (autoStart) next.salesStartAt = autoStart;
+
+        const nextSession = sessions.find((sessionItem) => sessionItem.localId === next.eventSessionLocalId);
+
+        if ((patch.eventSessionLocalId !== undefined || patch.salesEndAt !== undefined) && nextSession?.startsAt) {
+          next.salesEndAt = mergeDateAndTime(nextSession.startsAt, patch.salesEndAt || next.salesEndAt || nextSession.endsAt);
         }
-        if (patch.eventSessionLocalId !== undefined) {
-          const session = sessions.find((sessionItem) => sessionItem.localId === patch.eventSessionLocalId);
-          if (session?.startsAt) next.salesEndAt = mergeDateAndTime(session.startsAt, next.salesEndAt || session.endsAt);
-        }
-        if (patch.salesEndAt !== undefined) {
-          const session = sessions.find((sessionItem) => sessionItem.localId === item.eventSessionLocalId);
-          if (session?.startsAt) next.salesEndAt = mergeDateAndTime(session.startsAt, patch.salesEndAt);
-        }
-        if (next.lotLabel !== "1º Lote") {
-          next.isHidden = current.some((other) => {
-            return (
+
+        if (patch.lotLabel || patch.venueSectorLocalId !== undefined || patch.eventSessionLocalId !== undefined || patch.ticketKind) {
+          const previousNumber = lotNumber(next.lotLabel) - 1;
+
+          if (previousNumber >= 1) {
+            const previousLot = current.find((other) =>
               other.localId !== next.localId &&
               other.venueSectorLocalId === next.venueSectorLocalId &&
               other.eventSessionLocalId === next.eventSessionLocalId &&
               other.ticketKind === next.ticketKind &&
-              other.lotLabel === "1º Lote"
+              lotNumber(other.lotLabel) === previousNumber,
             );
-          });
+
+            if (previousLot?.salesEndAt) {
+              next.salesStartAt = previousLot.salesEndAt;
+            }
+          }
         }
+
+        if (lotNumber(next.lotLabel) > 1) {
+          const firstLotExists = current.some((other) =>
+            other.localId !== next.localId &&
+            other.venueSectorLocalId === next.venueSectorLocalId &&
+            other.eventSessionLocalId === next.eventSessionLocalId &&
+            other.ticketKind === next.ticketKind &&
+            other.lotLabel === "1º Lote",
+          );
+
+          if (firstLotExists) next.isHidden = true;
+        }
+
         return next;
       }),
     );
@@ -1286,6 +1445,46 @@ export default function NewEventPage() {
     return objectPoints(object).map((point) => `${point.x}% ${point.y}%`).join(", ");
   }
 
+  function smoothSvgPath(object: MapObject) {
+    const points = objectPoints(object).map((point) => ({
+      x: (point.x / 100) * object.width,
+      y: (point.y / 100) * object.height,
+    }));
+
+    if (points.length < 3) return svgPoints(object);
+
+    const cornerSoftness = 0.18;
+    const commands: string[] = [];
+
+    points.forEach((point, index) => {
+      const previous = points[(index - 1 + points.length) % points.length];
+      const next = points[(index + 1) % points.length];
+      const start = {
+        x: point.x + (previous.x - point.x) * cornerSoftness,
+        y: point.y + (previous.y - point.y) * cornerSoftness,
+      };
+      const end = {
+        x: point.x + (next.x - point.x) * cornerSoftness,
+        y: point.y + (next.y - point.y) * cornerSoftness,
+      };
+
+      if (index === 0) {
+        commands.push(`M ${start.x} ${start.y}`);
+      } else {
+        commands.push(`L ${start.x} ${start.y}`);
+      }
+
+      commands.push(`Q ${point.x} ${point.y} ${end.x} ${end.y}`);
+    });
+
+    commands.push("Z");
+    return commands.join(" ");
+  }
+
+  function shouldSmoothObject(object: MapObject) {
+    return objectShape(object) === "FREEFORM" && object.metadata?.smoothPolygon !== false;
+  }
+
   function radius(object: MapObject) {
     const shape = objectShape(object);
     if (shape === "CIRCLE" || shape === "PILL") return "9999px";
@@ -1294,6 +1493,34 @@ export default function NewEventPage() {
   }
 
   function generateMap() {
+    function sectorChairRows(sector: SectorItem) {
+      return positiveInt(sector.chairRows || "10", 1);
+    }
+
+    function sectorChairsPerRow(sector: SectorItem) {
+      return positiveInt(sector.chairsPerRow || "10", 1);
+    }
+
+    function sectorTableCount(sector: SectorItem) {
+      return positiveInt(sector.tableCount || tableCount || "20", 1);
+    }
+
+    function sectorSeatsPerTableValue(sector: SectorItem) {
+      return positiveInt(sector.seatsPerTable || seatsPerTable || "4", 1);
+    }
+
+    function sectorMapCapacity(sector: SectorItem) {
+      if (sector.kind === "NUMBERED_SEATS") {
+        return sectorChairRows(sector) * sectorChairsPerRow(sector);
+      }
+
+      if (sector.kind === "TABLES") {
+        return sectorTableCount(sector) * sectorSeatsPerTableValue(sector);
+      }
+
+      return positiveInt(sector.capacity, 1);
+    }
+
     const stage: MapObject = {
       localId: id("stage"),
       venueSectorLocalId: "",
@@ -1301,7 +1528,7 @@ export default function NewEventPage() {
       label: "PALCO",
       type: "STAGE",
       capacity: "",
-      x: 420,
+      x: Math.round(MAP_W / 2 - 180),
       y: 40,
       width: 360,
       height: 90,
@@ -1318,17 +1545,27 @@ export default function NewEventPage() {
       { x: 430, y: 410, width: 360, height: 210 },
       { x: 850, y: 420, width: 250, height: 280 },
       { x: 410, y: 690, width: 420, height: 120 },
+      { x: 80, y: 710, width: 260, height: 100 },
+      { x: 880, y: 710, width: 260, height: 100 },
     ];
 
     const objects = sectors.map<MapObject>((sector, index) => {
       const template = templates[index % templates.length];
+      const chairRows = sector.kind === "NUMBERED_SEATS" ? sectorChairRows(sector) : undefined;
+      const chairsPerRow = sector.kind === "NUMBERED_SEATS" ? sectorChairsPerRow(sector) : undefined;
+      const chairCount = chairRows && chairsPerRow ? chairRows * chairsPerRow : undefined;
+      const sectorTables = sector.kind === "TABLES" ? sectorTableCount(sector) : undefined;
+      const sectorSeatsPerTable = sector.kind === "TABLES" ? sectorSeatsPerTableValue(sector) : undefined;
+      const totalTableSeats = sectorTables && sectorSeatsPerTable ? sectorTables * sectorSeatsPerTable : undefined;
+      const capacity = sectorMapCapacity(sector);
+
       return {
         localId: id("area"),
         venueSectorLocalId: sector.localId,
         code: `S${index + 1}`,
         label: sector.name || `Setor ${index + 1}`,
         type: sector.kind === "TABLES" ? "TABLE" : "AREA",
-        capacity: sector.capacity,
+        capacity: String(capacity),
         x: template.x,
         y: template.y,
         width: template.width,
@@ -1337,22 +1574,25 @@ export default function NewEventPage() {
         status: "AVAILABLE",
         metadata: {
           sectorKind: sector.kind,
+          sectorName: sector.name,
           sectorColor: sector.color,
+          occupancyMode: sector.mode,
+          capacity,
           shape: "ROUNDED",
-          polygonPoints: [
-            { x: 0, y: 12 },
-            { x: 100, y: 0 },
-            { x: 100, y: 88 },
-            { x: 0, y: 100 },
-          ],
+          polygonPoints: defaultPolygon(),
+          chairRows,
+          chairsPerRow,
+          chairCount,
           tableSaleMode: sector.kind === "TABLES" ? tableSaleMode : undefined,
-          seatsPerTable: sector.kind === "TABLES" ? Math.max(1, Number.parseInt(seatsPerTable, 10) || 1) : undefined,
-          tableCount: sector.kind === "TABLES" ? Math.max(1, Number.parseInt(tableCount, 10) || 1) : undefined,
+          tableCount: sectorTables,
+          seatsPerTable: sectorSeatsPerTable,
+          totalTableSeats,
         },
       };
     });
 
     setSelectedMapObjectId("");
+    setInteraction(null);
     setMapObjects([stage, ...objects]);
   }
 
@@ -1480,24 +1720,158 @@ export default function NewEventPage() {
     setMapObjects((current) =>
       current.map((object) => {
         if (object.localId !== objectId) return object;
+
         if (shape === "CIRCLE") {
           const size = Math.min(object.width, object.height);
           return { ...object, width: size, height: size, metadata: { ...object.metadata, shape } };
         }
+
         if (shape === "FREEFORM") {
-          return { ...object, metadata: { ...object.metadata, shape, polygonPoints: objectPoints(object) } };
+          return {
+            ...object,
+            metadata: {
+              ...object.metadata,
+              shape,
+              smoothPolygon: true,
+              polygonPoints: objectPoints(object),
+            },
+          };
         }
+
         return { ...object, metadata: { ...object.metadata, shape } };
       }),
     );
   }
 
+  function pointDistanceToSegment(point: MapPoint, start: MapPoint, end: MapPoint) {
+    const segmentX = end.x - start.x;
+    const segmentY = end.y - start.y;
+    const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+
+    if (segmentLengthSquared === 0) {
+      return Math.hypot(point.x - start.x, point.y - start.y);
+    }
+
+    const rawT =
+      ((point.x - start.x) * segmentX + (point.y - start.y) * segmentY) /
+      segmentLengthSquared;
+    const t = Math.max(0, Math.min(1, rawT));
+    const projectionX = start.x + t * segmentX;
+    const projectionY = start.y + t * segmentY;
+
+    return Math.hypot(point.x - projectionX, point.y - projectionY);
+  }
+
+  function insertPointNear(points: MapPoint[], point: MapPoint) {
+    if (points.length < 2) return [...points, point];
+
+    let insertAfterIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    points.forEach((currentPoint, index) => {
+      const nextPoint = points[(index + 1) % points.length];
+      const distance = pointDistanceToSegment(point, currentPoint, nextPoint);
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        insertAfterIndex = index;
+      }
+    });
+
+    return [
+      ...points.slice(0, insertAfterIndex + 1),
+      point,
+      ...points.slice(insertAfterIndex + 1),
+    ];
+  }
+
   function addPoint() {
     if (!selectedMapObjectId) return;
+
+    setMapObjects((current) =>
+      current.map((object) => {
+        if (object.localId !== selectedMapObjectId) return object;
+
+        const points = objectPoints(object);
+        let insertAfterIndex = 0;
+        let biggestLength = -1;
+
+        points.forEach((point, index) => {
+          const next = points[(index + 1) % points.length];
+          const length = Math.hypot(next.x - point.x, next.y - point.y);
+
+          if (length > biggestLength) {
+            biggestLength = length;
+            insertAfterIndex = index;
+          }
+        });
+
+        const start = points[insertAfterIndex];
+        const endPoint = points[(insertAfterIndex + 1) % points.length];
+        const newPoint = {
+          x: Math.round(((start.x + endPoint.x) / 2) * 10) / 10,
+          y: Math.round(((start.y + endPoint.y) / 2) * 10) / 10,
+        };
+
+        return {
+          ...object,
+          metadata: {
+            ...object.metadata,
+            shape: "FREEFORM",
+            smoothPolygon: true,
+            polygonPoints: [
+              ...points.slice(0, insertAfterIndex + 1),
+              newPoint,
+              ...points.slice(insertAfterIndex + 1),
+            ],
+          },
+        };
+      }),
+    );
+  }
+
+  function addPointAtPosition(object: MapObject, clientX: number, clientY: number) {
+    const element = document.querySelector(`[data-map-object-id="${object.localId}"]`);
+
+    if (!(element instanceof HTMLElement)) return;
+
+    const rect = element.getBoundingClientRect();
+    const x = Math.min(Math.max(((clientX - rect.left) / rect.width) * 100, 0), 100);
+    const y = Math.min(Math.max(((clientY - rect.top) / rect.height) * 100, 0), 100);
+    const nextPoint = { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+
+    setSelectedMapObjectId(object.localId);
+    setMapObjects((current) =>
+      current.map((item) =>
+        item.localId === object.localId
+          ? {
+              ...item,
+              metadata: {
+                ...item.metadata,
+                shape: "FREEFORM",
+                smoothPolygon: true,
+                polygonPoints: insertPointNear(objectPoints(item), nextPoint),
+              },
+            }
+          : item,
+      ),
+    );
+  }
+
+  function toggleSmoothPolygon() {
+    if (!selectedMapObjectId) return;
+
     setMapObjects((current) =>
       current.map((object) =>
         object.localId === selectedMapObjectId
-          ? { ...object, metadata: { ...object.metadata, shape: "FREEFORM", polygonPoints: [...objectPoints(object), { x: 50, y: 50 }] } }
+          ? {
+              ...object,
+              metadata: {
+                ...object.metadata,
+                shape: "FREEFORM",
+                smoothPolygon: !shouldSmoothObject(object),
+              },
+            }
           : object,
       ),
     );
@@ -1521,7 +1895,11 @@ export default function NewEventPage() {
   function resetPolygon() {
     if (!selectedMapObjectId) return;
     setMapObjects((current) =>
-      current.map((object) => (object.localId === selectedMapObjectId ? { ...object, metadata: { ...object.metadata, shape: "FREEFORM", polygonPoints: defaultPolygon() } } : object)),
+      current.map((object) =>
+        object.localId === selectedMapObjectId
+          ? { ...object, metadata: { ...object.metadata, shape: "FREEFORM", smoothPolygon: true, polygonPoints: defaultPolygon() } }
+          : object,
+      ),
     );
   }
 
@@ -1544,70 +1922,107 @@ export default function NewEventPage() {
       .catch(() => alert("Não foi possível buscar o CEP agora."));
   }
 
-function extractCoordinatesFromMapUrl(value: string) {
-  const decodedValue = decodeURIComponent(value);
-
-  const patterns = [
-    /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
-    /[?&](?:q|query|center|ll|destination)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
-    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
-    /\/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:\?|\/|$)/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = decodedValue.match(pattern);
-
-    if (match?.[1] && match?.[2]) {
-      return {
-        latitude: match[1],
-        longitude: match[2],
-      };
-    }
-  }
-
-  return null;
-}
-
   function extractCoordinatesFromMapUrl(value: string) {
-  const decodedValue = decodeURIComponent(normalizeExternalUrl(value));
+    const decoded = decodeURIComponent(normalizeExternalUrl(value));
+    const patterns = [
+      /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+      /[?&](?:q|query|center|ll|destination)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+      /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+      /\/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:\?|\/|$)/,
+    ];
 
-  const patterns = [
-    /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
-    /[?&](?:q|query|center|ll|destination)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
-    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
-    /\/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:\?|\/|$)/,
-  ];
+    for (const pattern of patterns) {
+      const match = decoded.match(pattern);
+      if (match?.[1] && match?.[2]) {
+        return { latitude: match[1], longitude: match[2] };
+      }
+    }
 
-  for (const pattern of patterns) {
-    const match = decodedValue.match(pattern);
+    return null;
+  }
 
-    if (match?.[1] && match?.[2]) {
-      return {
-        latitude: match[1],
-        longitude: match[2],
-      };
+  function extractPlaceNameFromMapUrl(value: string) {
+    const normalized = decodeURIComponent(normalizeExternalUrl(value));
+    const match = normalized.match(/\/maps\/place\/([^/@?]+)/);
+    if (!match?.[1]) return "";
+
+    return match[1]
+      .replace(/\+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function applyMapUrlData(value: string) {
+    const normalized = normalizeExternalUrl(value);
+    setMapUrl(normalized);
+
+    const coordinates = extractCoordinatesFromMapUrl(normalized);
+    if (coordinates) {
+      setLatitude(coordinates.latitude);
+      setLongitude(coordinates.longitude);
+    } else {
+      setLatitude("");
+      setLongitude("");
+    }
+
+    const placeName = extractPlaceNameFromMapUrl(normalized);
+    if (placeName && !venueName.trim()) {
+      setVenueName(placeName);
     }
   }
 
-  return null;
-}
-
-function mapUrlChange(value: string) {
-  const normalizedUrl = normalizeExternalUrl(value);
-
-  setMapUrl(normalizedUrl);
-
-  const coordinates = extractCoordinatesFromMapUrl(normalizedUrl);
-
-  if (coordinates) {
-    setLatitude(coordinates.latitude);
-    setLongitude(coordinates.longitude);
-    return;
+  function mapUrlChange(value: string) {
+    applyMapUrlData(value);
   }
 
-  setLatitude("");
-  setLongitude("");
-}
+  async function resolveMapUrl() {
+    const normalized = normalizeExternalUrl(mapUrl);
+
+    if (!normalized) {
+      alert("Cole primeiro o link do Google Maps.");
+      return;
+    }
+
+    setResolvingMapUrl(true);
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_BASE_URL}/maps/resolve?url=${encodeURIComponent(normalized)}`, {
+        headers: token && token !== "undefined" ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(typeof result?.message === "string" ? result.message : "Não foi possível resolver este link.");
+      }
+
+      const resolvedUrl = String(result?.resolvedUrl || result?.url || normalized);
+      applyMapUrlData(resolvedUrl);
+
+      if (result?.latitude && result?.longitude) {
+        setLatitude(String(result.latitude));
+        setLongitude(String(result.longitude));
+      }
+
+      if (result?.placeName && !venueName.trim()) {
+        setVenueName(String(result.placeName));
+      }
+
+      if (result?.address && !addressLine1.trim()) {
+        setAddressLine1(String(result.address));
+      }
+    } catch (error) {
+      console.error(error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível resolver o link encurtado. Confira se o módulo /maps/resolve foi adicionado na API.",
+      );
+    } finally {
+      setResolvingMapUrl(false);
+    }
+  }
 
   function payload() {
     return {
@@ -1645,21 +2060,19 @@ function mapUrlChange(value: string) {
         state: textOrUndefined(stateName),
         zipCode: textOrUndefined(zipCode),
         reference: textOrUndefined(reference),
-        mapUrl: textOrUndefined(normalizeExternalUrl(mapUrl)),
+        mapUrl: textOrUndefined(mapUrl),
         instructions: textOrUndefined(instructions),
         latitude: textOrUndefined(latitude),
         longitude: textOrUndefined(longitude),
       },
-     media: {
-       coverImageUrl: urlOrUndefined(coverImageUrl),
-        bannerImageUrl: urlOrUndefined(bannerImageUrl),
-        thumbnailUrl: urlOrUndefined(thumbnailUrl),
-        mobileBannerUrl: urlOrUndefined(mobileBannerUrl),
-        sectorMapImageUrl: urlOrUndefined(sectorMapImageUrl),
-        gallery: gallery
-         .map((item) => urlOrUndefined(item))
-          .filter((item): item is string => Boolean(item)),
-},
+      media: {
+        coverImageUrl: normalizeUrl(coverImageUrl),
+        bannerImageUrl: normalizeUrl(bannerImageUrl),
+        thumbnailUrl: normalizeUrl(thumbnailUrl),
+        mobileBannerUrl: normalizeUrl(mobileBannerUrl),
+        sectorMapImageUrl: normalizeUrl(sectorMapImageUrl),
+        gallery: gallery.map((item) => normalizeUrl(item)).filter(Boolean),
+      },
       policy: {
         ageRating: textOrUndefined(ageRating),
         refundPolicy: refundEnabled ? textOrUndefined(refundPolicy) : undefined,
@@ -1915,7 +2328,7 @@ function mapUrlChange(value: string) {
               <MediaField label="Imagem do mapa/setor" kind="sector-map" value={sectorMapImageUrl} onChange={setSectorMapImageUrl} />
             </div>
             <div className="mt-5">
-              <TextArea label="Galeria, uma URL por linha" value={galleryText} onChange={setGalleryText} />
+              <GalleryUploadField value={galleryText} onChange={setGalleryText} />
             </div>
           </div>
           <div className="rounded-[2rem] border border-slate-200 bg-white p-6">
@@ -1931,160 +2344,142 @@ function mapUrlChange(value: string) {
               </div>
             </div>
           </div>
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
-                Políticas do evento
-              </p>
-              <h3 className="mt-2 text-2xl font-black text-slate-950">
-                Regras, documentos e condições
-              </h3>
-              <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
-                Configure regras específicas do evento, sempre respeitando as regras
-                gerais da plataforma.
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-950 px-4 py-3 text-white">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                Controle
-              </p>
-              <p className="mt-1 text-sm font-black">
-                Reembolso e transferência opcionais
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 grid gap-5 lg:grid-cols-2">
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <h4 className="text-base font-black text-slate-950">
-                Classificação e meia-entrada
-              </h4>
-
-              <div className="mt-5 grid gap-4">
-                <Field
-                  label="Classificação indicativa"
-                  value={ageRating}
-                  onChange={setAgeRating}
-                  placeholder="Ex: 18 anos"
-                />
-
-                <TextArea
-                  label="Política de meia-entrada"
-                  value={halfEntryPolicy}
-                  onChange={setHalfEntryPolicy}
-                  placeholder="Ex: estudantes, idosos, PCD, professores..."
-                />
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <h4 className="text-base font-black text-slate-950">
-                Reembolso
-              </h4>
-
-              <label className="mt-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={refundEnabled}
-                  onChange={(event) => setRefundEnabled(event.target.checked)}
-                  className="h-5 w-5 rounded border-slate-300"
-                />
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6">
+            <h3 className="text-2xl font-black">Políticas e regras</h3>
+            <div className="mt-6 grid gap-5 md:grid-cols-2">
+              <Field label="Classificação indicativa" value={ageRating} onChange={setAgeRating} />
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black">
+                <input type="checkbox" checked={refundEnabled} onChange={(event) => setRefundEnabled(event.target.checked)} />
                 Permitir reembolso neste evento
               </label>
-
-              {refundEnabled ? (
-                <div className="mt-4">
-                  <TextArea
-                    label="Política de reembolso"
-                    value={refundPolicy}
-                    onChange={setRefundPolicy}
-                    placeholder="Descreva prazo, condições e exceções."
-                  />
-                </div>
-              ) : (
-                <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold leading-6 text-slate-500">
-                  Reembolso específico desativado. Valem as regras gerais da plataforma.
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <h4 className="text-base font-black text-slate-950">
-                Transferência de ingresso
-              </h4>
-
-              <label className="mt-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={transferEnabled}
-                  onChange={(event) => setTransferEnabled(event.target.checked)}
-                  className="h-5 w-5 rounded border-slate-300"
-                />
+              {refundEnabled ? <TextArea label="Política de reembolso" value={refundPolicy} onChange={setRefundPolicy} /> : null}
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black">
+                <input type="checkbox" checked={transferEnabled} onChange={(event) => setTransferEnabled(event.target.checked)} />
                 Permitir transferência neste evento
               </label>
-
-              {transferEnabled ? (
-                <div className="mt-4">
-                  <TextArea
-                    label="Política de transferência"
-                    value={transferPolicy}
-                    onChange={setTransferPolicy}
-                    placeholder="Descreva prazo, limite e regras de transferência."
-                  />
-                </div>
-              ) : (
-                <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold leading-6 text-slate-500">
-                  Transferência específica desativada. O evento segue o padrão da plataforma.
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <h4 className="text-base font-black text-slate-950">
-                Entrada e documentos
-              </h4>
-
-              <div className="mt-5 grid gap-4">
-                <TextArea
-                  label="Regras de entrada"
-                  value={entryRules}
-                  onChange={setEntryRules}
-                  placeholder="Ex: horário de abertura, portões, revista..."
-                />
-
-                <TextArea
-                  label="Documentos obrigatórios"
-                  value={documentRules}
-                  onChange={setDocumentRules}
-                  placeholder="Ex: documento com foto, comprovante de meia..."
-                />
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 lg:col-span-2">
-              <h4 className="text-base font-black text-slate-950">
-                Termos e observações gerais
-              </h4>
-
-              <div className="mt-5">
-                <TextArea
-                  label="Termos e observações"
-                  value={termsNotes}
-                  onChange={setTermsNotes}
-                  placeholder="Avisos finais que precisam aparecer para o comprador."
-                />
-              </div>
+              {transferEnabled ? <TextArea label="Política de transferência" value={transferPolicy} onChange={setTransferPolicy} /> : null}
+              <TextArea label="Política de meia-entrada" value={halfEntryPolicy} onChange={setHalfEntryPolicy} />
+              <TextArea label="Regras de entrada" value={entryRules} onChange={setEntryRules} />
+              <TextArea label="Documentos obrigatórios" value={documentRules} onChange={setDocumentRules} />
+              <TextArea label="Termos e observações" value={termsNotes} onChange={setTermsNotes} />
             </div>
           </div>
-</div>
         </div>
       </StepShell>
     );
   }
 
   function renderSectorsStep() {
+    function sectorCapacity(sector: SectorItem) {
+      if (sector.kind === "NUMBERED_SEATS") {
+        return positiveInt(sector.chairRows || "10") * positiveInt(sector.chairsPerRow || "10");
+      }
+
+      if (sector.kind === "TABLES") {
+        return positiveInt(sector.tableCount || "20") * positiveInt(sector.seatsPerTable || "4");
+      }
+
+      return toNumber(sector.capacity);
+    }
+
+    function changeSectorKind(localId: string, kind: SectorKind) {
+      updateSector(localId, { kind });
+    }
+
+    function updateChairRows(sector: SectorItem, value: string) {
+      const chairRows = onlyDigits(value);
+      updateSector(sector.localId, {
+        chairRows,
+        capacity: String(positiveInt(chairRows) * positiveInt(sector.chairsPerRow || "10")),
+      });
+    }
+
+    function updateChairsPerRow(sector: SectorItem, value: string) {
+      const chairsPerRow = onlyDigits(value);
+      updateSector(sector.localId, {
+        chairsPerRow,
+        capacity: String(positiveInt(sector.chairRows || "10") * positiveInt(chairsPerRow)),
+      });
+    }
+
+    function updateTableCount(sector: SectorItem, value: string) {
+      const tableCount = onlyDigits(value);
+      updateSector(sector.localId, {
+        tableCount,
+        capacity: String(positiveInt(tableCount) * positiveInt(sector.seatsPerTable || "4")),
+      });
+    }
+
+    function updateSeatsPerTable(sector: SectorItem, value: string) {
+      const seatsPerTable = onlyDigits(value);
+      updateSector(sector.localId, {
+        seatsPerTable,
+        capacity: String(positiveInt(sector.tableCount || "20") * positiveInt(seatsPerTable)),
+      });
+    }
+
+    function renderStructuredFields(sector: SectorItem) {
+      if (sector.kind === "NUMBERED_SEATS") {
+        const chairRows = sector.chairRows || "10";
+        const chairsPerRow = sector.chairsPerRow || "10";
+        const total = positiveInt(chairRows) * positiveInt(chairsPerRow);
+
+        return (
+          <div className="rounded-3xl border border-sky-100 bg-sky-50 p-5 md:col-span-2">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">Configuração das cadeiras</p>
+                <h4 className="mt-1 text-lg font-black text-slate-950">Fileiras e cadeiras por fileira</h4>
+                <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-sky-900">
+                  A capacidade será calculada automaticamente por fileiras x cadeiras por fileira.
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Capacidade automática</p>
+                <p className="mt-1 text-xl font-black text-slate-950">{total} cadeiras</p>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              <Field label="Quantidade de fileiras" value={chairRows} onChange={(value) => updateChairRows(sector, value)} onlyNumbers required />
+              <Field label="Cadeiras por fileira" value={chairsPerRow} onChange={(value) => updateChairsPerRow(sector, value)} onlyNumbers required />
+              <Field label="Total de cadeiras" value={String(total)} onChange={() => undefined} disabled />
+            </div>
+          </div>
+        );
+      }
+
+      if (sector.kind === "TABLES") {
+        const tableCountValue = sector.tableCount || "20";
+        const seatsPerTableValue = sector.seatsPerTable || "4";
+        const total = positiveInt(tableCountValue) * positiveInt(seatsPerTableValue);
+
+        return (
+          <div className="rounded-3xl border border-amber-100 bg-amber-50 p-5 md:col-span-2">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-600">Configuração das mesas</p>
+                <h4 className="mt-1 text-lg font-black text-slate-950">Mesas e cadeiras por mesa</h4>
+                <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-amber-900">
+                  A capacidade será calculada automaticamente por mesas x cadeiras por mesa.
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Capacidade automática</p>
+                <p className="mt-1 text-xl font-black text-slate-950">{total} lugares</p>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              <Field label="Quantidade de mesas" value={tableCountValue} onChange={(value) => updateTableCount(sector, value)} onlyNumbers required />
+              <Field label="Cadeiras por mesa" value={seatsPerTableValue} onChange={(value) => updateSeatsPerTable(sector, value)} onlyNumbers required />
+              <Field label="Capacidade total" value={String(total)} onChange={() => undefined} disabled />
+            </div>
+          </div>
+        );
+      }
+
+      return null;
+    }
+
     return (
       <StepShell eyebrow="Etapa 5" title={isOpenOnly ? "Área única do evento" : "Setores / áreas"} description="Configure os setores permitidos.">
         <div className={`mb-6 rounded-3xl border p-5 ${sectorError ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
@@ -2098,12 +2493,16 @@ function mapUrlChange(value: string) {
         <div className="space-y-4">
           {sectors.map((sector, index) => {
             const usedColors = sectors.filter((item) => item.localId !== sector.localId).map((item) => item.color);
+            const isStructured = sector.kind === "NUMBERED_SEATS" || sector.kind === "TABLES";
+            const structuredCapacity = sectorCapacity(sector);
+
             return (
               <div key={sector.localId} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
                 <div className="mb-5 flex justify-between">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Setor {index + 1}</p>
                     <h3 className="text-lg font-black">{sector.name}</h3>
+                    <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-sky-700">{KIND_LABEL[sector.kind]}</p>
                   </div>
                   {sectors.length > 1 ? <button type="button" onClick={() => removeSector(sector.localId)} className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600">Remover</button> : null}
                 </div>
@@ -2112,11 +2511,15 @@ function mapUrlChange(value: string) {
                   <Select
                     label="Tipo do setor"
                     value={sector.kind}
-                    onChange={(value) => updateSector(sector.localId, { kind: value as SectorKind })}
+                    onChange={(value) => changeSectorKind(sector.localId, value as SectorKind)}
                     disabled={preset.sectorKinds.length === 1}
                     options={preset.sectorKinds.map((kind) => ({ label: KIND_LABEL[kind], value: kind }))}
                   />
-                  <Field label="Capacidade" value={sector.capacity} onChange={(value) => updateSector(sector.localId, { capacity: value })} onlyNumbers />
+                  {isStructured ? (
+                    <Field label="Capacidade" value={String(structuredCapacity)} onChange={() => undefined} disabled helper={sector.kind === "NUMBERED_SEATS" ? "Calculada por fileiras x cadeiras por fileira." : "Calculada por mesas x cadeiras por mesa."} />
+                  ) : (
+                    <Field label="Capacidade" value={sector.capacity} onChange={(value) => updateSector(sector.localId, { capacity: value })} onlyNumbers />
+                  )}
                   <div>
                     <label className="mb-2 block text-sm font-black text-slate-700">Cor do setor</label>
                     <div className="grid grid-cols-5 gap-2">
@@ -2135,6 +2538,7 @@ function mapUrlChange(value: string) {
                       })}
                     </div>
                   </div>
+                  {renderStructuredFields(sector)}
                   <Field label="Portão de acesso" value={sector.gateName} onChange={(value) => updateSector(sector.localId, { gateName: value })} />
                   <div className="md:col-span-2">
                     <TextArea label="Descrição" value={sector.description} onChange={(value) => updateSector(sector.localId, { description: value })} />
@@ -2153,69 +2557,447 @@ function mapUrlChange(value: string) {
     );
   }
 
+  function getMetadataNumber(object: MapObject, key: string, fallback = 0) {
+    const value = object.metadata?.[key];
+
+    if (typeof value === "number") return value;
+
+    if (typeof value === "string") {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isNaN(parsed) ? fallback : parsed;
+    }
+
+    return fallback;
+  }
+
+  function isPointInsidePolygon(point: MapPoint, polygon: MapPoint[]) {
+    let inside = false;
+
+    for (
+      let currentIndex = 0, previousIndex = polygon.length - 1;
+      currentIndex < polygon.length;
+      previousIndex = currentIndex, currentIndex += 1
+    ) {
+      const currentPoint = polygon[currentIndex];
+      const previousPoint = polygon[previousIndex];
+
+      const intersects =
+        currentPoint.y > point.y !== previousPoint.y > point.y &&
+        point.x <
+          ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) /
+            (previousPoint.y - currentPoint.y || 1) +
+            currentPoint.x;
+
+      if (intersects) inside = !inside;
+    }
+
+    return inside;
+  }
+
+  function isWholeDotInsidePolygon(
+    centerX: number,
+    centerY: number,
+    radiusX: number,
+    radiusY: number,
+    polygon: MapPoint[],
+  ) {
+    const testPoints: MapPoint[] = [
+      { x: centerX, y: centerY },
+      { x: centerX - radiusX, y: centerY },
+      { x: centerX + radiusX, y: centerY },
+      { x: centerX, y: centerY - radiusY },
+      { x: centerX, y: centerY + radiusY },
+      { x: centerX - radiusX * 0.72, y: centerY - radiusY * 0.72 },
+      { x: centerX + radiusX * 0.72, y: centerY - radiusY * 0.72 },
+      { x: centerX - radiusX * 0.72, y: centerY + radiusY * 0.72 },
+      { x: centerX + radiusX * 0.72, y: centerY + radiusY * 0.72 },
+    ];
+
+    return testPoints.every((point) => isPointInsidePolygon(point, polygon));
+  }
+
+  function mapCapacityLabel(object: MapObject) {
+    const sectorKind = String(object.metadata?.sectorKind || "");
+
+    if (sectorKind === "NUMBERED_SEATS") {
+      const chairRows = getMetadataNumber(object, "chairRows", 0);
+      const chairsPerRow = getMetadataNumber(object, "chairsPerRow", 0);
+      const chairCount = getMetadataNumber(
+        object,
+        "chairCount",
+        chairRows * chairsPerRow || toNumber(object.capacity),
+      );
+
+      return chairRows > 0 && chairsPerRow > 0
+        ? `${chairCount} cadeiras • ${chairRows}x${chairsPerRow}`
+        : `${chairCount} cadeiras`;
+    }
+
+    if (sectorKind === "TABLES") {
+      const tableCount = getMetadataNumber(object, "tableCount", 0);
+      const seats = getMetadataNumber(object, "seatsPerTable", 0);
+
+      if (tableCount > 0 && seats > 0) {
+        return `${tableCount} mesas • ${seats} lugares`;
+      }
+
+      return `${object.capacity || 0} lugares`;
+    }
+
+    return `${object.capacity || 0} pessoas`;
+  }
+
+  function renderMapGuides() {
+    return (
+      <>
+        <div
+          className="pointer-events-none absolute inset-0 opacity-60"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, rgba(148,163,184,0.28) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.28) 1px, transparent 1px)",
+            backgroundSize: "40px 40px",
+          }}
+        />
+        <div
+          className="pointer-events-none absolute inset-0 opacity-40"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, rgba(14,165,233,0.32) 1px, transparent 1px), linear-gradient(to bottom, rgba(14,165,233,0.32) 1px, transparent 1px)",
+            backgroundSize: "120px 120px",
+          }}
+        />
+        <div className="pointer-events-none absolute left-1/2 top-0 h-full w-px bg-sky-500/30" />
+        <div className="pointer-events-none absolute left-0 top-1/2 h-px w-full bg-sky-500/30" />
+      </>
+    );
+  }
+
+  function renderSeatIcon(size: number, innerSize: number, left: number, top: number, key: string) {
+    return (
+      <span
+        key={key}
+        className="absolute flex items-center justify-center"
+        style={{
+          left: left - size / 2,
+          top: top - size / 2,
+          width: size,
+          height: size,
+        }}
+      >
+        <span
+          className="relative block rounded-[35%] bg-white/95 shadow"
+          style={{ width: size, height: size }}
+        >
+          <span
+            className="absolute left-1/2 top-[13%] -translate-x-1/2 rounded-t-md bg-slate-900/25"
+            style={{ width: innerSize * 1.35, height: Math.max(1, innerSize * 0.42) }}
+          />
+          <span
+            className="absolute left-1/2 top-[42%] -translate-x-1/2 rounded-md bg-slate-900/25"
+            style={{ width: innerSize * 1.25, height: Math.max(1, innerSize * 0.48) }}
+          />
+          <span
+            className="absolute bottom-[12%] left-[24%] rounded-full bg-slate-900/25"
+            style={{ width: Math.max(1, innerSize * 0.22), height: Math.max(1, innerSize * 0.5) }}
+          />
+          <span
+            className="absolute bottom-[12%] right-[24%] rounded-full bg-slate-900/25"
+            style={{ width: Math.max(1, innerSize * 0.22), height: Math.max(1, innerSize * 0.5) }}
+          />
+        </span>
+      </span>
+    );
+  }
+
+  function renderTableIcon(size: number, innerSize: number, left: number, top: number, key: string) {
+    return (
+      <span
+        key={key}
+        className="absolute flex items-center justify-center"
+        style={{
+          left: left - size / 2,
+          top: top - size / 2,
+          width: size,
+          height: size,
+        }}
+      >
+        <span
+          className="relative block rounded-full bg-white/95 shadow"
+          style={{ width: size, height: size }}
+        >
+          <span
+            className="absolute left-1/2 top-1/2 block -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-900/25"
+            style={{ width: innerSize, height: innerSize }}
+          />
+          <span className="absolute left-1/2 top-[8%] h-[16%] w-[16%] -translate-x-1/2 rounded-full bg-white/75" />
+          <span className="absolute bottom-[8%] left-1/2 h-[16%] w-[16%] -translate-x-1/2 rounded-full bg-white/75" />
+          <span className="absolute left-[8%] top-1/2 h-[16%] w-[16%] -translate-y-1/2 rounded-full bg-white/75" />
+          <span className="absolute right-[8%] top-1/2 h-[16%] w-[16%] -translate-y-1/2 rounded-full bg-white/75" />
+        </span>
+      </span>
+    );
+  }
+
+  function renderInternalSeatPreview(object: MapObject) {
+    const rows = getMetadataNumber(object, "chairRows", 0);
+    const columns = getMetadataNumber(object, "chairsPerRow", 0);
+    const chairCount = getMetadataNumber(object, "chairCount", rows * columns);
+
+    if (rows <= 0 || columns <= 0 || chairCount <= 0) return null;
+
+    const isFree = objectShape(object) === "FREEFORM";
+    const polygon = objectPoints(object);
+    const labelHeight = 42;
+    const inset = 14;
+    const gridX = inset;
+    const gridY = inset;
+    const gridW = Math.max(40, object.width - inset * 2);
+    const gridH = Math.max(30, object.height - inset * 2 - labelHeight);
+    const cellW = gridW / columns;
+    const cellH = gridH / rows;
+    const iconSize = Math.max(3, Math.min(18, Math.floor(Math.min(cellW, cellH) * 0.72)));
+    const innerSize = Math.max(1, Math.floor(iconSize * 0.42));
+    const radiusXPercent = ((iconSize / 2) / object.width) * 100;
+    const radiusYPercent = ((iconSize / 2) / object.height) * 100;
+    const maxPreview = Math.min(chairCount, rows * columns, 2500);
+
+    const chairs = Array.from({ length: maxPreview })
+      .map((_, chairIndex) => {
+        const row = Math.floor(chairIndex / columns);
+        const column = chairIndex % columns;
+        const left = gridX + column * cellW + cellW / 2;
+        const top = gridY + row * cellH + cellH / 2;
+        const centerX = (left / object.width) * 100;
+        const centerY = (top / object.height) * 100;
+
+        if (left - iconSize / 2 < inset || left + iconSize / 2 > object.width - inset) return null;
+        if (top - iconSize / 2 < inset || top + iconSize / 2 > object.height - inset - labelHeight) return null;
+
+        if (isFree && !isWholeDotInsidePolygon(centerX, centerY, radiusXPercent, radiusYPercent, polygon)) {
+          return null;
+        }
+
+        return { chairIndex, left, top };
+      })
+      .filter((chair): chair is { chairIndex: number; left: number; top: number } => Boolean(chair));
+
+    return (
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
+        <div
+          className="absolute inset-3 overflow-hidden rounded-2xl bg-black/5"
+          style={isFree ? { clipPath: `polygon(${cssPoints(object)})` } : undefined}
+        >
+          {chairs.map((chair) =>
+            renderSeatIcon(
+              iconSize,
+              innerSize,
+              chair.left,
+              chair.top,
+              `chair-${object.localId}-${chair.chairIndex}`,
+            ),
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function renderInternalTablePreview(object: MapObject) {
+    const tableCount = getMetadataNumber(object, "tableCount", 0);
+
+    if (tableCount <= 0) return null;
+
+    const isFree = objectShape(object) === "FREEFORM";
+    const polygon = objectPoints(object);
+    const labelHeight = 42;
+    const inset = 14;
+    const gridX = inset;
+    const gridY = inset;
+    const gridW = Math.max(40, object.width - inset * 2);
+    const gridH = Math.max(30, object.height - inset * 2 - labelHeight);
+    const ratio = gridW / Math.max(gridH, 1);
+    let columns = Math.max(1, Math.ceil(Math.sqrt(tableCount * ratio)));
+    let rows = Math.max(1, Math.ceil(tableCount / columns));
+    let cellW = gridW / columns;
+    let cellH = gridH / rows;
+    let iconSize = Math.max(4, Math.min(24, Math.floor(Math.min(cellW, cellH) * 0.74)));
+
+    if (iconSize <= 5) {
+      columns = Math.max(1, Math.floor(gridW / 5));
+      rows = Math.max(1, Math.floor(gridH / 5));
+      cellW = gridW / columns;
+      cellH = gridH / rows;
+      iconSize = 4;
+    }
+
+    const innerSize = Math.max(1, Math.floor(iconSize * 0.44));
+    const radiusXPercent = ((iconSize / 2) / object.width) * 100;
+    const radiusYPercent = ((iconSize / 2) / object.height) * 100;
+    const maxPreview = Math.min(tableCount, rows * columns, 2500);
+
+    const tables = Array.from({ length: maxPreview })
+      .map((_, tableIndex) => {
+        const row = Math.floor(tableIndex / columns);
+        const column = tableIndex % columns;
+        const left = gridX + column * cellW + cellW / 2;
+        const top = gridY + row * cellH + cellH / 2;
+        const centerX = (left / object.width) * 100;
+        const centerY = (top / object.height) * 100;
+
+        if (left - iconSize / 2 < inset || left + iconSize / 2 > object.width - inset) return null;
+        if (top - iconSize / 2 < inset || top + iconSize / 2 > object.height - inset - labelHeight) return null;
+
+        if (isFree && !isWholeDotInsidePolygon(centerX, centerY, radiusXPercent, radiusYPercent, polygon)) {
+          return null;
+        }
+
+        return { tableIndex, left, top };
+      })
+      .filter((table): table is { tableIndex: number; left: number; top: number } => Boolean(table));
+
+    return (
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
+        <div
+          className="absolute inset-3 overflow-hidden rounded-2xl bg-black/5"
+          style={isFree ? { clipPath: `polygon(${cssPoints(object)})` } : undefined}
+        >
+          {tables.map((table) =>
+            renderTableIcon(
+              iconSize,
+              innerSize,
+              table.left,
+              table.top,
+              `table-${object.localId}-${table.tableIndex}`,
+            ),
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function renderInternalObjectPreview(object: MapObject) {
+    const sectorKind = String(object.metadata?.sectorKind || "");
+
+    if (sectorKind === "NUMBERED_SEATS") {
+      return renderInternalSeatPreview(object);
+    }
+
+    if (sectorKind === "TABLES") {
+      return renderInternalTablePreview(object);
+    }
+
+    return null;
+  }
+
   function renderMapStep() {
     const selected = mapObjects.find((item) => item.localId === selectedMapObjectId) || null;
+    const selectedIsFreeform = selected ? objectShape(selected) === "FREEFORM" : false;
+
     return (
-      <StepShell eyebrow="Etapa 6" title="Mapa do evento" description="Monte o mapa visualmente com mouse e setores quebrados.">
-        <div className="grid gap-6">
-          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-            <h3 className="text-lg font-black">Editor visual</h3>
-            <p className="mt-1 text-sm font-semibold text-slate-500">Arraste blocos, redimensione pelos cantos e use o formato quebrado com pontos azuis.</p>
-            {preset.allowTableMap ? (
-              <div className="mt-5 grid gap-4 md:grid-cols-3">
-                <Select label="Venda de mesas" value={tableSaleMode} onChange={(value) => setTableSaleMode(value as "WHOLE_TABLE" | "BY_SEAT")} options={[{ label: "Comprar mesa inteira", value: "WHOLE_TABLE" }, { label: "Comprar lugares da mesa", value: "BY_SEAT" }]} />
-                <Field label="Lugares por mesa" value={seatsPerTable} onChange={setSeatsPerTable} onlyNumbers />
-                <Field label="Quantidade de mesas" value={tableCount} onChange={setTableCount} onlyNumbers />
-              </div>
-            ) : null}
-            <div className="mt-5 flex flex-wrap gap-3">
-              <button type="button" onClick={generateMap} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white">Gerar mapa em blocos</button>
-              {mapObjects.length > 0 ? <button type="button" onClick={() => { setMapObjects([]); setSelectedMapObjectId(""); }} className="rounded-2xl border border-rose-200 bg-white px-5 py-3 text-sm font-black text-rose-600">Limpar mapa</button> : null}
+      <StepShell
+        eyebrow="Etapa 6"
+        title="Mapa do evento"
+        description="Use a maior área possível para montar o mapa. Arraste blocos, redimensione, use guias e crie pontos no formato quebrado."
+      >
+        <div className="grid gap-4">
+          {requiredErrors.map ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+              Gere o mapa para continuar.
             </div>
-          </div>
-          {requiredErrors.map ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">Gere o mapa para continuar.</div> : null}
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
-            <div className="flex flex-col justify-between gap-4 xl:flex-row">
+          ) : null}
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-2 shadow-sm md:p-3">
+            <div className="mb-3 flex flex-col justify-between gap-3 xl:flex-row xl:items-center">
               <div>
-                <h3 className="text-lg font-black">Área de montagem</h3>
-                <p className="mt-1 text-sm font-semibold text-slate-500">{selected ? `Selecionado: ${selected.label}` : "Selecione um bloco."}</p>
+                <h3 className="text-lg font-black text-slate-950">Área de criação do mapa</h3>
+                <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+                  {selected
+                    ? `Selecionado: ${selected.label}. Dê duplo clique dentro do bloco para criar um ponto no lugar exato.`
+                    : "Clique em Gerar mapa em blocos para começar. Depois selecione um setor para editar formato e pontos."}
+                </p>
               </div>
-              {selected ? (
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-slate-400">Formato</p>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={generateMap}
+                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-sky-700"
+                >
+                  Gerar mapa em blocos
+                </button>
+
+                {mapObjects.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapObjects([]);
+                      setSelectedMapObjectId("");
+                      setInteraction(null);
+                    }}
+                    className="rounded-2xl border border-rose-200 bg-white px-5 py-3 text-sm font-black text-rose-600 hover:bg-rose-50"
+                  >
+                    Limpar mapa
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {selected ? (
+              <div className="mb-3 rounded-3xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex flex-col justify-between gap-3 2xl:flex-row 2xl:items-center">
                   <div className="flex flex-wrap gap-2">
                     {SHAPES.map((shape) => (
                       <button
                         key={shape.value}
                         type="button"
                         onClick={() => setShape(selected.localId, shape.value)}
-                        className={`rounded-2xl px-4 py-2 text-xs font-black ${objectShape(selected) === shape.value ? "bg-slate-950 text-white" : "border border-slate-200 bg-white"}`}
+                        className={`rounded-2xl px-4 py-2 text-xs font-black ${
+                          objectShape(selected) === shape.value
+                            ? "bg-slate-950 text-white"
+                            : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                        }`}
                       >
                         {shape.label}
                       </button>
                     ))}
                   </div>
-                  {objectShape(selected) === "FREEFORM" ? (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button type="button" onClick={addPoint} className="rounded-2xl bg-sky-600 px-4 py-2 text-xs font-black text-white">+ Adicionar ponto</button>
-                      <button type="button" onClick={removePoint} className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black">Remover ponto</button>
-                      <button type="button" onClick={resetPolygon} className="rounded-2xl border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600">Resetar</button>
+
+                  {selectedIsFreeform ? (
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={addPoint} className="rounded-2xl bg-sky-600 px-4 py-2 text-xs font-black text-white hover:bg-sky-700">
+                        + Ponto no maior lado
+                      </button>
+                      <button type="button" onClick={removePoint} className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-100">
+                        Remover último ponto
+                      </button>
+                      <button type="button" onClick={toggleSmoothPolygon} className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-100">
+                        {shouldSmoothObject(selected) ? "Deixar pontudo" : "Arredondar pontos"}
+                      </button>
+                      <button type="button" onClick={resetPolygon} className="rounded-2xl border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50">
+                        Resetar formato
+                      </button>
                     </div>
                   ) : null}
                 </div>
-              ) : null}
-            </div>
-            <div className="mt-5 min-h-[760px] overflow-auto rounded-3xl bg-slate-100 p-6">
+
+                {selectedIsFreeform ? (
+                  <p className="mt-3 text-xs font-bold leading-5 text-slate-500">
+                    Dica: dê duplo clique no lugar exato onde quer um ponto novo. Depois arraste a bolinha azul para criar recortes, curvas suaves e setores irregulares.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="h-[78vh] min-h-[720px] max-h-[900px] max-w-full overflow-auto rounded-3xl bg-slate-100 p-2 md:p-3">
               {mapObjects.length === 0 ? (
-                <div className="flex h-[680px] items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white text-center">
+                <div className="flex h-[700px] items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white text-center">
                   <div>
-                    <p className="text-lg font-black">Nenhum bloco criado ainda</p>
+                    <p className="text-lg font-black text-slate-950">Nenhum bloco criado ainda</p>
                     <p className="mt-1 text-sm font-semibold text-slate-500">Clique em “Gerar mapa em blocos”.</p>
                   </div>
                 </div>
               ) : (
                 <div
-                  className="relative touch-none overflow-hidden rounded-3xl bg-gradient-to-b from-slate-50 to-slate-200 shadow-inner"
+                  className="relative mx-auto touch-none overflow-hidden rounded-3xl bg-gradient-to-b from-slate-50 to-slate-200 shadow-inner"
                   style={{ width: MAP_W, height: MAP_H }}
                   onPointerMove={dragMove}
                   onPointerUp={() => setInteraction(null)}
@@ -2223,7 +3005,12 @@ function mapUrlChange(value: string) {
                   onPointerCancel={() => setInteraction(null)}
                   onPointerDown={() => setSelectedMapObjectId("")}
                 >
-                  <div className="absolute rounded-t-[2rem] bg-white/70 shadow-inner" style={{ left: MAP_W / 2 - 45, top: 150, width: 90, height: 620 }} />
+                  {renderMapGuides()}
+                  <div className="pointer-events-none absolute left-4 top-4 rounded-full bg-white/85 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 shadow-sm">
+                    Guia 40px • forte 120px • duplo clique cria ponto
+                  </div>
+                  <div className="absolute rounded-t-[2rem] bg-white/70 shadow-inner" style={{ left: MAP_W / 2 - 45, top: 150, width: 90, height: 680 }} />
+
                   {mapObjects.map((object) => {
                     const sector = sectors.find((item) => item.localId === object.venueSectorLocalId);
                     const bg = sector?.color || String(object.metadata?.sectorColor || "#111827");
@@ -2231,25 +3018,61 @@ function mapUrlChange(value: string) {
                     const isFree = objectShape(object) === "FREEFORM";
                     const isStage = object.type === "STAGE";
                     const points = objectPoints(object);
+                    const sectorKindLabel = isStage ? "Palco" : sector ? KIND_LABEL[sector.kind] : "Setor";
+
                     return (
                       <div
                         key={object.localId}
+                        data-map-object-id={object.localId}
                         onPointerDown={(event) => startMove(event, object)}
+                        onDoubleClick={(event) => {
+                          if (!isStage) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            addPointAtPosition(object, event.clientX, event.clientY);
+                          }
+                        }}
                         className={`absolute cursor-move select-none ${isSelected ? "z-20" : "z-10"}`}
-                        style={{ left: object.x, top: object.y, width: object.width, height: object.height, transform: `rotate(${object.rotation}deg)`, outline: isSelected ? "3px solid rgba(56, 189, 248, 0.65)" : undefined, outlineOffset: 4 }}
+                        style={{
+                          left: object.x,
+                          top: object.y,
+                          width: object.width,
+                          height: object.height,
+                          transform: `rotate(${object.rotation}deg)`,
+                          outline: isSelected ? "3px solid rgba(56, 189, 248, 0.65)" : undefined,
+                          outlineOffset: 4,
+                        }}
                       >
                         {isFree ? (
                           <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox={`0 0 ${object.width} ${object.height}`} preserveAspectRatio="none">
-                            <polygon points={svgPoints(object)} fill={bg} stroke={isSelected ? "#38bdf8" : "#ffffff"} strokeWidth="5" filter="drop-shadow(0px 12px 12px rgba(15,23,42,0.25))" />
+                            {shouldSmoothObject(object) ? (
+                              <path d={smoothSvgPath(object)} fill={bg} stroke={isSelected ? "#38bdf8" : "#ffffff"} strokeWidth="5" filter="drop-shadow(0px 12px 12px rgba(15,23,42,0.25))" />
+                            ) : (
+                              <polygon points={svgPoints(object)} fill={bg} stroke={isSelected ? "#38bdf8" : "#ffffff"} strokeWidth="5" filter="drop-shadow(0px 12px 12px rgba(15,23,42,0.25))" />
+                            )}
                           </svg>
                         ) : (
                           <div className={`absolute inset-0 border-4 shadow-xl ${isStage ? "border-slate-950 bg-slate-950" : "border-white"}`} style={{ backgroundColor: bg, borderRadius: radius(object) }} />
                         )}
-                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center text-white" style={isFree ? { clipPath: `polygon(${cssPoints(object)})` } : undefined}>
-                          <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]">{isStage ? "Palco" : sector ? KIND_LABEL[sector.kind] : "Setor"}</span>
-                          <strong className="mt-2 px-3 text-2xl font-black uppercase leading-none">{object.label}</strong>
-                          {!isStage ? <span className="mt-3 rounded-full bg-black/20 px-3 py-1 text-xs font-black">{object.capacity || 0} pessoas</span> : null}
-                        </div>
+
+                        {!isStage ? renderInternalObjectPreview(object) : null}
+
+                        {isStage ? (
+                          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center text-white">
+                            <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]">Palco</span>
+                            <strong className="mt-2 px-3 text-2xl font-black uppercase leading-none">{object.label}</strong>
+                          </div>
+                        ) : (
+                          <div
+                            className="pointer-events-none absolute inset-x-3 bottom-3 z-10 rounded-2xl bg-slate-950/80 px-2 py-1.5 text-center text-white shadow-lg backdrop-blur-sm"
+                            style={isFree ? { clipPath: `polygon(${cssPoints(object)})` } : undefined}
+                          >
+                            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-white/70">{sectorKindLabel}</p>
+                            <p className="mt-0.5 truncate text-xs font-black uppercase leading-tight">{object.label}</p>
+                            <p className="mt-0.5 truncate text-[9px] font-black text-white/80">{mapCapacityLabel(object)}</p>
+                          </div>
+                        )}
+
                         {isSelected && isFree
                           ? points.map((point, index) => (
                               <button
@@ -2262,12 +3085,13 @@ function mapUrlChange(value: string) {
                               />
                             ))
                           : null}
+
                         {isSelected ? (
                           <>
-                            <button type="button" onPointerDown={(event) => startResize(event, object, "nw")} className="absolute -left-3 -top-3 z-30 h-6 w-6 cursor-nwse-resize rounded-full border-2 border-white bg-sky-500 shadow" />
-                            <button type="button" onPointerDown={(event) => startResize(event, object, "ne")} className="absolute -right-3 -top-3 z-30 h-6 w-6 cursor-nesw-resize rounded-full border-2 border-white bg-sky-500 shadow" />
-                            <button type="button" onPointerDown={(event) => startResize(event, object, "sw")} className="absolute -bottom-3 -left-3 z-30 h-6 w-6 cursor-nesw-resize rounded-full border-2 border-white bg-sky-500 shadow" />
-                            <button type="button" onPointerDown={(event) => startResize(event, object, "se")} className="absolute -bottom-3 -right-3 z-30 h-6 w-6 cursor-nwse-resize rounded-full border-2 border-white bg-sky-500 shadow" />
+                            <button type="button" aria-label="Redimensionar canto superior esquerdo" onPointerDown={(event) => startResize(event, object, "nw")} className="absolute -left-3 -top-3 z-30 h-6 w-6 cursor-nwse-resize rounded-full border-2 border-white bg-sky-500 shadow" />
+                            <button type="button" aria-label="Redimensionar canto superior direito" onPointerDown={(event) => startResize(event, object, "ne")} className="absolute -right-3 -top-3 z-30 h-6 w-6 cursor-nesw-resize rounded-full border-2 border-white bg-sky-500 shadow" />
+                            <button type="button" aria-label="Redimensionar canto inferior esquerdo" onPointerDown={(event) => startResize(event, object, "sw")} className="absolute -bottom-3 -left-3 z-30 h-6 w-6 cursor-nesw-resize rounded-full border-2 border-white bg-sky-500 shadow" />
+                            <button type="button" aria-label="Redimensionar canto inferior direito" onPointerDown={(event) => startResize(event, object, "se")} className="absolute -bottom-3 -right-3 z-30 h-6 w-6 cursor-nwse-resize rounded-full border-2 border-white bg-sky-500 shadow" />
                           </>
                         ) : null}
                       </div>
@@ -2283,284 +3107,362 @@ function mapUrlChange(value: string) {
   }
 
   function renderTicketsStep() {
+    function ticketGroupId(ticket: TicketItem) {
+      return `${ticket.eventSessionLocalId || "all"}::${ticket.venueSectorLocalId || "all"}::${ticket.ticketKind}`;
+    }
+
+    function sameTicketGroup(a: TicketItem, b: TicketItem) {
+      return ticketGroupId(a) === ticketGroupId(b);
+    }
+
+    function groupTickets(list: TicketItem[]) {
+      const groups = new Map<string, TicketItem[]>();
+
+      list.forEach((ticket) => {
+        const key = ticketGroupId(ticket);
+        const current = groups.get(key) || [];
+        current.push(ticket);
+        groups.set(key, current);
+      });
+
+      return Array.from(groups.values()).map((group) => group.sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel)));
+    }
+
+    function sessionLabel(sessionId: string) {
+      if (!sessionId) return "Todas as datas";
+      return sessions.find((session) => session.localId === sessionId)?.name || "Data";
+    }
+
+    function sectorLabel(sectorId: string) {
+      if (isOpenOnly || !sectorId) return isOpenOnly ? "Área única" : "Todos os setores";
+      return sectors.find((sector) => sector.localId === sectorId)?.name || "Setor";
+    }
+
+    function groupLimit(ticket: TicketItem) {
+      return tickets.find((item) => sameTicketGroup(item, ticket) && lotNumber(item.lotLabel) === 1)?.maxPerOrder || ticket.maxPerOrder;
+    }
+
+    function updateGroupMax(ticket: TicketItem, value: string) {
+      const nextValue = onlyDigits(value);
+      setTickets((current) =>
+        current.map((item) => (sameTicketGroup(item, ticket) ? { ...item, maxPerOrder: nextValue } : item)),
+      );
+    }
+
+    function addLotFor(sessionId: string, sectorId: string, ticketKind: TicketKind) {
+      const sector = sectors.find((item) => item.localId === sectorId);
+      const session = sessions.find((item) => item.localId === sessionId) || sessions[0];
+
+      setTickets((current) => {
+        const group = current
+          .filter((ticket) =>
+            ticket.eventSessionLocalId === sessionId &&
+            ticket.venueSectorLocalId === sectorId &&
+            ticket.ticketKind === ticketKind,
+          )
+          .sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel));
+
+        const previous = group[group.length - 1];
+        const nextLotNumber = group.length + 1;
+        const nextLotLabel = `${nextLotNumber}º Lote`;
+        const kindLabel = TICKET_KIND_OPTIONS.find((option) => option.value === ticketKind)?.label || "Inteira";
+        const firstLimit = group.find((ticket) => lotNumber(ticket.lotLabel) === 1)?.maxPerOrder || previous?.maxPerOrder || "";
+
+        return [
+          ...current,
+          {
+            ...newTicket(current.length, sessionId, sectorId, sector?.mode || preset.mode),
+            ticketKind,
+            name: kindLabel,
+            lotLabel: nextLotLabel,
+            salesStartAt: previous?.salesEndAt || today,
+            salesEndAt: session?.startsAt ? mergeDateAndTime(session.startsAt, previous?.salesEndAt || session.endsAt || session.startsAt) : "",
+            maxPerOrder: firstLimit,
+            isHidden: nextLotNumber > 1 && group.some((ticket) => ticket.lotLabel === "1º Lote"),
+          },
+        ];
+      });
+    }
+
+    const groups = groupTickets(tickets);
+    const validTickets = tickets.filter((item) => item.name.trim() && item.price.trim());
+    const sessionOptions = [{ label: "Todas as datas", value: "" }, ...sessions.map((item) => ({ label: item.name, value: item.localId }))];
+    const sectorOptions = isOpenOnly
+      ? [{ label: "Área única", value: "" }]
+      : [{ label: "Todos os setores", value: "" }, ...sectors.map((item) => ({ label: item.name, value: item.localId }))];
+
     return (
-      <StepShell eyebrow="Etapa 7" title="Ingressos / lotes" description="Tipos, lotes, preços e vendas.">
-        {ticketError ? <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">{ticketError}</div> : null}
-        <div className="mb-6 grid gap-4 md:grid-cols-3">
-          <MiniStat label="Tipos válidos" value={tickets.filter((item) => item.name.trim() && item.price.trim()).length} />
-          <MiniStat label="Quantidade total" value={tickets.reduce((sum, item) => sum + toNumber(item.quantity), 0)} />
-          <MiniStat label="Modelo" value={preset.label} />
-        </div>
-        <div className="space-y-4">
-          {tickets.map((ticket, index) => {
-            const autoHide = ticket.lotLabel !== "1º Lote" && hasFirstLot(ticket);
-            return (
-              <div key={ticket.localId} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                <div className="mb-5 flex justify-between">
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Ingresso / lote {index + 1}</p>
-                    <h3 className="text-lg font-black">{ticket.name}</h3>
-                    {autoHide ? <p className="text-xs font-black text-amber-700">Oculto até o lote anterior encerrar.</p> : null}
-                  </div>
-                  {tickets.length > 1 ? <button type="button" onClick={() => removeTicket(ticket.localId)} className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600">Remover</button> : null}
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Select label="Tipo do ingresso" value={ticket.ticketKind} onChange={(value) => updateTicket(ticket.localId, { ticketKind: value as TicketKind })} options={TICKET_KIND_OPTIONS} />
-                  <Field label="Nome" value={ticket.name} onChange={(value) => updateTicket(ticket.localId, { name: value })} />
-                  <Select label="Lote" value={ticket.lotLabel} onChange={(value) => updateTicket(ticket.localId, { lotLabel: value })} options={ticketLotOptions(ticket)} />
-                  <Field label="Preço" value={ticket.price} onChange={(value) => updateTicket(ticket.localId, { price: value })} money placeholder="250,00" helper={formatMoney(ticket.price)} />
-                  <Field label="Quantidade" value={ticket.quantity} onChange={(value) => updateTicket(ticket.localId, { quantity: value })} onlyNumbers />
-                  <Select label="Data" value={ticket.eventSessionLocalId} onChange={(value) => updateTicket(ticket.localId, { eventSessionLocalId: value })} options={[{ label: "Todas as datas", value: "" }, ...sessions.map((item) => ({ label: item.name, value: item.localId }))]} />
-                  <Select label="Setor" value={ticket.venueSectorLocalId} onChange={(value) => updateTicket(ticket.localId, { venueSectorLocalId: value })} options={isOpenOnly ? [{ label: "Área única", value: "" }] : [{ label: "Todos os setores", value: "" }, ...sectors.map((item) => ({ label: item.name, value: item.localId }))]} />
-                  <Field label="Início das vendas" value={ticket.salesStartAt} onChange={(value) => updateTicket(ticket.localId, { salesStartAt: value })} type="datetime-local" />
-                  <Field label="Fim das vendas" value={ticket.salesEndAt} onChange={(value) => updateTicket(ticket.localId, { salesEndAt: value })} type="datetime-local" helper="O dia fica preso à data selecionada." />
-                  <Field label="Mínimo por pedido" value="1" onChange={() => undefined} disabled />
-                  <Field label="Máximo por pedido" value={ticket.maxPerOrder} onChange={(value) => updateTicket(ticket.localId, { maxPerOrder: value })} onlyNumbers />
-                  <div className="md:col-span-2">
-                    <TextArea label="Descrição e benefícios" value={ticket.description} onChange={(value) => updateTicket(ticket.localId, { description: value })} />
-                  </div>
-                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black md:col-span-2">
-                    <input type="checkbox" checked={ticket.isHidden || autoHide} disabled={autoHide} onChange={(event) => updateTicket(ticket.localId, { isHidden: event.target.checked })} />
-                    Ocultar este ingresso na página pública
-                  </label>
-                </div>
+      <StepShell
+        eyebrow="Etapa 7"
+        title="Ingressos e lotes"
+        description="Crie lotes por setor, data e tipo de ingresso. O próximo lote começa quando o anterior termina ou esgota a quantidade disponível."
+      >
+        <div className="grid gap-6">
+          <div className="rounded-[2rem] border border-sky-100 bg-sky-50 p-5">
+            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
+              <div>
+                <h3 className="text-xl font-black text-slate-950">Criador rápido por setor</h3>
+                <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-sky-900">
+                  Escolha a data e o setor abaixo e clique no tipo de ingresso. Se já existir 1º lote para aquele setor/data/tipo, o sistema cria o próximo lote como oculto e usa o fim do lote anterior como início sugerido.
+                </p>
               </div>
-            );
-          })}
+
+              <div className="grid gap-2 sm:grid-cols-3">
+                <MiniStat label="Tipos válidos" value={validTickets.length} />
+                <MiniStat label="Quantidade total" value={tickets.reduce((sum, item) => sum + toNumber(item.quantity), 0)} />
+                <MiniStat label="Grupos" value={groups.length} />
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              {(sessions.length ? sessions : [newSession(0)]).map((session) => (
+                <div key={session.localId || "all-session"} className="rounded-3xl border border-sky-200 bg-white p-4">
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">{session.name || "Data"}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">Fim padrão das vendas: {datePreview(session.startsAt || startDate)}</p>
+
+                  <div className="mt-4 grid gap-3">
+                    {(isOpenOnly ? [{ localId: "", name: "Área única", mode: preset.mode } as SectorItem] : sectors).map((sector) => (
+                      <div key={`${session.localId}-${sector.localId || "open"}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                          <div>
+                            <p className="text-sm font-black text-slate-950">{sector.name || "Área única"}</p>
+                            <p className="mt-1 text-xs font-semibold text-slate-500">Capacidade do setor: {sector.capacity || capacity}</p>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            {TICKET_KIND_OPTIONS.map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                onClick={() => addLotFor(session.localId, sector.localId || "", option.value)}
+                                className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-sky-700"
+                              >
+                                + {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {ticketError ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+              {ticketError}
+            </div>
+          ) : null}
+
+          {groups.length === 0 ? (
+            <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white p-8 text-center">
+              <p className="text-lg font-black text-slate-950">Nenhum lote criado ainda</p>
+              <p className="mt-2 text-sm font-semibold text-slate-500">Use o criador rápido acima para gerar os primeiros lotes.</p>
+            </div>
+          ) : (
+            <div className="grid gap-5">
+              {groups.map((group) => {
+                const first = group[0];
+                const groupTitle = `${sessionLabel(first.eventSessionLocalId)} • ${sectorLabel(first.venueSectorLocalId)} • ${TICKET_KIND_OPTIONS.find((item) => item.value === first.ticketKind)?.label || "Inteira"}`;
+                const maxPerOrder = groupLimit(first);
+
+                return (
+                  <div key={ticketGroupId(first)} className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">Grupo de venda</p>
+                        <h3 className="mt-1 text-xl font-black text-slate-950">{groupTitle}</h3>
+                        <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+                          Mínimo por pedido travado em 1. O máximo definido aqui vale para todos os lotes deste grupo.
+                        </p>
+                      </div>
+
+                      <Field
+                        label="Máximo por pedido do grupo"
+                        value={maxPerOrder}
+                        onChange={(value) => updateGroupMax(first, value)}
+                        onlyNumbers
+                        helper="Aplicado a todos os lotes deste setor/data/tipo."
+                      />
+                    </div>
+
+                    <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
+                      <div className="grid grid-cols-[110px_1fr_120px_120px_190px_190px_120px] gap-0 bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-white">
+                        <span>Lote</span>
+                        <span>Nome</span>
+                        <span>Preço</span>
+                        <span>Qtd.</span>
+                        <span>Início</span>
+                        <span>Fim</span>
+                        <span>Status</span>
+                      </div>
+
+                      <div className="divide-y divide-slate-200">
+                        {group.map((ticket) => {
+                          const autoHidden = lotNumber(ticket.lotLabel) > 1 && group.some((item) => item.lotLabel === "1º Lote");
+                          const previousEnd = previousLotEnd(ticket, ticket.lotLabel);
+
+                          return (
+                            <div key={ticket.localId} className="grid grid-cols-[110px_1fr_120px_120px_190px_190px_120px] items-start gap-0 bg-white px-4 py-4 text-sm">
+                              <Select label="" value={ticket.lotLabel} onChange={(value) => updateTicket(ticket.localId, { lotLabel: value })} options={ticketLotOptions(ticket)} />
+                              <Field label="" value={ticket.name} onChange={(value) => updateTicket(ticket.localId, { name: value })} />
+                              <Field label="" value={ticket.price} onChange={(value) => updateTicket(ticket.localId, { price: value })} money placeholder="250,00" helper={formatMoney(ticket.price)} />
+                              <Field label="" value={ticket.quantity} onChange={(value) => updateTicket(ticket.localId, { quantity: value })} onlyNumbers />
+                              <Field
+                                label=""
+                                value={ticket.salesStartAt || previousEnd}
+                                onChange={(value) => updateTicket(ticket.localId, { salesStartAt: value })}
+                                type="datetime-local"
+                                helper={previousEnd ? "Sugerido pelo fim do lote anterior." : undefined}
+                              />
+                              <Field
+                                label=""
+                                value={ticket.salesEndAt}
+                                onChange={(value) => updateTicket(ticket.localId, { salesEndAt: value })}
+                                type="datetime-local"
+                                helper="Dia preso à data escolhida."
+                              />
+                              <div className="grid gap-2">
+                                <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={ticket.isHidden || autoHidden}
+                                    disabled={autoHidden}
+                                    onChange={(event) => updateTicket(ticket.localId, { isHidden: event.target.checked })}
+                                  />
+                                  Oculto
+                                </label>
+                                {tickets.length > 1 ? (
+                                  <button type="button" onClick={() => removeTicket(ticket.localId)} className="rounded-2xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50">
+                                    Remover
+                                  </button>
+                                ) : null}
+                              </div>
+
+                              <div className="col-span-7 mt-3">
+                                <TextArea label="Descrição e benefícios" value={ticket.description} onChange={(value) => updateTicket(ticket.localId, { description: value })} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => addLotFor(first.eventSessionLocalId, first.venueSectorLocalId, first.ticketKind)}
+                        className="rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-3 text-sm font-black text-sky-700 hover:bg-sky-100"
+                      >
+                        + Adicionar próximo lote deste grupo
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-        <button type="button" onClick={addTicket} className="mt-5 rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700">
-          + Adicionar ingresso ou lote
-        </button>
       </StepShell>
     );
   }
 
-    function renderLocationStep() {
+  function renderLocationStep() {
+    const coordinatesReady = Boolean(latitude.trim() && longitude.trim());
+    const isShortGoogleLink = /maps\.app\.goo\.gl|goo\.gl\/maps/i.test(mapUrl);
+
     return (
-      <StepShell
-        eyebrow="Etapa 8"
-        title="Local e acesso"
-        description="Endereço, referência, mapa e instruções para o comprador chegar ao evento."
-      >
+      <StepShell eyebrow="Etapa 8" title="Local e acesso" description="Endereço, CEP, link do mapa e coordenadas travadas pelo Google Maps.">
         <div className="grid gap-6">
           <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5">
-            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
-                  Tipo de acesso
-                </p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">
-                  Como o público vai acessar o evento?
-                </h3>
-                <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
-                  Para eventos presenciais, CEP, nome do local, referência e link
-                  do mapa são obrigatórios. Para evento online, o endereço físico
-                  não é necessário.
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-slate-950 px-4 py-3 text-white">
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                  Modo atual
-                </p>
-                <p className="mt-1 text-sm font-black">
-                  {isOnline ? "Online" : mode === "HYBRID" ? "Híbrido" : "Presencial"}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 grid gap-5 md:grid-cols-2">
-              <Select
-                label="Modo do evento"
-                value={mode}
-                onChange={setMode}
-                options={[
-                  { label: "Presencial", value: "PRESENTIAL" },
-                  { label: "Online", value: "ONLINE" },
-                  { label: "Híbrido", value: "HYBRID" },
-                ]}
-              />
-
-              <Field
-                label={isOnline ? "Nome ou canal do evento" : "Nome do local"}
-                value={venueName}
-                onChange={setVenueName}
-                required
-                error={submitAttempted && !venueName.trim()}
-                placeholder={
-                  isOnline
-                    ? "Ex: Transmissão online, Zoom, YouTube..."
-                    : "Ex: Red Eventos"
-                }
-              />
+            <div className="grid gap-5 md:grid-cols-2">
+              <Select label="Modo do evento" value={mode} onChange={setMode} options={[{ label: "Presencial", value: "PRESENTIAL" }, { label: "Online", value: "ONLINE" }, { label: "Híbrido", value: "HYBRID" }]} />
+              <Field label={isOnline ? "Nome ou canal do evento" : "Nome do local"} value={venueName} onChange={setVenueName} required error={submitAttempted && !venueName.trim()} />
             </div>
           </div>
 
           {!isOnline ? (
-            <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
-                Endereço físico
-              </p>
-              <h3 className="mt-2 text-2xl font-black text-slate-950">
-                Dados do local
-              </h3>
+            <>
+              <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">Endereço físico</p>
+                <h3 className="mt-2 text-xl font-black text-slate-950">Dados do local</h3>
 
-              <div className="mt-6 grid gap-5 md:grid-cols-2">
-                <Field
-                  label="CEP"
-                  value={zipCode}
-                  onChange={cepChange}
-                  onlyNumbers
-                  required
-                  error={submitAttempted && !zipCode.trim()}
-                  helper="Digite 8 números. O endereço será preenchido automaticamente."
-                />
-
-                <Field
-                  label="Endereço"
-                  value={addressLine1}
-                  onChange={setAddressLine1}
-                  placeholder="Rua, avenida..."
-                />
-
-                <Field
-                  label="Número / complemento"
-                  value={addressLine2}
-                  onChange={setAddressLine2}
-                  placeholder="Ex: nº 500, Portão B, Salão principal..."
-                />
-
-                <Field
-                  label="Bairro"
-                  value={neighborhood}
-                  onChange={setNeighborhood}
-                />
-
-                <Field label="Cidade" value={city} onChange={setCity} />
-
-                <Field
-                  label="Estado"
-                  value={stateName}
-                  onChange={setStateName}
-                  placeholder="Ex: SP"
-                />
-
-                <div className="md:col-span-2">
-                  <Field
-                    label="Referência"
-                    value={reference}
-                    onChange={setReference}
-                    required
-                    error={submitAttempted && !reference.trim()}
-                    placeholder="Ex: Entrada pela portaria principal, ao lado do estacionamento..."
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-[2rem] border border-emerald-200 bg-emerald-50 p-6">
-              <p className="text-xl font-black text-emerald-950">
-                Evento online
-              </p>
-              <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-emerald-800">
-                Para evento online, CEP, endereço, referência física, URL do mapa
-                e coordenadas não são obrigatórios. Use o campo de instruções para
-                colocar link, plataforma, senha ou regras de acesso.
-              </p>
-            </div>
-          )}
-
-          {!isOnline ? (
-            <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
-                    Mapa e coordenadas
-                  </p>
-                  <h3 className="mt-2 text-2xl font-black text-slate-950">
-                    Link do mapa
-                  </h3>
-                  <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
-                    Cole um link do Google Maps, Waze ou OpenStreetMap. Links
-                    completos podem preencher latitude e longitude automaticamente.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-slate-100 px-4 py-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                    Coordenadas
-                  </p>
-                  <p className="mt-1 text-sm font-black text-slate-950">
-                    {latitude && longitude ? "Detectadas" : "Não detectadas"}
-                  </p>
+                <div className="mt-5 grid gap-5 md:grid-cols-2">
+                  <Field label="CEP" value={zipCode} onChange={cepChange} onlyNumbers required error={submitAttempted && !zipCode.trim()} helper="Digite 8 números para preencher endereço, bairro, cidade e estado." />
+                  <Field label="Endereço" value={addressLine1} onChange={setAddressLine1} />
+                  <Field label="Número / complemento" value={addressLine2} onChange={setAddressLine2} />
+                  <Field label="Bairro" value={neighborhood} onChange={setNeighborhood} />
+                  <Field label="Cidade" value={city} onChange={setCity} />
+                  <Field label="Estado" value={stateName} onChange={setStateName} />
+                  <div className="md:col-span-2">
+                    <Field label="Referência" value={reference} onChange={setReference} required error={submitAttempted && !reference.trim()} placeholder="Ex: entrada pela avenida principal, portão B..." />
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-5 md:grid-cols-2">
-                <div className="md:col-span-2">
+              <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">Mapa e coordenadas</p>
+                    <h3 className="mt-2 text-xl font-black text-slate-950">Google Maps</h3>
+                    <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+                      Cole o link completo ou encurtado do Google Maps. Para link encurtado, clique em resolver para a API abrir o redirecionamento e travar latitude e longitude.
+                    </p>
+                  </div>
+
+                  <span className={`rounded-2xl px-4 py-3 text-sm font-black ${coordinatesReady ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                    {coordinatesReady ? "Coordenadas travadas" : "Aguardando coordenadas"}
+                  </span>
+                </div>
+
+                <div className="mt-5 grid gap-5 md:grid-cols-[1fr_auto] md:items-end">
                   <Field
                     label="URL do mapa"
                     value={mapUrl}
                     onChange={mapUrlChange}
                     required
-                    error={submitAttempted && !isMapUrl(mapUrl)}
-                    placeholder="Cole aqui o link completo do mapa"
+                    error={submitAttempted && (!isMapUrl(mapUrl) || !coordinatesReady)}
                     helper={
-                      submitAttempted && !isMapUrl(mapUrl)
-                        ? "Informe um link válido de mapa."
-                        : "Dica: se usar link encurtado, abra ele primeiro e copie a URL completa da barra do navegador."
+                      submitAttempted && !coordinatesReady
+                        ? "Resolva ou cole um link completo que contenha latitude e longitude."
+                        : isShortGoogleLink
+                          ? "Link encurtado detectado. Clique em resolver encurtado."
+                          : "Google Maps, Waze, OpenStreetMap ou Bing Maps."
                     }
                   />
+
+                  <button
+                    type="button"
+                    onClick={resolveMapUrl}
+                    disabled={resolvingMapUrl || !mapUrl.trim()}
+                    className="h-[52px] rounded-2xl bg-slate-950 px-5 text-sm font-black text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {resolvingMapUrl ? "Resolvendo..." : "Resolver encurtado"}
+                  </button>
                 </div>
 
-                <Field
-                  label="Latitude"
-                  value={latitude}
-                  onChange={setLatitude}
-                  placeholder="-22.7047"
-                  helper="Preenche automaticamente quando o link contém coordenadas."
-                />
-
-                <Field
-                  label="Longitude"
-                  value={longitude}
-                  onChange={setLongitude}
-                  placeholder="-47.0021"
-                  helper="Preenche automaticamente quando o link contém coordenadas."
-                />
+                <div className="mt-5 grid gap-5 md:grid-cols-2">
+                  <Field label="Latitude" value={latitude} onChange={setLatitude} disabled helper="Travada pelo link do mapa." />
+                  <Field label="Longitude" value={longitude} onChange={setLongitude} disabled helper="Travada pelo link do mapa." />
+                </div>
               </div>
+            </>
+          ) : (
+            <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 md:col-span-2">
+              <p className="text-lg font-black text-emerald-950">Evento online</p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-emerald-800">Para evento online, endereço físico e URL do mapa não são obrigatórios.</p>
             </div>
-          ) : null}
+          )}
 
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
-              Instruções finais
-            </p>
-            <h3 className="mt-2 text-2xl font-black text-slate-950">
-              Orientações para acesso
-            </h3>
-
-          <div className="mt-6">
-              <TextArea
-               label={
-                  isOnline
-                  ? "Instruções de acesso online"
-                  : "Instruções de acesso ao local"
-                }
-                value={instructions}
-                onChange={setInstructions}
-                placeholder={
-                  isOnline
-                    ? "Ex: link da transmissão, senha, horário de liberação..."
-                    : "Ex: estacionamento, portões, revista, acessibilidade, entrada VIP..."
-                }
-              />
-            </div>
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+            <TextArea label={isOnline ? "Instruções de acesso online" : "Instruções de acesso"} value={instructions} onChange={setInstructions} />
           </div>
         </div>
       </StepShell>
-   );
-  } 
+    );
+  }
 
   function renderReviewStep() {
     const image = normalizeUrl(bannerImageUrl || coverImageUrl || thumbnailUrl || mobileBannerUrl);
@@ -2627,7 +3529,7 @@ function mapUrlChange(value: string) {
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-950 md:px-8">
-      <form onSubmit={submit} className="mx-auto max-w-7xl">
+      <form onSubmit={submit} className="mx-auto max-w-[1600px]">
         <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
             <Link href="/admin/events" className="text-sm font-black text-sky-700 hover:text-sky-900">← Voltar para eventos</Link>
