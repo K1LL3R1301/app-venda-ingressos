@@ -1,11 +1,14 @@
 "use client";
 
+"use client";
+
 import Link from "next/link";
 import {
   useEffect,
   useMemo,
   useState,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 
@@ -17,6 +20,7 @@ type OrganizerItem = {
   email?: string;
   phone?: string;
   status?: string;
+  description?: string;
 };
 
 type OccupancyMode =
@@ -49,6 +53,32 @@ type SectorKind =
   | "PLATEIA"
   | "NUMBERED_SEATS"
   | "TABLES";
+
+type TicketKind = "INTEIRA" | "MEIA" | "SOCIAL";
+
+type MapShape = "RECTANGLE" | "ROUNDED" | "CIRCLE" | "PILL" | "FREEFORM";
+
+type MapPoint = {
+  x: number;
+  y: number;
+};
+
+type ResizeDirection = "nw" | "ne" | "sw" | "se";
+
+type MapInteraction = {
+  type: "move" | "resize" | "point";
+  objectId: string;
+  direction?: ResizeDirection;
+  pointIndex?: number;
+  startClientX: number;
+  startClientY: number;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+  startPointX?: number;
+  startPointY?: number;
+};
 
 type SectorColorOption = {
   label: string;
@@ -138,6 +168,7 @@ type TicketTypeFormItem = {
   eventSessionLocalId: string;
   venueSectorLocalId: string;
   occupancyMode: OccupancyMode;
+  ticketKind: TicketKind;
   name: string;
   lotLabel: string;
   description: string;
@@ -148,9 +179,6 @@ type TicketTypeFormItem = {
   minPerOrder: string;
   maxPerOrder: string;
   displayOrder: string;
-  feeAmount: string;
-  feeDescription: string;
-  benefitDescription: string;
   isHidden: boolean;
   status: string;
 };
@@ -167,15 +195,22 @@ type StepId =
   | "type"
   | "basic"
   | "sessions"
+  | "extras"
   | "sectors"
   | "map"
   | "tickets"
   | "location"
-  | "extras"
   | "review";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+
+const DEFAULT_TIMEZONE = "America/Sao_Paulo";
+const DEFAULT_STATUS = "PUBLISHED";
+const DEFAULT_VISIBILITY = "PUBLIC";
+const MAP_CANVAS_WIDTH = 1200;
+const MAP_CANVAS_HEIGHT = 850;
+const MAP_MIN_OBJECT_SIZE = 54;
 
 const categoryOptions: Array<{
   value: EventCategory;
@@ -241,6 +276,24 @@ const sectorColorOptions: SectorColorOption[] = [
   { label: "Índigo", value: "#4f46e5" },
   { label: "Cinza", value: "#475569" },
 ];
+
+const ticketKindOptions: Array<{ label: string; value: TicketKind }> = [
+  { label: "Inteira", value: "INTEIRA" },
+  { label: "Meia", value: "MEIA" },
+  { label: "Social", value: "SOCIAL" },
+];
+
+const mapShapeOptions: Array<{ label: string; value: MapShape }> = [
+  { label: "Retângulo", value: "RECTANGLE" },
+  { label: "Arredondado", value: "ROUNDED" },
+  { label: "Círculo", value: "CIRCLE" },
+  { label: "Pílula", value: "PILL" },
+  { label: "Quebrado", value: "FREEFORM" },
+];
+
+const lotOptions = Array.from({ length: 20 }, (_, index) => {
+  return `${index + 1}º Lote`;
+});
 
 const sectorKindCatalog: Record<SectorKind, SectorKindConfig> = {
   OPEN_ADMISSION: {
@@ -450,17 +503,38 @@ function normalizeText(value: string) {
   return trimmed ? trimmed : undefined;
 }
 
+function onlyDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function onlyMoney(value: string) {
+  const cleaned = value.replace(/[^\d,]/g, "");
+  const parts = cleaned.split(",");
+
+  if (parts.length <= 1) return cleaned;
+
+  return `${parts[0]},${parts.slice(1).join("").slice(0, 2)}`;
+}
+
+function priceToApiString(value: string) {
+  const normalized = value.replace(/\./g, "").replace(",", ".");
+  const parsed = Number(normalized);
+
+  if (Number.isNaN(parsed)) return "0.00";
+
+  return parsed.toFixed(2);
+}
+
+function parseMoney(value: string) {
+  const normalized = value.replace(/\./g, "").replace(",", ".");
+  const parsed = Number(normalized);
+
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 function toIsoOrUndefined(value: string) {
   if (!value) return undefined;
   return new Date(value).toISOString();
-}
-
-function toNumberOrUndefined(value: string) {
-  if (!value) return undefined;
-
-  const parsed = Number(value.replace(",", "."));
-
-  return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 function toIntOrUndefined(value: string) {
@@ -478,6 +552,149 @@ function parseGallery(value: string) {
     .filter(Boolean);
 }
 
+function getNumericValue(value: string) {
+  const parsed = Number(value);
+
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function getLotNumber(lotLabel: string) {
+  const parsed = Number.parseInt(lotLabel.replace(/\D/g, ""), 10);
+
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function getTicketKindLabel(ticketKind: TicketKind) {
+  return (
+    ticketKindOptions.find((option) => option.value === ticketKind)?.label ||
+    "Inteira"
+  );
+}
+
+function getTodayInputDateTime() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+
+  return now.toISOString().slice(0, 16);
+}
+
+function formatInputDateTimeFromDate(date: Date) {
+  const normalized = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+
+  return normalized.toISOString().slice(0, 16);
+}
+
+function shiftInputDateTime(value: string, diffMs: number) {
+  if (!value) return value;
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return formatInputDateTimeFromDate(new Date(date.getTime() + diffMs));
+}
+
+function getApiOrigin() {
+  try {
+    return new URL(API_BASE_URL).origin;
+  } catch {
+    return "";
+  }
+}
+
+function normalizeMediaUrl(value: string | undefined) {
+  if (!value) return undefined;
+
+  const trimmed = value.trim();
+
+  if (!trimmed) return undefined;
+
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
+  }
+
+  const apiOrigin = getApiOrigin();
+
+  if (!apiOrigin) return trimmed;
+
+  if (trimmed.startsWith("/")) {
+    return `${apiOrigin}${trimmed}`;
+  }
+
+  if (trimmed.startsWith("uploads/")) {
+    return `${apiOrigin}/${trimmed}`;
+  }
+
+  return trimmed;
+}
+
+function isValidHttpUrl(value: string | undefined) {
+  if (!value) return false;
+
+  try {
+    const url = new URL(value);
+
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isValidMapUrl(value: string) {
+  if (!value.trim()) return false;
+
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+
+    return (
+      host.includes("google.") ||
+      host.includes("maps.app.goo.gl") ||
+      host.includes("goo.gl") ||
+      host.includes("waze.com") ||
+      host.includes("openstreetmap.org") ||
+      host.includes("bing.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getDatePart(value: string) {
+  return value ? value.slice(0, 10) : "";
+}
+
+function getTimePart(value: string, fallback = "23:59") {
+  if (!value || !value.includes("T")) return fallback;
+
+  return value.slice(11, 16) || fallback;
+}
+
+function mergeDateAndTime(
+  dateSource: string,
+  timeSource: string,
+  fallbackTime = "23:59",
+) {
+  const datePart = getDatePart(dateSource);
+
+  if (!datePart) return timeSource;
+
+  return `${datePart}T${getTimePart(timeSource, fallbackTime)}`;
+}
+
+function formatSessionNameFromDate(value: string) {
+  if (!value) return "Data sem início";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "Data sem início";
+
+  return date.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "long",
+  });
+}
+
 function getCategoryPreset(category: EventCategory): CategoryPreset {
   if (category === "TEATROS_ESPETACULOS") {
     return {
@@ -485,7 +702,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
       description: "Criação focada em sessões e cadeiras numeradas.",
       defaultSectorName: "Cadeiras numeradas",
       defaultSectorType: "NUMBERED_SEATS",
-      sessionLabel: "Sessão",
+      sessionLabel: "Data",
     };
   }
 
@@ -495,7 +712,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
       description: "Criação focada em auditórios, salas, cadeiras ou mesas.",
       defaultSectorName: "Auditório principal",
       defaultSectorType: "AUDITORIUM",
-      sessionLabel: "Atividade",
+      sessionLabel: "Data",
     };
   }
 
@@ -505,7 +722,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
       description: "Criação focada em mesas e ingressos avulsos.",
       defaultSectorName: "Salão principal",
       defaultSectorType: "DINING_ROOM",
-      sessionLabel: "Horário",
+      sessionLabel: "Data",
     };
   }
 
@@ -515,7 +732,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
       description: "Criação focada em cadeiras numeradas ou mesas.",
       defaultSectorName: "Área principal",
       defaultSectorType: "MAIN_AREA",
-      sessionLabel: "Sessão",
+      sessionLabel: "Data",
     };
   }
 
@@ -525,7 +742,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
       description: "Criação focada em ingressos de evento aberto.",
       defaultSectorName: "Entrada geral",
       defaultSectorType: "OPEN_ADMISSION",
-      sessionLabel: "Turma",
+      sessionLabel: "Data",
     };
   }
 
@@ -535,7 +752,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
       description: "Criação focada em ingressos para evento aberto.",
       defaultSectorName: "Entrada geral",
       defaultSectorType: "OPEN_ADMISSION",
-      sessionLabel: "Partida",
+      sessionLabel: "Data",
     };
   }
 
@@ -545,7 +762,7 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
       description: "Criação para ingresso aberto, plateia ou cadeiras.",
       defaultSectorName: "Entrada geral",
       defaultSectorType: "OPEN_ADMISSION",
-      sessionLabel: "Sessão",
+      sessionLabel: "Data",
     };
   }
 
@@ -557,7 +774,6 @@ function getCategoryPreset(category: EventCategory): CategoryPreset {
     sessionLabel: "Data",
   };
 }
-
 function getDefaultSectorName(
   category: EventCategory,
   sectorKind: SectorKind,
@@ -581,7 +797,7 @@ function getDefaultSectorName(
 function createDefaultSession(index = 0): EventSessionFormItem {
   return {
     localId: newLocalId("session"),
-    name: index === 0 ? "Data principal" : `Data ${index + 1}`,
+    name: index === 0 ? "Data sem início" : `Data ${index + 1}`,
     description: "",
     startsAt: "",
     endsAt: "",
@@ -625,8 +841,9 @@ function createDefaultTicketType(
     eventSessionLocalId: sessionLocalId,
     venueSectorLocalId: sectorLocalId,
     occupancyMode,
-    name: index === 0 ? "Inteira" : "",
-    lotLabel: `${index + 1}º Lote`,
+    ticketKind: "INTEIRA",
+    name: "Inteira",
+    lotLabel: "1º Lote",
     description: "",
     price: "",
     quantity: "100",
@@ -635,9 +852,6 @@ function createDefaultTicketType(
     minPerOrder: "1",
     maxPerOrder: "",
     displayOrder: String(index),
-    feeAmount: "",
-    feeDescription: "",
-    benefitDescription: "",
     isHidden: false,
     status: "ACTIVE",
   };
@@ -660,7 +874,7 @@ function textareaClass(hasError = false) {
 }
 
 function formatMoneyPreview(value: string) {
-  const parsed = Number(value.replace(",", "."));
+  const parsed = parseMoney(value);
 
   if (Number.isNaN(parsed)) return "R$ 0,00";
 
@@ -690,12 +904,6 @@ function getCategoryLabel(value: EventCategory) {
   return categoryOptions.find((item) => item.value === value)?.label || value;
 }
 
-function getNumericValue(value: string) {
-  const parsed = Number(value);
-
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
 function Field({
   label,
   value,
@@ -707,6 +915,8 @@ function Field({
   helper,
   min,
   disabled = false,
+  onlyNumbers = false,
+  money = false,
 }: {
   label: string;
   value: string;
@@ -718,7 +928,23 @@ function Field({
   helper?: string;
   min?: number;
   disabled?: boolean;
+  onlyNumbers?: boolean;
+  money?: boolean;
 }) {
+  function handleChange(rawValue: string) {
+    if (onlyNumbers) {
+      onChange(onlyDigits(rawValue));
+      return;
+    }
+
+    if (money) {
+      onChange(onlyMoney(rawValue));
+      return;
+    }
+
+    onChange(rawValue);
+  }
+
   return (
     <div>
       <label className="mb-2 block text-sm font-black text-slate-700">
@@ -731,7 +957,8 @@ function Field({
         value={value}
         min={min}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
+        inputMode={onlyNumbers || money ? "numeric" : undefined}
+        onChange={(event) => handleChange(event.target.value)}
         placeholder={placeholder}
         className={`${inputClass(error)} ${
           disabled ? "cursor-not-allowed bg-slate-100 text-slate-500" : ""
@@ -760,6 +987,7 @@ function TextAreaField({
   error = false,
   helper,
   minHeight = "min-h-[120px]",
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -769,6 +997,7 @@ function TextAreaField({
   error?: boolean;
   helper?: string;
   minHeight?: string;
+  disabled?: boolean;
 }) {
   return (
     <div>
@@ -779,9 +1008,12 @@ function TextAreaField({
 
       <textarea
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className={`${textareaClass(error)} ${minHeight}`}
+        className={`${textareaClass(error)} ${minHeight} ${
+          disabled ? "cursor-not-allowed bg-slate-100 text-slate-500" : ""
+        }`}
       />
 
       {helper ? (
@@ -803,12 +1035,14 @@ function SelectField({
   onChange,
   options,
   required = false,
+  disabled = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
-  options: Array<{ label: string; value: string }>;
+  options: Array<{ label: string; value: string; disabled?: boolean }>;
   required?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div>
@@ -819,11 +1053,18 @@ function SelectField({
 
       <select
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className={inputClass()}
+        className={`${inputClass()} ${
+          disabled ? "cursor-not-allowed bg-slate-100 text-slate-500" : ""
+        }`}
       >
         {options.map((option) => (
-          <option key={option.value} value={option.value}>
+          <option
+            key={option.value}
+            value={option.value}
+            disabled={option.disabled}
+          >
             {option.label}
           </option>
         ))}
@@ -879,11 +1120,13 @@ function StepShell({
   );
 }
 
-function ImageUploadField({
+function EventMediaUploadField({
   label,
   helper,
   value,
   kind,
+  required = false,
+  error = false,
   onChange,
 }: {
   label: string;
@@ -897,15 +1140,37 @@ function ImageUploadField({
     | "sector-map"
     | "gallery"
     | "event-image";
+  required?: boolean;
+  error?: boolean;
   onChange: (value: string) => void;
 }) {
   const [uploading, setUploading] = useState(false);
 
+  function isAllowedMedia(file: File) {
+    return file.type.startsWith("image/") || file.type.startsWith("video/");
+  }
+
+  function isVideoFile(url: string) {
+    const lowerUrl = url.toLowerCase();
+
+    return (
+      lowerUrl.includes(".mp4") ||
+      lowerUrl.includes(".webm") ||
+      lowerUrl.includes(".mov") ||
+      lowerUrl.includes(".m4v")
+    );
+  }
+
   async function handleUpload(file: File) {
+    if (!isAllowedMedia(file)) {
+      alert("Envie apenas arquivos de imagem ou vídeo.");
+      return;
+    }
+
     const token = localStorage.getItem("token");
 
     if (!token || token === "undefined") {
-      alert("Faça login novamente para enviar imagens.");
+      alert("Faça login novamente para enviar arquivos.");
       window.location.href = "/login";
       return;
     }
@@ -931,7 +1196,7 @@ function ImageUploadField({
         alert(
           typeof result?.message === "string"
             ? result.message
-            : "Erro ao enviar imagem",
+            : "Erro ao enviar arquivo",
         );
         return;
       }
@@ -940,32 +1205,63 @@ function ImageUploadField({
         result?.url || result?.publicUrl || result?.path || result?.fileUrl;
 
       if (!uploadedUrl) {
-        alert("Upload concluído, mas a API não retornou a URL da imagem.");
+        alert("Upload concluído, mas a API não retornou a URL do arquivo.");
         return;
       }
 
-      onChange(uploadedUrl);
-    } catch (error) {
-      console.error("UPLOAD IMAGE ERROR:", error);
+      onChange(normalizeMediaUrl(uploadedUrl) || uploadedUrl);
+    } catch (uploadError) {
+      console.error("UPLOAD MEDIA ERROR:", uploadError);
       alert("Erro ao conectar com a API de upload.");
     } finally {
       setUploading(false);
     }
   }
 
+  const normalizedValue = normalizeMediaUrl(value) || value;
+  const isVideo = isVideoFile(normalizedValue);
+
   return (
-    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-      <label className="block text-sm font-black text-slate-800">{label}</label>
-      {helper ? (
-        <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
-          {helper}
-        </p>
-      ) : null}
+    <div
+      className={`rounded-[1.75rem] border p-5 transition ${
+        error
+          ? "border-rose-300 bg-rose-50"
+          : "border-slate-200 bg-white shadow-sm"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <label className="block text-sm font-black text-slate-900">
+            {label}
+            {required ? <span className="text-rose-600"> *</span> : null}
+          </label>
+
+          {helper ? (
+            <p
+              className={`mt-1 text-xs font-semibold leading-5 ${
+                error ? "text-rose-600" : "text-slate-500"
+              }`}
+            >
+              {helper}
+            </p>
+          ) : null}
+        </div>
+
+        {value ? (
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-700">
+            Enviado
+          </span>
+        ) : (
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+            Pendente
+          </span>
+        )}
+      </div>
 
       <div className="mt-4 flex flex-col gap-3">
         <input
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           disabled={uploading}
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -974,24 +1270,44 @@ function ImageUploadField({
               void handleUpload(file);
             }
           }}
-          className="block w-full cursor-pointer rounded-2xl border border-slate-300 bg-white text-sm font-semibold text-slate-700 file:mr-4 file:h-[48px] file:border-0 file:bg-slate-950 file:px-5 file:text-sm file:font-black file:text-white hover:file:bg-sky-700"
+          className="block w-full cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 text-sm font-semibold text-slate-700 file:mr-4 file:h-[48px] file:border-0 file:bg-slate-950 file:px-5 file:text-sm file:font-black file:text-white hover:file:bg-sky-700"
         />
 
         <input
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder="Ou cole uma URL manualmente"
-          className={inputClass()}
+          className={inputClass(error)}
         />
 
         {uploading ? (
-          <p className="text-xs font-black text-sky-600">Enviando imagem...</p>
+          <p className="text-xs font-black text-sky-600">Enviando arquivo...</p>
         ) : null}
 
         {value ? (
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={value} alt={label} className="h-40 w-full object-cover" />
+            {isVideo ? (
+              <video
+                src={normalizedValue}
+                className="h-44 w-full object-cover"
+                controls
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={normalizedValue}
+                alt={label}
+                className="h-44 w-full object-cover"
+              />
+            )}
+
+            <button
+              type="button"
+              onClick={() => onChange("")}
+              className="w-full bg-white px-4 py-3 text-xs font-black text-rose-600 hover:bg-rose-50"
+            >
+              Remover arquivo
+            </button>
           </div>
         ) : null}
       </div>
@@ -999,11 +1315,208 @@ function ImageUploadField({
   );
 }
 
-function SectorColorPicker({
+function GalleryUploadField({
   value,
+  required = false,
+  error = false,
   onChange,
 }: {
   value: string;
+  required?: boolean;
+  error?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const galleryItems = parseGallery(value);
+
+  function isAllowedMedia(file: File) {
+    return file.type.startsWith("image/") || file.type.startsWith("video/");
+  }
+
+  function isVideoFile(url: string) {
+    const lowerUrl = url.toLowerCase();
+
+    return (
+      lowerUrl.includes(".mp4") ||
+      lowerUrl.includes(".webm") ||
+      lowerUrl.includes(".mov") ||
+      lowerUrl.includes(".m4v")
+    );
+  }
+
+  async function uploadOne(file: File) {
+    if (!isAllowedMedia(file)) {
+      throw new Error("A galeria aceita apenas imagens ou vídeos.");
+    }
+
+    const token = localStorage.getItem("token");
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      throw new Error("Faça login novamente para enviar arquivos.");
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("kind", "gallery");
+
+    const response = await fetch(`${API_BASE_URL}/uploads/event-image`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        typeof result?.message === "string"
+          ? result.message
+          : "Erro ao enviar arquivo da galeria",
+      );
+    }
+
+    const uploadedUrl =
+      result?.url || result?.publicUrl || result?.path || result?.fileUrl || "";
+
+    return normalizeMediaUrl(uploadedUrl) || uploadedUrl;
+  }
+
+  async function handleMultipleUpload(files: FileList | null) {
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+
+    try {
+      const uploadedUrls: string[] = [];
+
+      for (const file of Array.from(files)) {
+        const uploadedUrl = await uploadOne(file);
+
+        if (uploadedUrl) {
+          uploadedUrls.push(uploadedUrl);
+        }
+      }
+
+      onChange([...galleryItems, ...uploadedUrls].join("\n"));
+    } catch (uploadError) {
+      console.error("UPLOAD GALLERY ERROR:", uploadError);
+      alert(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Erro ao enviar galeria.",
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function removeGalleryItem(item: string) {
+    onChange(galleryItems.filter((galleryItem) => galleryItem !== item).join("\n"));
+  }
+
+  return (
+    <div
+      className={`rounded-[1.75rem] border p-5 ${
+        error ? "border-rose-300 bg-rose-50" : "border-slate-200 bg-white shadow-sm"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <label className="block text-sm font-black text-slate-900">
+            Galeria
+            {required ? <span className="text-rose-600"> *</span> : null}
+          </label>
+
+          <p
+            className={`mt-1 text-xs font-semibold leading-5 ${
+              error ? "text-rose-600" : "text-slate-500"
+            }`}
+          >
+            Selecione várias imagens ou vídeos. Cada arquivo enviado entra na galeria.
+          </p>
+        </div>
+
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+          {galleryItems.length} arquivo(s)
+        </span>
+      </div>
+
+      <input
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        disabled={uploading}
+        onChange={(event) => {
+          void handleMultipleUpload(event.target.files);
+        }}
+        className="mt-4 block w-full cursor-pointer rounded-2xl border border-slate-300 bg-slate-50 text-sm font-semibold text-slate-700 file:mr-4 file:h-[48px] file:border-0 file:bg-slate-950 file:px-5 file:text-sm file:font-black file:text-white hover:file:bg-sky-700"
+      />
+
+      {uploading ? (
+        <p className="mt-3 text-xs font-black text-sky-600">
+          Enviando arquivos da galeria...
+        </p>
+      ) : null}
+
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Ou cole uma URL por linha."
+        className={`${textareaClass(error)} mt-4`}
+      />
+
+      {galleryItems.length > 0 ? (
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          {galleryItems.map((item) => {
+            const normalizedItem = normalizeMediaUrl(item) || item;
+            const isVideo = isVideoFile(normalizedItem);
+
+            return (
+              <div
+                key={item}
+                className="overflow-hidden rounded-2xl border border-slate-200 bg-white"
+              >
+                {isVideo ? (
+                  <video
+                    src={normalizedItem}
+                    className="h-28 w-full object-cover"
+                    controls
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={normalizedItem}
+                    alt="Arquivo da galeria"
+                    className="h-28 w-full object-cover"
+                  />
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => removeGalleryItem(item)}
+                  className="w-full bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                >
+                  Remover
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SectorColorPicker({
+  value,
+  usedColors,
+  onChange,
+}: {
+  value: string;
+  usedColors: string[];
   onChange: (value: string) => void;
 }) {
   return (
@@ -1015,18 +1528,26 @@ function SectorColorPicker({
       <div className="grid grid-cols-5 gap-2">
         {sectorColorOptions.map((color) => {
           const active = color.value === value;
+          const disabled = !active && usedColors.includes(color.value);
 
           return (
             <button
               key={color.value}
               type="button"
+              disabled={disabled}
               onClick={() => onChange(color.value)}
               className={`flex h-11 items-center justify-center rounded-2xl border transition ${
                 active
                   ? "border-slate-950 ring-4 ring-slate-200"
-                  : "border-slate-200 hover:border-slate-400"
+                  : disabled
+                    ? "cursor-not-allowed border-slate-200 opacity-30"
+                    : "border-slate-200 hover:border-slate-400"
               }`}
-              title={color.label}
+              title={
+                disabled
+                  ? `${color.label} já está sendo usada em outro setor`
+                  : color.label
+              }
               aria-label={`Selecionar cor ${color.label}`}
             >
               <span
@@ -1044,7 +1565,6 @@ function SectorColorPicker({
     </div>
   );
 }
-
 export default function NewEventPage() {
   const [organizers, setOrganizers] = useState<OrganizerItem[]>([]);
   const [loadingOrganizers, setLoadingOrganizers] = useState(true);
@@ -1064,17 +1584,16 @@ export default function NewEventPage() {
   const [occupancyMode, setOccupancyMode] = useState<OccupancyMode>(
     occupancyPresetCatalog.PLATEIA_ONLY.occupancyMode,
   );
-  const [status, setStatus] = useState("DRAFT");
-  const [visibility, setVisibility] = useState("PUBLIC");
-  const [timezone, setTimezone] = useState("America/Sao_Paulo");
-  const [eventDate, setEventDate] = useState("");
+
+  const [status] = useState(DEFAULT_STATUS);
+  const [visibility] = useState(DEFAULT_VISIBILITY);
+  const [timezone] = useState(DEFAULT_TIMEZONE);
+
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [saleStartAt, setSaleStartAt] = useState("");
   const [saleEndAt, setSaleEndAt] = useState("");
   const [capacity, setCapacity] = useState("100");
-  const [featured, setFeatured] = useState(false);
-  const [highlightTag, setHighlightTag] = useState("");
   const [checkoutTitle, setCheckoutTitle] = useState("");
   const [checkoutSubtitle, setCheckoutSubtitle] = useState("");
 
@@ -1111,6 +1630,8 @@ export default function NewEventPage() {
   const [galleryText, setGalleryText] = useState("");
 
   const [ageRating, setAgeRating] = useState("");
+  const [refundPolicyEnabled, setRefundPolicyEnabled] = useState(false);
+  const [transferPolicyEnabled, setTransferPolicyEnabled] = useState(false);
   const [refundPolicy, setRefundPolicy] = useState("");
   const [halfEntryPolicy, setHalfEntryPolicy] = useState("");
   const [transferPolicy, setTransferPolicy] = useState("");
@@ -1127,12 +1648,16 @@ export default function NewEventPage() {
     createDefaultSector("FESTAS_SHOWS", initialOccupancyPreset, 0),
   ]);
   const [mapObjects, setMapObjects] = useState<SeatMapObjectFormItem[]>([]);
-  const [seatRows, setSeatRows] = useState("8");
-  const [seatColumns, setSeatColumns] = useState("12");
   const [tableCount, setTableCount] = useState("20");
   const [seatsPerTable, setSeatsPerTable] = useState("4");
-  const [selectedSeatMapSectorId, setSelectedSeatMapSectorId] = useState("");
-  const [selectedTableMapSectorId, setSelectedTableMapSectorId] = useState("");
+  const [tableSaleMode, setTableSaleMode] = useState<"WHOLE_TABLE" | "BY_SEAT">(
+    "WHOLE_TABLE",
+  );
+
+    const [selectedMapObjectId, setSelectedMapObjectId] = useState("");
+  const [mapInteraction, setMapInteraction] = useState<MapInteraction | null>(
+    null,
+  );
 
   const [ticketTypes, setTicketTypes] = useState<TicketTypeFormItem[]>([
     createDefaultTicketType(
@@ -1164,8 +1689,9 @@ export default function NewEventPage() {
 
   const allowSeatMap = selectedOccupancyPreset.allowSeatMap;
   const allowTableMap = selectedOccupancyPreset.allowTableMap;
-  const showMapBuilder = selectedOccupancyPreset.requiresMap;
   const isOpenAdmissionOnly = occupancyPresetKey === "OPEN_ADMISSION";
+  const isOnlineEvent = mode === "ONLINE";
+  const todayInputDateTime = getTodayInputDateTime();
 
   const generalCapacityNumber = useMemo(() => {
     return getNumericValue(capacity);
@@ -1193,7 +1719,21 @@ export default function NewEventPage() {
     return sectorCapacityTotal > generalCapacityNumber;
   }, [generalCapacityNumber, sectorCapacityTotal]);
 
+  const hasRequiredSectorCapacityMissing = useMemo(() => {
+    return sectors.some((sector) => getNumericValue(sector.capacity) <= 0);
+  }, [sectors]);
+
+  const hasDuplicateSectorColors = useMemo(() => {
+    const colors = sectors.map((sector) => sector.color).filter(Boolean);
+
+    return new Set(colors).size !== colors.length;
+  }, [sectors]);
+
   const sectorCapacityErrorMessage = useMemo(() => {
+    if (hasRequiredSectorCapacityMissing) {
+      return "A capacidade de cada setor é obrigatória.";
+    }
+
     if (hasSectorOverCapacity) {
       return "Nenhum setor pode ter capacidade maior que a capacidade geral do evento.";
     }
@@ -1202,25 +1742,136 @@ export default function NewEventPage() {
       return "A soma das capacidades dos setores não pode ultrapassar a capacidade geral do evento.";
     }
 
+    if (hasDuplicateSectorColors) {
+      return "Cada setor deve ter uma cor diferente.";
+    }
+
     return "";
-  }, [hasSectorOverCapacity, hasSectorTotalOverCapacity]);
+  }, [
+    hasDuplicateSectorColors,
+    hasRequiredSectorCapacityMissing,
+    hasSectorOverCapacity,
+    hasSectorTotalOverCapacity,
+  ]);
 
-  const seatMapSectors = useMemo(() => {
-    return sectors.filter((sector) => sector.sectorKind === "NUMBERED_SEATS");
-  }, [sectors]);
+  const sessionCapacityTotal = useMemo(() => {
+    return sessions.reduce((sum, session) => {
+      return sum + getNumericValue(session.capacity);
+    }, 0);
+  }, [sessions]);
 
-  const tableMapSectors = useMemo(() => {
-    return sectors.filter((sector) => sector.sectorKind === "TABLES");
-  }, [sectors]);
+  const sessionCapacityErrorMessage = useMemo(() => {
+    if (!startDate) {
+      return "O início geral é obrigatório.";
+    }
+
+    if (!endDate) {
+      return "O fim geral é obrigatório.";
+    }
+
+    if (endDate < startDate) {
+      return "O fim geral não pode ser antes do início geral.";
+    }
+
+    const hasIncompleteSession = sessions.some((session) => {
+      return (
+        !session.startsAt ||
+        !session.endsAt ||
+        getNumericValue(session.capacity) <= 0
+      );
+    });
+
+    if (hasIncompleteSession) {
+      return "Todas as datas cadastradas precisam ter início, fim e capacidade.";
+    }
+
+    const hasSessionEndBeforeStart = sessions.some((session) => {
+      return session.endsAt < session.startsAt;
+    });
+
+    if (hasSessionEndBeforeStart) {
+      return "Nenhuma data pode ter fim antes do início.";
+    }
+
+    const hasSessionOverCapacity = sessions.some((session) => {
+      return getNumericValue(session.capacity) > generalCapacityNumber;
+    });
+
+    if (hasSessionOverCapacity) {
+      return "A capacidade de uma data não pode ultrapassar a capacidade geral.";
+    }
+
+    if (
+      generalCapacityNumber > 0 &&
+      sessionCapacityTotal > generalCapacityNumber
+    ) {
+      return "A soma das capacidades das datas não pode ultrapassar a capacidade geral.";
+    }
+
+    const hasDateBeforePreviousDate = sessions.some((session, index) => {
+      if (index === 0) return false;
+
+      const previousSession = sessions[index - 1];
+
+      return Boolean(
+        session.startsAt &&
+          previousSession?.startsAt &&
+          session.startsAt < previousSession.startsAt,
+      );
+    });
+
+    if (hasDateBeforePreviousDate) {
+      return "A data 2 e as próximas datas não podem começar antes da data anterior.";
+    }
+
+    return "";
+  }, [
+    endDate,
+    generalCapacityNumber,
+    sessionCapacityTotal,
+    sessions,
+    startDate,
+  ]);
+
+  const mediaErrorMessage = useMemo(() => {
+    const normalizedCoverImageUrl = normalizeMediaUrl(coverImageUrl);
+    const normalizedBannerImageUrl = normalizeMediaUrl(bannerImageUrl);
+    const normalizedThumbnailUrl = normalizeMediaUrl(thumbnailUrl);
+    const normalizedMobileBannerUrl = normalizeMediaUrl(mobileBannerUrl);
+
+    if (!normalizedCoverImageUrl) return "A capa é obrigatória.";
+    if (!normalizedBannerImageUrl) return "O banner é obrigatório.";
+    if (!normalizedThumbnailUrl) return "A thumbnail é obrigatória.";
+    if (!normalizedMobileBannerUrl) return "O banner mobile é obrigatório.";
+
+    if (!isValidHttpUrl(normalizedCoverImageUrl)) {
+      return "A capa precisa ser uma URL válida.";
+    }
+
+    if (!isValidHttpUrl(normalizedBannerImageUrl)) {
+      return "O banner precisa ser uma URL válida.";
+    }
+
+    if (!isValidHttpUrl(normalizedThumbnailUrl)) {
+      return "A thumbnail precisa ser uma URL válida.";
+    }
+
+    if (!isValidHttpUrl(normalizedMobileBannerUrl)) {
+      return "O banner mobile precisa ser uma URL válida.";
+    }
+
+    return "";
+  }, [bannerImageUrl, coverImageUrl, mobileBannerUrl, thumbnailUrl]);
 
   const primarySessionDate = sessions.find((session) => session.startsAt)
     ?.startsAt;
-  const primaryEventDate = eventDate || primarySessionDate || "";
+  const primaryEventDate = startDate || primarySessionDate || "";
 
   const validTicketTypes = useMemo(() => {
     return ticketTypes.filter(
       (ticketType) =>
         ticketType.name.trim() &&
+        ticketType.lotLabel.trim() &&
         ticketType.price.trim() &&
         Number(ticketType.quantity) > 0,
     );
@@ -1233,20 +1884,84 @@ export default function NewEventPage() {
     }, 0);
   }, [ticketTypes]);
 
+  const ticketLotPriceErrorMessage = useMemo(() => {
+    for (const ticketType of ticketTypes) {
+      const currentLotNumber = getLotNumber(ticketType.lotLabel);
+      const currentPrice = parseMoney(ticketType.price);
+
+      if (!ticketType.venueSectorLocalId || currentLotNumber <= 1) continue;
+
+      const previousLots = ticketTypes.filter((otherTicketType) => {
+        return (
+          otherTicketType.localId !== ticketType.localId &&
+          otherTicketType.venueSectorLocalId === ticketType.venueSectorLocalId &&
+          otherTicketType.eventSessionLocalId === ticketType.eventSessionLocalId &&
+          otherTicketType.ticketKind === ticketType.ticketKind &&
+          getLotNumber(otherTicketType.lotLabel) < currentLotNumber
+        );
+      });
+
+      const mostExpensivePreviousLot = previousLots.reduce((max, item) => {
+        return Math.max(max, parseMoney(item.price));
+      }, 0);
+
+      if (mostExpensivePreviousLot > 0 && currentPrice < mostExpensivePreviousLot) {
+        return "Lotes posteriores não podem ser mais baratos que lotes anteriores do mesmo setor e do mesmo tipo de ingresso.";
+      }
+    }
+
+    return "";
+  }, [ticketTypes]);
+
+  const ticketDateErrorMessage = useMemo(() => {
+    for (const ticketType of ticketTypes) {
+      if (!ticketType.salesStartAt) continue;
+
+      if (ticketType.salesStartAt < todayInputDateTime) {
+        return "O início das vendas não pode ser antes da data e hora atual.";
+      }
+
+      if (
+        ticketType.salesEndAt &&
+        ticketType.salesStartAt &&
+        ticketType.salesEndAt < ticketType.salesStartAt
+      ) {
+        return "O fim das vendas não pode ser antes do início das vendas.";
+      }
+    }
+
+    return "";
+  }, [ticketTypes, todayInputDateTime]);
+
   const stepCompletion: Record<StepId, boolean> = {
     type: Boolean(category && occupancyPresetKey && occupancyMode),
     basic: Boolean(organizerId && name.trim() && Number(capacity) > 0),
-    sessions: sessions.some((session) => session.name.trim() && session.startsAt),
+    sessions: Boolean(
+      startDate &&
+        endDate &&
+        sessions.some((session) => session.startsAt && session.endsAt) &&
+        !sessionCapacityErrorMessage,
+    ),
+    extras: !mediaErrorMessage,
     sectors:
-      !hasSectorOverCapacity &&
-      !hasSectorTotalOverCapacity &&
+      !sectorCapacityErrorMessage &&
       (isOpenAdmissionOnly
         ? sectors.length === 1
         : sectors.some((sector) => sector.name.trim())),
-    map: !showMapBuilder || mapObjects.length > 0,
-    tickets: validTicketTypes.length > 0,
-    location: Boolean(venueName.trim() && city.trim() && stateName.trim()),
-    extras: true,
+    map: mapObjects.length > 0,
+    tickets:
+      validTicketTypes.length > 0 &&
+      !ticketLotPriceErrorMessage &&
+      !ticketDateErrorMessage,
+    location: isOnlineEvent
+      ? Boolean(venueName.trim())
+      : Boolean(
+          venueName.trim() &&
+            zipCode.trim() &&
+            mapUrl.trim() &&
+            isValidMapUrl(mapUrl) &&
+            reference.trim(),
+        ),
     review: false,
   };
 
@@ -1268,8 +1983,13 @@ export default function NewEventPage() {
     },
     {
       id: "sessions",
-      title: `Datas / ${preset.sessionLabel.toLowerCase()}s`,
-      description: "Uma ou várias datas do evento.",
+      title: "Datas",
+      description: "Início, fim e datas do evento.",
+    },
+    {
+      id: "extras",
+      title: "Imagens e políticas",
+      description: "Uploads, textos extras e regras.",
     },
     {
       id: "sectors",
@@ -1281,24 +2001,17 @@ export default function NewEventPage() {
     {
       id: "map",
       title: "Mapa",
-      description: "Cadeiras numeradas ou mesas marcadas.",
-      optional: !showMapBuilder,
+      description: "Blocos coloridos por setor.",
     },
     {
       id: "tickets",
       title: "Ingressos / lotes",
-      description: "Preços, quantidades e vínculos.",
+      description: "Preços, lotes, quantidades e vínculos.",
     },
     {
       id: "location",
       title: "Local e acesso",
-      description: "Endereço, cidade e instruções.",
-    },
-    {
-      id: "extras",
-      title: "Imagens e políticas",
-      description: "Uploads, textos extras e regras.",
-      optional: true,
+      description: "CEP, endereço, mapa e instruções.",
     },
     {
       id: "review",
@@ -1312,12 +2025,17 @@ export default function NewEventPage() {
     name: submitAttempted && !name.trim(),
     capacity: submitAttempted && (!capacity || Number(capacity) < 1),
     sessions: submitAttempted && !stepCompletion.sessions,
+    extras: submitAttempted && !stepCompletion.extras,
     sectors: submitAttempted && !stepCompletion.sectors,
     map: submitAttempted && !stepCompletion.map,
     tickets: submitAttempted && !stepCompletion.tickets,
     venueName: submitAttempted && !venueName.trim(),
-    city: submitAttempted && !city.trim(),
-    stateName: submitAttempted && !stateName.trim(),
+    zipCode: submitAttempted && !isOnlineEvent && !zipCode.trim(),
+    mapUrl:
+      submitAttempted &&
+      !isOnlineEvent &&
+      (!mapUrl.trim() || !isValidMapUrl(mapUrl)),
+    reference: submitAttempted && !isOnlineEvent && !reference.trim(),
   };
 
   useEffect(() => {
@@ -1355,7 +2073,14 @@ export default function NewEventPage() {
         if (organizersList.length > 0) {
           setOrganizerId(organizersList[0].id);
           setProducerDescription(
-            organizersList[0].tradeName || organizersList[0].legalName || "",
+            [
+              organizersList[0].tradeName || organizersList[0].legalName,
+              organizersList[0].email,
+              organizersList[0].phone,
+              organizersList[0].document,
+            ]
+              .filter(Boolean)
+              .join(" • "),
           );
         }
       } catch (error) {
@@ -1391,8 +2116,6 @@ export default function NewEventPage() {
     setOccupancyPresetKey(nextKey);
     setOccupancyMode(nextPreset.occupancyMode);
     setMapObjects([]);
-    setSelectedSeatMapSectorId("");
-    setSelectedTableMapSectorId("");
     setSectors([nextDefaultSector]);
 
     setTicketTypes((currentTicketTypes) =>
@@ -1413,8 +2136,6 @@ export default function NewEventPage() {
     setOccupancyPresetKey(nextPresetKey);
     setOccupancyMode(nextPreset.occupancyMode);
     setMapObjects([]);
-    setSelectedSeatMapSectorId("");
-    setSelectedTableMapSectorId("");
     setSectors([nextDefaultSector]);
 
     setTicketTypes((currentTicketTypes) =>
@@ -1473,21 +2194,44 @@ export default function NewEventPage() {
       return true;
     }
 
+    if (currentStep.id === "sessions" && sessionCapacityErrorMessage) {
+      alert(sessionCapacityErrorMessage);
+      return false;
+    }
+
+    if (currentStep.id === "extras" && mediaErrorMessage) {
+      alert(mediaErrorMessage);
+      return false;
+    }
+
     if (currentStep.id === "sectors" && sectorCapacityErrorMessage) {
       alert(sectorCapacityErrorMessage);
+      return false;
+    }
+
+    if (currentStep.id === "tickets" && ticketLotPriceErrorMessage) {
+      alert(ticketLotPriceErrorMessage);
+      return false;
+    }
+
+    if (currentStep.id === "tickets" && ticketDateErrorMessage) {
+      alert(ticketDateErrorMessage);
       return false;
     }
 
     const messages: Record<StepId, string> = {
       type: "Escolha a categoria e o tipo de ocupação do evento.",
       basic: "Preencha produtora, nome do evento e capacidade geral.",
-      sessions: "Cadastre pelo menos uma data ou sessão com início.",
-      sectors: "Cadastre pelo menos um setor ou área válido.",
-      map: "Gere o mapa de cadeiras ou mesas para continuar.",
+      sessions:
+        "Preencha início geral, fim geral e todas as datas com início, fim e capacidade.",
+      extras: "Envie capa, banner, thumbnail e banner mobile.",
+      sectors: "Cadastre setores válidos com capacidade e cor única.",
+      map: "Gere o mapa em blocos para continuar.",
       tickets:
-        "Cadastre pelo menos um ingresso válido com nome, preço e quantidade.",
-      location: "Preencha local, cidade e estado.",
-      extras: "",
+        "Cadastre pelo menos um ingresso válido com tipo, lote, nome, preço e quantidade.",
+      location: isOnlineEvent
+        ? "Informe pelo menos o nome ou canal do evento online."
+        : "Preencha CEP, URL válida do mapa, nome do local e referência.",
       review: "",
     };
 
@@ -1509,10 +2253,91 @@ export default function NewEventPage() {
     setActiveStepIndex((currentIndex) => Math.max(currentIndex - 1, 0));
   }
 
+  function handleGeneralStartDateChange(value: string) {
+    const oldStartDate = startDate;
+    const hasOldStartDate = Boolean(oldStartDate);
+    const diffMs =
+      hasOldStartDate && value
+        ? new Date(value).getTime() - new Date(oldStartDate).getTime()
+        : 0;
+
+    setStartDate(value);
+
+    setEndDate((currentEndDate) => {
+      if (!currentEndDate) return value;
+
+      if (!hasOldStartDate) return currentEndDate;
+
+      return shiftInputDateTime(currentEndDate, diffMs);
+    });
+
+    setSessions((currentSessions) => {
+      return currentSessions.map((session, index) => {
+        const nextStartsAt = session.startsAt
+          ? hasOldStartDate
+            ? shiftInputDateTime(session.startsAt, diffMs)
+            : session.startsAt
+          : value;
+
+        const nextEndsAt = session.endsAt
+          ? hasOldStartDate
+            ? shiftInputDateTime(session.endsAt, diffMs)
+            : session.endsAt
+          : value;
+
+        return {
+          ...session,
+          startsAt: nextStartsAt,
+          endsAt: nextEndsAt,
+          name: nextStartsAt
+            ? formatSessionNameFromDate(nextStartsAt)
+            : index === 0
+              ? "Data sem início"
+              : `Data ${index + 1}`,
+          capacity: session.capacity || capacity,
+        };
+      });
+    });
+  }
+
+  function handleGeneralEndDateChange(value: string) {
+    const oldEndDate = endDate;
+    const hasOldEndDate = Boolean(oldEndDate);
+    const diffMs =
+      hasOldEndDate && value
+        ? new Date(value).getTime() - new Date(oldEndDate).getTime()
+        : 0;
+
+    setEndDate(value);
+
+    setSessions((currentSessions) => {
+      return currentSessions.map((session) => {
+        const nextEndsAt = session.endsAt
+          ? hasOldEndDate
+            ? shiftInputDateTime(session.endsAt, diffMs)
+            : session.endsAt
+          : value;
+
+        return {
+          ...session,
+          endsAt: nextEndsAt,
+        };
+      });
+    });
+  }
+
   function addSession() {
     setSessions((currentSessions) => [
       ...currentSessions,
-      createDefaultSession(currentSessions.length),
+      {
+        ...createDefaultSession(currentSessions.length),
+        startsAt: startDate,
+        endsAt: endDate,
+        name: startDate
+          ? formatSessionNameFromDate(startDate)
+          : `Data ${currentSessions.length + 1}`,
+        capacity,
+      },
     ]);
   }
 
@@ -1522,9 +2347,30 @@ export default function NewEventPage() {
     value: EventSessionFormItem[K],
   ) {
     setSessions((currentSessions) =>
-      currentSessions.map((session) =>
-        session.localId === localId ? { ...session, [field]: value } : session,
-      ),
+      currentSessions.map((session) => {
+        if (session.localId !== localId) return session;
+
+        const nextSession = { ...session, [field]: value };
+
+        if (field === "startsAt") {
+          const formattedName = formatSessionNameFromDate(String(value));
+
+          return {
+            ...nextSession,
+            name: formattedName,
+            endsAt: session.endsAt || String(value),
+          };
+        }
+
+        if (field === "capacity") {
+          return {
+            ...nextSession,
+            capacity: onlyDigits(String(value)),
+          };
+        }
+
+        return nextSession;
+      }),
     );
   }
 
@@ -1543,22 +2389,34 @@ export default function NewEventPage() {
       ),
     );
   }
-
   function addSector() {
     if (!selectedOccupancyPreset.supportsMultipleSectors) {
       alert("Este tipo de evento usa área única, sem setores separados.");
       return;
     }
 
+    const nextIndex = sectors.length;
+    const nextColor =
+      sectorColorOptions.find(
+        (color) => !sectors.some((sector) => sector.color === color.value),
+      )?.value || sectorColorOptions[nextIndex % sectorColorOptions.length].value;
+
+    const nextSector = createDefaultSector(
+      category,
+      selectedOccupancyPreset,
+      nextIndex,
+      selectedOccupancyPreset.defaultSectorKind,
+    );
+
     setSectors((currentSectors) => [
       ...currentSectors,
-      createDefaultSector(
-        category,
-        selectedOccupancyPreset,
-        currentSectors.length,
-        selectedOccupancyPreset.defaultSectorKind,
-      ),
+      {
+        ...nextSector,
+        color: nextColor,
+      },
     ]);
+
+    setMapObjects([]);
   }
 
   function updateSector<K extends keyof VenueSectorFormItem>(
@@ -1574,6 +2432,37 @@ export default function NewEventPage() {
       syncTicketTypesWithSectors(nextSectors);
       return nextSectors;
     });
+
+    setMapObjects((currentObjects) =>
+      currentObjects.map((object) => {
+        if (object.venueSectorLocalId !== localId) return object;
+
+        const linkedSector = sectors.find((sector) => sector.localId === localId);
+
+        return {
+          ...object,
+          label:
+            field === "name" && typeof value === "string"
+              ? value
+              : object.label,
+          capacity:
+            field === "capacity" && typeof value === "string"
+              ? value
+              : object.capacity,
+          metadata: {
+            ...object.metadata,
+            sectorName:
+              field === "name" && typeof value === "string"
+                ? value
+                : linkedSector?.name,
+            sectorColor:
+              field === "color" && typeof value === "string"
+                ? value
+                : linkedSector?.color,
+          },
+        };
+      }),
+    );
   }
 
   function updateSectorKind(localId: string, sectorKind: SectorKind) {
@@ -1595,9 +2484,7 @@ export default function NewEventPage() {
       return nextSectors;
     });
 
-    setMapObjects((currentObjects) =>
-      currentObjects.filter((object) => object.venueSectorLocalId !== localId),
-    );
+    setMapObjects([]);
   }
 
   function removeSector(localId: string) {
@@ -1630,19 +2517,83 @@ export default function NewEventPage() {
     );
   }
 
+  function getTicketLotOptions(ticketType: TicketTypeFormItem) {
+    return lotOptions.map((lotLabel) => {
+      const alreadyExistsForSameSectorAndDate = ticketTypes.some(
+        (otherTicketType) => {
+          return (
+            otherTicketType.localId !== ticketType.localId &&
+            otherTicketType.venueSectorLocalId === ticketType.venueSectorLocalId &&
+            otherTicketType.eventSessionLocalId ===
+              ticketType.eventSessionLocalId &&
+            otherTicketType.ticketKind === ticketType.ticketKind &&
+            otherTicketType.lotLabel === lotLabel
+          );
+        },
+      );
+
+      return {
+        label: alreadyExistsForSameSectorAndDate
+          ? `${lotLabel} indisponível para esta data/setor/tipo`
+          : lotLabel,
+        value: lotLabel,
+        disabled: alreadyExistsForSameSectorAndDate,
+      };
+    });
+  }
+
+  function hasFirstLotForTicket(ticketType: TicketTypeFormItem) {
+    return ticketTypes.some((otherTicketType) => {
+      return (
+        otherTicketType.localId !== ticketType.localId &&
+        otherTicketType.venueSectorLocalId === ticketType.venueSectorLocalId &&
+        otherTicketType.eventSessionLocalId === ticketType.eventSessionLocalId &&
+        otherTicketType.ticketKind === ticketType.ticketKind &&
+        otherTicketType.lotLabel === "1º Lote"
+      );
+    });
+  }
+
+  function getPreviousLotEndDate(
+    ticketType: TicketTypeFormItem,
+    nextLotLabel: string,
+  ) {
+    const nextLotNumber = getLotNumber(nextLotLabel);
+
+    if (nextLotNumber <= 1) return "";
+
+    const previousLot = ticketTypes.find((otherTicketType) => {
+      return (
+        otherTicketType.localId !== ticketType.localId &&
+        otherTicketType.venueSectorLocalId === ticketType.venueSectorLocalId &&
+        otherTicketType.eventSessionLocalId === ticketType.eventSessionLocalId &&
+        otherTicketType.ticketKind === ticketType.ticketKind &&
+        getLotNumber(otherTicketType.lotLabel) === nextLotNumber - 1
+      );
+    });
+
+    return previousLot?.salesEndAt || "";
+  }
+
   function addTicketType() {
     const firstSessionId = sessions[0]?.localId || "";
     const firstSectorId = isOpenAdmissionOnly ? "" : sectors[0]?.localId || "";
     const firstSector = sectors.find((sector) => sector.localId === firstSectorId);
+    const firstSession = sessions.find((session) => session.localId === firstSessionId);
 
     setTicketTypes((currentTicketTypes) => [
       ...currentTicketTypes,
-      createDefaultTicketType(
-        currentTicketTypes.length,
-        firstSessionId,
-        firstSectorId,
-        firstSector?.occupancyMode || occupancyMode,
-      ),
+      {
+        ...createDefaultTicketType(
+          currentTicketTypes.length,
+          firstSessionId,
+          firstSectorId,
+          firstSector?.occupancyMode || occupancyMode,
+        ),
+        salesEndAt: firstSession?.startsAt
+          ? mergeDateAndTime(firstSession.startsAt, firstSession.endsAt, "23:59")
+          : "",
+      },
     ]);
   }
 
@@ -1655,20 +2606,142 @@ export default function NewEventPage() {
       currentTicketTypes.map((ticketType) => {
         if (ticketType.localId !== localId) return ticketType;
 
+        if (field === "price") {
+          return {
+            ...ticketType,
+            price: onlyMoney(String(value)),
+          };
+        }
+
+        if (field === "quantity" || field === "maxPerOrder") {
+          return {
+            ...ticketType,
+            [field]: onlyDigits(String(value)),
+          };
+        }
+
+        if (field === "minPerOrder") {
+          return {
+            ...ticketType,
+            minPerOrder: "1",
+          };
+        }
+
+        if (field === "ticketKind") {
+          const nextTicketKind = value as TicketKind;
+
+          return {
+            ...ticketType,
+            ticketKind: nextTicketKind,
+            name: getTicketKindLabel(nextTicketKind),
+            isHidden: false,
+          };
+        }
+
         if (field === "venueSectorLocalId") {
           const linkedSector = sectors.find((sector) => sector.localId === value);
+          const shouldHide =
+            ticketType.lotLabel !== "1º Lote" &&
+            currentTicketTypes.some((otherTicketType) => {
+              return (
+                otherTicketType.localId !== ticketType.localId &&
+                otherTicketType.venueSectorLocalId === String(value) &&
+                otherTicketType.eventSessionLocalId ===
+                  ticketType.eventSessionLocalId &&
+                otherTicketType.ticketKind === ticketType.ticketKind &&
+                otherTicketType.lotLabel === "1º Lote"
+              );
+            });
 
           return {
             ...ticketType,
             venueSectorLocalId: String(value),
             occupancyMode: linkedSector?.occupancyMode || occupancyMode,
+            isHidden: shouldHide,
+          };
+        }
+
+        if (field === "lotLabel") {
+          const nextLotLabel = String(value);
+          const shouldHide =
+            nextLotLabel !== "1º Lote" &&
+            currentTicketTypes.some((otherTicketType) => {
+              return (
+                otherTicketType.localId !== ticketType.localId &&
+                otherTicketType.venueSectorLocalId ===
+                  ticketType.venueSectorLocalId &&
+                otherTicketType.eventSessionLocalId ===
+                  ticketType.eventSessionLocalId &&
+                otherTicketType.ticketKind === ticketType.ticketKind &&
+                otherTicketType.lotLabel === "1º Lote"
+              );
+            });
+
+          const previousLotEndDate = getPreviousLotEndDate(
+            ticketType,
+            nextLotLabel,
+          );
+
+          return {
+            ...ticketType,
+            lotLabel: nextLotLabel,
+            salesStartAt: previousLotEndDate || ticketType.salesStartAt,
+            isHidden: shouldHide,
+          };
+        }
+
+        if (field === "eventSessionLocalId") {
+          const nextSessionLocalId = String(value);
+          const selectedSession = sessions.find(
+            (session) => session.localId === nextSessionLocalId,
+          );
+
+          const shouldHide =
+            ticketType.lotLabel !== "1º Lote" &&
+            currentTicketTypes.some((otherTicketType) => {
+              return (
+                otherTicketType.localId !== ticketType.localId &&
+                otherTicketType.venueSectorLocalId ===
+                  ticketType.venueSectorLocalId &&
+                otherTicketType.eventSessionLocalId === nextSessionLocalId &&
+                otherTicketType.ticketKind === ticketType.ticketKind &&
+                otherTicketType.lotLabel === "1º Lote"
+              );
+            });
+
+          return {
+            ...ticketType,
+            eventSessionLocalId: nextSessionLocalId,
+            salesEndAt: selectedSession?.startsAt
+              ? mergeDateAndTime(
+                  selectedSession.startsAt,
+                  ticketType.salesEndAt || selectedSession.endsAt,
+                  "23:59",
+                )
+              : ticketType.salesEndAt,
+            isHidden: shouldHide,
+          };
+        }
+
+        if (field === "salesEndAt") {
+          const selectedSession = sessions.find(
+            (session) => session.localId === ticketType.eventSessionLocalId,
+          );
+
+          return {
+            ...ticketType,
+            salesEndAt: selectedSession?.startsAt
+              ? mergeDateAndTime(selectedSession.startsAt, String(value), "23:59")
+              : String(value),
           };
         }
 
         return { ...ticketType, [field]: value };
       }),
     );
-  }  function removeTicketType(localId: string) {
+  }
+
+  function removeTicketType(localId: string) {
     setTicketTypes((currentTicketTypes) => {
       if (currentTicketTypes.length <= 1) return currentTicketTypes;
 
@@ -1678,112 +2751,549 @@ export default function NewEventPage() {
     });
   }
 
-  function generateSeatMap() {
-    if (!allowSeatMap) {
-      alert("Este tipo de evento não usa cadeiras numeradas.");
-      return;
-    }
+   function generateBlockMap() {
+    const stageObject: SeatMapObjectFormItem = {
+      localId: newLocalId("stage"),
+      venueSectorLocalId: "",
+      code: "PALCO",
+      label: "PALCO",
+      type: "STAGE",
+      row: "",
+      number: "",
+      capacity: "",
+      x: 420,
+      y: 40,
+      width: 360,
+      height: 90,
+      rotation: 0,
+      status: "AVAILABLE",
+      metadata: {
+        sectorColor: "#111827",
+        fixed: true,
+        shape: "ROUNDED",
+      },
+    };
 
-    const targetSectorId = selectedSeatMapSectorId || seatMapSectors[0]?.localId;
+    const sectorObjects: SeatMapObjectFormItem[] = sectors.map((sector, index) => {
+      const templates = [
+        { x: 120, y: 190, width: 330, height: 160 },
+        { x: 500, y: 190, width: 330, height: 160 },
+        { x: 880, y: 190, width: 230, height: 160 },
+        { x: 120, y: 420, width: 250, height: 280 },
+        { x: 430, y: 410, width: 360, height: 210 },
+        { x: 850, y: 420, width: 250, height: 280 },
+        { x: 410, y: 690, width: 420, height: 120 },
+        { x: 80, y: 710, width: 260, height: 100 },
+        { x: 880, y: 710, width: 260, height: 100 },
+      ];
 
-    if (!targetSectorId) {
-      alert(
-        "Crie ou selecione um setor de cadeiras numeradas antes de gerar o mapa.",
-      );
-      return;
-    }
+      const template = templates[index % templates.length];
+      const capacityNumber = getNumericValue(sector.capacity);
 
-    const rows = Math.max(1, Number.parseInt(seatRows, 10) || 1);
-    const columns = Math.max(1, Number.parseInt(seatColumns, 10) || 1);
-    const createdObjects: SeatMapObjectFormItem[] = [];
-    const rowLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
-    for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
-      const rowLabel =
-        rowIndex < rowLetters.length
-          ? rowLetters[rowIndex]
-          : `R${rowIndex + 1}`;
-
-      for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
-        const number = String(columnIndex + 1);
-        const code = `${rowLabel}${number}`;
-
-        createdObjects.push({
-          localId: newLocalId("seat"),
-          venueSectorLocalId: targetSectorId,
-          code,
-          label: `Cadeira ${code}`,
-          type: "SEAT",
-          row: rowLabel,
-          number,
-          capacity: "1",
-          x: 40 + columnIndex * 52,
-          y: 40 + rowIndex * 48,
-          width: 38,
-          height: 38,
-          rotation: 0,
-          status: "AVAILABLE",
-        });
-      }
-    }
-
-    setMapObjects((currentObjects) => [
-      ...currentObjects.filter(
-        (object) => object.venueSectorLocalId !== targetSectorId,
-      ),
-      ...createdObjects,
-    ]);
-  }
-
-  function generateTableMap() {
-    if (!allowTableMap) {
-      alert("Este tipo de evento não usa mesas marcadas.");
-      return;
-    }
-
-    const targetSectorId =
-      selectedTableMapSectorId || tableMapSectors[0]?.localId;
-
-    if (!targetSectorId) {
-      alert("Crie ou selecione um setor de mesas antes de gerar o mapa.");
-      return;
-    }
-
-    const count = Math.max(1, Number.parseInt(tableCount, 10) || 1);
-    const capacityPerTable = Math.max(
-      1,
-      Number.parseInt(seatsPerTable, 10) || 1,
-    );
-    const createdObjects: SeatMapObjectFormItem[] = [];
-
-    for (let index = 0; index < count; index += 1) {
-      const number = String(index + 1);
-      const code = `M${number.padStart(2, "0")}`;
-
-      createdObjects.push({
-        localId: newLocalId("table"),
-        venueSectorLocalId: targetSectorId,
-        code,
-        label: `Mesa ${number}`,
-        type: "TABLE",
+      return {
+        localId: newLocalId("area"),
+        venueSectorLocalId: sector.localId,
+        code: `S${index + 1}`,
+        label: sector.name || `Setor ${index + 1}`,
+        type: sector.sectorKind === "TABLES" ? "TABLE" : "AREA",
         row: "",
-        number,
-        capacity: String(capacityPerTable),
-        x: 48 + (index % 5) * 120,
-        y: 48 + Math.floor(index / 5) * 110,
-        width: 76,
-        height: 76,
+        number: String(index + 1),
+        capacity: sector.capacity,
+        x: template.x,
+        y: template.y,
+        width: template.width,
+        height: template.height,
         rotation: 0,
         status: "AVAILABLE",
-      });
+        metadata: {
+          sectorKind: sector.sectorKind,
+          sectorName: sector.name,
+          sectorColor: sector.color,
+          capacity: capacityNumber,
+          shape: "ROUNDED",
+          polygonPoints: [
+            { x: 0, y: 12 },
+            { x: 100, y: 0 },
+            { x: 100, y: 88 },
+            { x: 0, y: 100 },
+          ],
+          tableSaleMode:
+            sector.sectorKind === "TABLES" ? tableSaleMode : undefined,
+          seatsPerTable:
+            sector.sectorKind === "TABLES"
+              ? Math.max(1, Number.parseInt(seatsPerTable, 10) || 1)
+              : undefined,
+          tableCount:
+            sector.sectorKind === "TABLES"
+              ? Math.max(1, Number.parseInt(tableCount, 10) || 1)
+              : undefined,
+        },
+      };
+    });
+
+    setSelectedMapObjectId("");
+    setMapObjects([stageObject, ...sectorObjects]);
+  }
+
+    const sectorObjects: SeatMapObjectFormItem[] = sectors.map((sector, index) => {
+      const templates = [
+        { x: 150, y: 140, width: 250, height: 150 },
+        { x: 500, y: 140, width: 250, height: 150 },
+        { x: 260, y: 320, width: 380, height: 190 },
+        { x: 80, y: 330, width: 160, height: 220 },
+        { x: 660, y: 330, width: 160, height: 220 },
+        { x: 260, y: 540, width: 380, height: 80 },
+      ];
+
+      const template = templates[index % templates.length];
+      const capacityNumber = getNumericValue(sector.capacity);
+
+      return {
+        localId: newLocalId("area"),
+        venueSectorLocalId: sector.localId,
+        code: `S${index + 1}`,
+        label: sector.name || `Setor ${index + 1}`,
+        type: sector.sectorKind === "TABLES" ? "TABLE" : "AREA",
+        row: "",
+        number: String(index + 1),
+        capacity: sector.capacity,
+        x: template.x,
+        y: template.y,
+        width: template.width,
+        height: template.height,
+        rotation: 0,
+        status: "AVAILABLE",
+        metadata: {
+          sectorKind: sector.sectorKind,
+          sectorName: sector.name,
+          sectorColor: sector.color,
+          capacity: capacityNumber,
+          shape: "ROUNDED",
+          tableSaleMode:
+            sector.sectorKind === "TABLES" ? tableSaleMode : undefined,
+          seatsPerTable:
+            sector.sectorKind === "TABLES"
+              ? Math.max(1, Number.parseInt(seatsPerTable, 10) || 1)
+              : undefined,
+          tableCount:
+            sector.sectorKind === "TABLES"
+              ? Math.max(1, Number.parseInt(tableCount, 10) || 1)
+              : undefined,
+        },
+      };
+    });
+
+    setMapObjects([stageObject, ...sectorObjects]);
+  }
+
+     function clampMapValue(value: number, min: number, max: number) {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  function isMapPoint(value: unknown): value is MapPoint {
+    if (typeof value !== "object" || value === null) return false;
+
+    const point = value as Record<string, unknown>;
+
+    return typeof point.x === "number" && typeof point.y === "number";
+  }
+
+  function getDefaultPolygonPoints(): MapPoint[] {
+    return [
+      { x: 0, y: 12 },
+      { x: 24, y: 0 },
+      { x: 100, y: 0 },
+      { x: 88, y: 45 },
+      { x: 100, y: 100 },
+      { x: 18, y: 88 },
+      { x: 0, y: 100 },
+    ];
+  }
+
+  function getMapObjectPolygonPoints(object: SeatMapObjectFormItem): MapPoint[] {
+    const rawPoints = object.metadata?.polygonPoints;
+
+    if (Array.isArray(rawPoints) && rawPoints.every(isMapPoint)) {
+      return rawPoints;
     }
 
-    setMapObjects((currentObjects) => [
-      ...currentObjects.filter(
-        (object) => object.venueSectorLocalId !== targetSectorId,
+    return getDefaultPolygonPoints();
+  }
+
+  function getSvgPolygonPoints(object: SeatMapObjectFormItem) {
+    return getMapObjectPolygonPoints(object)
+      .map((point) => {
+        const absoluteX = (point.x / 100) * object.width;
+        const absoluteY = (point.y / 100) * object.height;
+
+        return `${absoluteX},${absoluteY}`;
+      })
+      .join(" ");
+  }
+
+  function getCssPolygonPoints(object: SeatMapObjectFormItem) {
+    return getMapObjectPolygonPoints(object)
+      .map((point) => `${point.x}% ${point.y}%`)
+      .join(", ");
+  }
+
+  function getMapObjectShape(object: SeatMapObjectFormItem): MapShape {
+    return String(object.metadata?.shape || "ROUNDED") as MapShape;
+  }
+
+  function getMapObjectBorderRadius(object: SeatMapObjectFormItem) {
+    const shape = getMapObjectShape(object);
+
+    if (shape === "CIRCLE") return "9999px";
+    if (shape === "PILL") return "9999px";
+    if (shape === "RECTANGLE") return "0.75rem";
+
+    return "2rem";
+  }
+
+  function startMoveMapObject(
+    event: ReactPointerEvent<HTMLDivElement>,
+    object: SeatMapObjectFormItem,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setSelectedMapObjectId(object.localId);
+
+    setMapInteraction({
+      type: "move",
+      objectId: object.localId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: object.x,
+      startY: object.y,
+      startWidth: object.width,
+      startHeight: object.height,
+    });
+  }
+
+  function startResizeMapObject(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    object: SeatMapObjectFormItem,
+    direction: ResizeDirection,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setSelectedMapObjectId(object.localId);
+
+    setMapInteraction({
+      type: "resize",
+      objectId: object.localId,
+      direction,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: object.x,
+      startY: object.y,
+      startWidth: object.width,
+      startHeight: object.height,
+    });
+  }
+
+  function startMovePolygonPoint(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    object: SeatMapObjectFormItem,
+    pointIndex: number,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const point = getMapObjectPolygonPoints(object)[pointIndex];
+
+    if (!point) return;
+
+    setSelectedMapObjectId(object.localId);
+
+    setMapInteraction({
+      type: "point",
+      objectId: object.localId,
+      pointIndex,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: object.x,
+      startY: object.y,
+      startWidth: object.width,
+      startHeight: object.height,
+      startPointX: point.x,
+      startPointY: point.y,
+    });
+  }
+
+  function handleMapPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!mapInteraction) return;
+
+    const deltaX = event.clientX - mapInteraction.startClientX;
+    const deltaY = event.clientY - mapInteraction.startClientY;
+
+    setMapObjects((currentObjects) =>
+      currentObjects.map((object) => {
+        if (object.localId !== mapInteraction.objectId) return object;
+
+        if (mapInteraction.type === "move") {
+          const nextX = clampMapValue(
+            mapInteraction.startX + deltaX,
+            0,
+            MAP_CANVAS_WIDTH - object.width,
+          );
+          const nextY = clampMapValue(
+            mapInteraction.startY + deltaY,
+            0,
+            MAP_CANVAS_HEIGHT - object.height,
+          );
+
+          return {
+            ...object,
+            x: nextX,
+            y: nextY,
+          };
+        }
+
+        if (mapInteraction.type === "point") {
+          const pointIndex = mapInteraction.pointIndex ?? 0;
+          const points = getMapObjectPolygonPoints(object);
+
+          const nextPointX = clampMapValue(
+            (mapInteraction.startPointX ?? points[pointIndex]?.x ?? 50) +
+              (deltaX / Math.max(mapInteraction.startWidth, 1)) * 100,
+            0,
+            100,
+          );
+
+          const nextPointY = clampMapValue(
+            (mapInteraction.startPointY ?? points[pointIndex]?.y ?? 50) +
+              (deltaY / Math.max(mapInteraction.startHeight, 1)) * 100,
+            0,
+            100,
+          );
+
+          const nextPoints = points.map((point, index) =>
+            index === pointIndex
+              ? {
+                  x: nextPointX,
+                  y: nextPointY,
+                }
+              : point,
+          );
+
+          return {
+            ...object,
+            metadata: {
+              ...object.metadata,
+              shape: "FREEFORM",
+              polygonPoints: nextPoints,
+            },
+          };
+        }
+
+        let nextX = mapInteraction.startX;
+        let nextY = mapInteraction.startY;
+        let nextWidth = mapInteraction.startWidth;
+        let nextHeight = mapInteraction.startHeight;
+
+        if (mapInteraction.direction?.includes("e")) {
+          nextWidth = mapInteraction.startWidth + deltaX;
+        }
+
+        if (mapInteraction.direction?.includes("s")) {
+          nextHeight = mapInteraction.startHeight + deltaY;
+        }
+
+        if (mapInteraction.direction?.includes("w")) {
+          nextX = mapInteraction.startX + deltaX;
+          nextWidth = mapInteraction.startWidth - deltaX;
+        }
+
+        if (mapInteraction.direction?.includes("n")) {
+          nextY = mapInteraction.startY + deltaY;
+          nextHeight = mapInteraction.startHeight - deltaY;
+        }
+
+        if (nextWidth < MAP_MIN_OBJECT_SIZE) {
+          if (mapInteraction.direction?.includes("w")) {
+            nextX =
+              mapInteraction.startX +
+              mapInteraction.startWidth -
+              MAP_MIN_OBJECT_SIZE;
+          }
+
+          nextWidth = MAP_MIN_OBJECT_SIZE;
+        }
+
+        if (nextHeight < MAP_MIN_OBJECT_SIZE) {
+          if (mapInteraction.direction?.includes("n")) {
+            nextY =
+              mapInteraction.startY +
+              mapInteraction.startHeight -
+              MAP_MIN_OBJECT_SIZE;
+          }
+
+          nextHeight = MAP_MIN_OBJECT_SIZE;
+        }
+
+        nextX = clampMapValue(nextX, 0, MAP_CANVAS_WIDTH - MAP_MIN_OBJECT_SIZE);
+        nextY = clampMapValue(nextY, 0, MAP_CANVAS_HEIGHT - MAP_MIN_OBJECT_SIZE);
+        nextWidth = clampMapValue(
+          nextWidth,
+          MAP_MIN_OBJECT_SIZE,
+          MAP_CANVAS_WIDTH - nextX,
+        );
+        nextHeight = clampMapValue(
+          nextHeight,
+          MAP_MIN_OBJECT_SIZE,
+          MAP_CANVAS_HEIGHT - nextY,
+        );
+
+        return {
+          ...object,
+          x: nextX,
+          y: nextY,
+          width: nextWidth,
+          height: nextHeight,
+        };
+      }),
+    );
+  }
+
+  function stopMapInteraction() {
+    setMapInteraction(null);
+  }
+
+  function updateMapObjectShape(localId: string, shape: MapShape) {
+    setMapObjects((currentObjects) =>
+      currentObjects.map((object) => {
+        if (object.localId !== localId) return object;
+
+        if (shape === "CIRCLE") {
+          const size = Math.min(object.width, object.height);
+
+          return {
+            ...object,
+            width: size,
+            height: size,
+            metadata: {
+              ...object.metadata,
+              shape,
+            },
+          };
+        }
+
+        if (shape === "FREEFORM") {
+          return {
+            ...object,
+            metadata: {
+              ...object.metadata,
+              shape,
+              polygonPoints:
+                Array.isArray(object.metadata?.polygonPoints) &&
+                object.metadata.polygonPoints.every(isMapPoint)
+                  ? object.metadata.polygonPoints
+                  : getDefaultPolygonPoints(),
+            },
+          };
+        }
+
+        return {
+          ...object,
+          metadata: {
+            ...object.metadata,
+            shape,
+          },
+        };
+      }),
+    );
+  }
+
+  function addPointToSelectedMapObject() {
+    if (!selectedMapObjectId) return;
+
+    setMapObjects((currentObjects) =>
+      currentObjects.map((object) => {
+        if (object.localId !== selectedMapObjectId) return object;
+
+        const points = getMapObjectPolygonPoints(object);
+
+        return {
+          ...object,
+          metadata: {
+            ...object.metadata,
+            shape: "FREEFORM",
+            polygonPoints: [
+              ...points,
+              {
+                x: 50,
+                y: 50,
+              },
+            ],
+          },
+        };
+      }),
+    );
+  }
+
+  function removePointFromSelectedMapObject() {
+    if (!selectedMapObjectId) return;
+
+    setMapObjects((currentObjects) =>
+      currentObjects.map((object) => {
+        if (object.localId !== selectedMapObjectId) return object;
+
+        const points = getMapObjectPolygonPoints(object);
+
+        if (points.length <= 3) {
+          alert("Um setor quebrado precisa ter pelo menos 3 pontos.");
+          return object;
+        }
+
+        return {
+          ...object,
+          metadata: {
+            ...object.metadata,
+            shape: "FREEFORM",
+            polygonPoints: points.slice(0, -1),
+          },
+        };
+      }),
+    );
+  }
+
+  function resetSelectedMapObjectPolygon() {
+    if (!selectedMapObjectId) return;
+
+    setMapObjects((currentObjects) =>
+      currentObjects.map((object) =>
+        object.localId === selectedMapObjectId
+          ? {
+              ...object,
+              metadata: {
+                ...object.metadata,
+                shape: "FREEFORM",
+                polygonPoints: getDefaultPolygonPoints(),
+              },
+            }
+          : object,
       ),
-      ...createdObjects,
-    ]);
+    );
+  }
+
+  function updateMapObjectShape(localId: string, shape: MapShape) {
+    setMapObjects((currentObjects) =>
+      currentObjects.map((object) =>
+        object.localId === localId
+          ? {
+              ...object,
+              metadata: {
+                ...object.metadata,
+                shape,
+              },
+            }
+          : object,
+      ),
+    );
   }
 
   function clearMap() {
@@ -1792,10 +3302,69 @@ export default function NewEventPage() {
     }
   }
 
+  function handleZipCodeChange(value: string) {
+    const nextZipCode = onlyDigits(value).slice(0, 8);
+    setZipCode(nextZipCode);
+
+    if (nextZipCode.length !== 8) return;
+
+    fetch(`https://viacep.com.br/ws/${nextZipCode}/json/`)
+      .then((response) => response.json())
+      .then((result) => {
+        if (result?.erro) {
+          alert("CEP não encontrado.");
+          return;
+        }
+
+        setAddressLine1(result?.logradouro || "");
+        setNeighborhood(result?.bairro || "");
+        setCity(result?.localidade || "");
+        setStateName(result?.uf || "");
+      })
+      .catch((error) => {
+        console.error("CEP LOOKUP ERROR:", error);
+        alert("Não foi possível buscar o CEP agora.");
+      });
+  }
+
+  function handleMapUrlChange(value: string) {
+    setMapUrl(value);
+
+    const atCoordinatesMatch = value.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    const queryCoordinatesMatch = value.match(/q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+
+    const match = atCoordinatesMatch || queryCoordinatesMatch;
+
+    if (match?.[1] && match?.[2]) {
+      setLatitude(match[1]);
+      setLongitude(match[2]);
+    }
+  }
+
   function buildPayload() {
     const firstSessionStartsAt = sessions.find((session) => session.startsAt)
       ?.startsAt;
-    const resolvedStartDate = startDate || firstSessionStartsAt || eventDate;
+    const firstSessionEndsAt = sessions.find((session) => session.endsAt)?.endsAt;
+    const resolvedStartDate = startDate || firstSessionStartsAt;
+    const resolvedEndDate = endDate || firstSessionEndsAt;
+
+    const mapObjectsForApi = mapObjects.map((object) => ({
+      localId: object.localId,
+      code: object.code,
+      label: object.label,
+      type: object.type,
+      row: normalizeText(object.row),
+      number: normalizeText(object.number),
+      capacity: toIntOrUndefined(object.capacity),
+      x: object.x,
+      y: object.y,
+      width: object.width,
+      height: object.height,
+      rotation: object.rotation,
+      status: object.status,
+      venueSectorLocalId: normalizeText(object.venueSectorLocalId),
+      metadata: object.metadata,
+    }));
 
     return {
       organizerId,
@@ -1808,14 +3377,14 @@ export default function NewEventPage() {
       status,
       visibility,
       timezone,
-      eventDate: toIsoOrUndefined(eventDate || resolvedStartDate),
+      eventDate: toIsoOrUndefined(resolvedStartDate),
       startDate: toIsoOrUndefined(resolvedStartDate),
-      endDate: toIsoOrUndefined(endDate),
+      endDate: toIsoOrUndefined(resolvedEndDate),
       saleStartAt: toIsoOrUndefined(saleStartAt),
       saleEndAt: toIsoOrUndefined(saleEndAt),
       capacity: toIntOrUndefined(capacity),
-      featured,
-      highlightTag: normalizeText(highlightTag),
+      featured: false,
+      highlightTag: undefined,
       checkoutTitle: normalizeText(checkoutTitle),
       checkoutSubtitle: normalizeText(checkoutSubtitle),
       allowSeatMap,
@@ -1845,37 +3414,46 @@ export default function NewEventPage() {
         reference: normalizeText(reference),
         mapUrl: normalizeText(mapUrl),
         instructions: normalizeText(instructions),
-        latitude: toNumberOrUndefined(latitude),
-        longitude: toNumberOrUndefined(longitude),
+        latitude: normalizeText(latitude),
+        longitude: normalizeText(longitude),
       },
       media: {
-        coverImageUrl: normalizeText(coverImageUrl),
-        bannerImageUrl: normalizeText(bannerImageUrl),
-        thumbnailUrl: normalizeText(thumbnailUrl),
-        mobileBannerUrl: normalizeText(mobileBannerUrl),
-        sectorMapImageUrl: normalizeText(sectorMapImageUrl),
-        gallery: galleryPreview,
+        coverImageUrl: normalizeMediaUrl(coverImageUrl),
+        bannerImageUrl: normalizeMediaUrl(bannerImageUrl),
+        thumbnailUrl: normalizeMediaUrl(thumbnailUrl),
+        mobileBannerUrl: normalizeMediaUrl(mobileBannerUrl),
+        sectorMapImageUrl: normalizeMediaUrl(sectorMapImageUrl),
+        gallery: galleryPreview
+          .map((item) => normalizeMediaUrl(item))
+          .filter((item): item is string => Boolean(item)),
       },
       policy: {
         ageRating: normalizeText(ageRating),
-        refundPolicy: normalizeText(refundPolicy),
+        refundPolicy: refundPolicyEnabled
+          ? normalizeText(refundPolicy)
+          : undefined,
         halfEntryPolicy: normalizeText(halfEntryPolicy),
-        transferPolicy: normalizeText(transferPolicy),
+        transferPolicy: transferPolicyEnabled
+          ? normalizeText(transferPolicy)
+          : undefined,
         termsNotes: normalizeText(termsNotes),
         entryRules: normalizeText(entryRules),
         documentRules: normalizeText(documentRules),
       },
       sessions: sessions
-        .filter((session) => session.name.trim() || session.startsAt)
+        .filter((session) => session.startsAt || session.endsAt)
         .map((session, index) => ({
           localId: session.localId,
-          name: session.name.trim() || `${preset.sessionLabel} ${index + 1}`,
+          name:
+            session.name.trim() ||
+            formatSessionNameFromDate(session.startsAt) ||
+            `Data ${index + 1}`,
           description: normalizeText(session.description),
           startsAt: toIsoOrUndefined(session.startsAt),
           endsAt: toIsoOrUndefined(session.endsAt),
           capacity: toIntOrUndefined(session.capacity),
-          status: session.status,
-          displayOrder: toIntOrUndefined(session.displayOrder) ?? index,
+          status: "ACTIVE",
+          displayOrder: index,
         })),
       sectors: sectors
         .filter((sector) => sector.name.trim())
@@ -1886,46 +3464,25 @@ export default function NewEventPage() {
           type: sector.type,
           occupancyMode: sector.occupancyMode,
           capacity: toIntOrUndefined(sector.capacity),
-          displayOrder: toIntOrUndefined(sector.displayOrder) ?? index,
+          displayOrder: index,
           color: normalizeText(sector.color),
           gateName: normalizeText(sector.gateName),
         })),
-      venueLayouts: showMapBuilder
-        ? [
-            {
-              localId: "layout-main",
-              name: allowSeatMap
-                ? "Mapa de cadeiras numeradas"
-                : "Mapa de mesas",
-              description: selectedOccupancyPreset.label,
-              occupancyMode,
-              width: 900,
-              height: 640,
-              isDefault: true,
-              status: "ACTIVE",
-            },
-          ]
-        : [],
-      seatMapObjects: showMapBuilder
-        ? mapObjects.map((object) => ({
-            localId: object.localId,
-            venueLayoutLocalId: "layout-main",
-            venueSectorLocalId: object.venueSectorLocalId,
-            code: object.code,
-            label: object.label,
-            type: object.type,
-            row: normalizeText(object.row),
-            number: normalizeText(object.number),
-            capacity: toIntOrUndefined(object.capacity),
-            x: object.x,
-            y: object.y,
-            width: object.width,
-            height: object.height,
-            rotation: object.rotation,
-            status: object.status,
-            metadata: object.metadata,
-          }))
-        : [],
+      venueLayouts:
+        mapObjects.length > 0
+          ? [
+              {
+                localId: "layout-main",
+                name: "Mapa do evento",
+                occupancyMode,
+                width: MAP_CANVAS_WIDTH,
+                height: MAP_CANVAS_HEIGHT,
+                isDefault: true,
+                status: "ACTIVE",
+                objects: mapObjectsForApi,
+              },
+            ]
+          : [],
       ticketTypes: ticketTypes
         .filter((ticketType) => ticketType.name.trim())
         .map((ticketType, index) => {
@@ -1934,26 +3491,25 @@ export default function NewEventPage() {
           );
 
           return {
-            localId: ticketType.localId,
             eventSessionLocalId: normalizeText(ticketType.eventSessionLocalId),
             venueSectorLocalId: normalizeText(ticketType.venueSectorLocalId),
             occupancyMode:
               linkedSector?.occupancyMode || ticketType.occupancyMode,
-            name: ticketType.name.trim(),
+            name: `${getTicketKindLabel(ticketType.ticketKind)} - ${ticketType.name.trim()} - ${ticketType.lotLabel}`,
             lotLabel: normalizeText(ticketType.lotLabel),
             description: normalizeText(ticketType.description),
-            price: toNumberOrUndefined(ticketType.price),
+            price: priceToApiString(ticketType.price),
             quantity: toIntOrUndefined(ticketType.quantity),
             salesStartAt: toIsoOrUndefined(ticketType.salesStartAt),
             salesEndAt: toIsoOrUndefined(ticketType.salesEndAt),
-            minPerOrder: toIntOrUndefined(ticketType.minPerOrder),
+            minPerOrder: 1,
             maxPerOrder: toIntOrUndefined(ticketType.maxPerOrder),
-            displayOrder: toIntOrUndefined(ticketType.displayOrder) ?? index,
-            feeAmount: toNumberOrUndefined(ticketType.feeAmount),
-            feeDescription: normalizeText(ticketType.feeDescription),
-            benefitDescription: normalizeText(ticketType.benefitDescription),
+            displayOrder: index,
+            feeAmount: undefined,
+            feeDescription: undefined,
+            benefitDescription: undefined,
             isHidden: ticketType.isHidden,
-            status: ticketType.status,
+            status: "ACTIVE",
           };
         }),
     };
@@ -1963,11 +3519,35 @@ export default function NewEventPage() {
     event.preventDefault();
     setSubmitAttempted(true);
 
+    if (sessionCapacityErrorMessage) {
+      setActiveStepIndex(
+        stepDefinitions.findIndex((step) => step.id === "sessions"),
+      );
+      alert(sessionCapacityErrorMessage);
+      return;
+    }
+
+    if (mediaErrorMessage) {
+      setActiveStepIndex(
+        stepDefinitions.findIndex((step) => step.id === "extras"),
+      );
+      alert(mediaErrorMessage);
+      return;
+    }
+
     if (sectorCapacityErrorMessage) {
       setActiveStepIndex(
         stepDefinitions.findIndex((step) => step.id === "sectors"),
       );
       alert(sectorCapacityErrorMessage);
+      return;
+    }
+
+    if (ticketLotPriceErrorMessage || ticketDateErrorMessage) {
+      setActiveStepIndex(
+        stepDefinitions.findIndex((step) => step.id === "tickets"),
+      );
+      alert(ticketLotPriceErrorMessage || ticketDateErrorMessage);
       return;
     }
 
@@ -2149,65 +3729,21 @@ export default function NewEventPage() {
                     >
                       {option.description}
                     </p>
-
-                    <div className="mt-5 grid grid-cols-2 gap-2 text-xs font-black">
-                      <span
-                        className={`rounded-2xl px-3 py-2 ${
-                          option.requiresMap
-                            ? "bg-amber-300 text-amber-950"
-                            : "bg-emerald-300 text-emerald-950"
-                        }`}
-                      >
-                        {option.requiresMap ? "Com mapa" : "Sem mapa"}
-                      </span>
-                      <span className="rounded-2xl bg-white/15 px-3 py-2 text-white">
-                        {option.supportsMultipleSectors
-                          ? "Setores"
-                          : "Área única"}
-                      </span>
-                    </div>
                   </button>
                 );
               })}
             </div>
           </div>
-
-          <div className="grid gap-4 md:grid-cols-4">
-            <MiniStat
-              label="Área livre / plateia"
-              value={
-                selectedOccupancyPreset.usesPlateia ||
-                selectedOccupancyPreset.usesOpenAdmission
-                  ? "Sim"
-                  : "Não"
-              }
-            />
-            <MiniStat
-              label="Cadeiras numeradas"
-              value={selectedOccupancyPreset.usesNumberedSeats ? "Sim" : "Não"}
-            />
-            <MiniStat
-              label="Mesas marcadas"
-              value={selectedOccupancyPreset.usesTables ? "Sim" : "Não"}
-            />
-            <MiniStat
-              label="Setores separados"
-              value={
-                selectedOccupancyPreset.supportsMultipleSectors ? "Sim" : "Não"
-              }
-            />
-          </div>
         </div>
       </StepShell>
     );
   }
-
   function renderBasicStep() {
     return (
       <StepShell
         eyebrow="Etapa 2"
         title="Dados principais"
-        description="Defina a produtora, o nome, status, visibilidade e informações principais do evento."
+        description="Defina a produtora, o nome, a capacidade e as informações principais do evento."
       >
         <div className="grid gap-5 md:grid-cols-2">
           <SelectField
@@ -2254,48 +3790,35 @@ export default function NewEventPage() {
             label="Capacidade geral"
             value={capacity}
             onChange={setCapacity}
-            type="number"
-            min={1}
+            type="text"
+            onlyNumbers
             required
             error={requiredErrors.capacity}
-            helper="A soma dos setores não pode ultrapassar esta capacidade."
+            helper="A soma das datas e setores não pode ultrapassar esta capacidade."
           />
 
           <SelectField
             label="Status inicial"
             value={status}
-            onChange={setStatus}
-            options={[
-              { label: "Rascunho", value: "DRAFT" },
-              { label: "Publicado", value: "PUBLISHED" },
-              { label: "Pausado", value: "PAUSED" },
-              { label: "Encerrado", value: "ENDED" },
-            ]}
+            onChange={() => undefined}
+            disabled
+            options={[{ label: "Publicado", value: DEFAULT_STATUS }]}
           />
 
           <SelectField
             label="Visibilidade"
             value={visibility}
-            onChange={setVisibility}
-            options={[
-              { label: "Público", value: "PUBLIC" },
-              { label: "Privado", value: "PRIVATE" },
-              { label: "Não listado", value: "UNLISTED" },
-            ]}
+            onChange={() => undefined}
+            disabled
+            options={[{ label: "Público", value: DEFAULT_VISIBILITY }]}
           />
 
           <Field
             label="Fuso horário"
-            value={timezone}
-            onChange={setTimezone}
-            placeholder="America/Sao_Paulo"
-          />
-
-          <Field
-            label="Tag de destaque"
-            value={highlightTag}
-            onChange={setHighlightTag}
-            placeholder="Ex: Últimos ingressos"
+            value="Brasil - Horário de Brasília"
+            onChange={() => undefined}
+            disabled
+            helper={`Salvo internamente como ${DEFAULT_TIMEZONE}.`}
           />
 
           <div className="md:col-span-2">
@@ -2315,18 +3838,6 @@ export default function NewEventPage() {
               placeholder="Descrição geral usada no cadastro do evento."
             />
           </div>
-
-          <div className="md:col-span-2">
-            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-black text-slate-700">
-              <input
-                type="checkbox"
-                checked={featured}
-                onChange={(event) => setFeatured(event.target.checked)}
-                className="h-5 w-5 rounded border-slate-300"
-              />
-              Destacar evento na área pública
-            </label>
-          </div>
         </div>
       </StepShell>
     );
@@ -2336,37 +3847,58 @@ export default function NewEventPage() {
     return (
       <StepShell
         eyebrow="Etapa 3"
-        title={`Datas / ${preset.sessionLabel}s`}
-        description="Cadastre uma ou mais datas. Cada ingresso pode ser vinculado a uma sessão específica."
+        title="Datas"
+        description="Defina o início, o fim e as datas ou sessões do evento."
       >
         <div className="grid gap-5">
-          <div className="grid gap-5 md:grid-cols-3">
-            <Field
-              label="Data principal"
-              value={eventDate}
-              onChange={setEventDate}
-              type="datetime-local"
-              helper="Opcional. Pode ser preenchida automaticamente pela primeira sessão."
-            />
+          <div className="grid gap-5 md:grid-cols-2">
             <Field
               label="Início geral"
               value={startDate}
-              onChange={setStartDate}
+              onChange={handleGeneralStartDateChange}
               type="datetime-local"
+              required
+              error={requiredErrors.sessions && !startDate}
+              helper="Ao alterar, todas as datas são deslocadas automaticamente."
             />
             <Field
               label="Fim geral"
               value={endDate}
-              onChange={setEndDate}
+              onChange={handleGeneralEndDateChange}
               type="datetime-local"
+              required
+              error={requiredErrors.sessions && !endDate}
+              helper="Não pode ser antes do início geral."
             />
           </div>
 
-          {requiredErrors.sessions ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
-              Cadastre pelo menos uma data ou sessão com início.
+          <div
+            className={`rounded-3xl border p-5 ${
+              sessionCapacityErrorMessage
+                ? "border-rose-200 bg-rose-50"
+                : "border-slate-200 bg-slate-50"
+            }`}
+          >
+            <div className="grid gap-4 md:grid-cols-3">
+              <MiniStat label="Capacidade geral" value={capacity || "0"} />
+              <MiniStat label="Soma das datas" value={sessionCapacityTotal} />
+              <MiniStat
+                label="Disponível"
+                value={Math.max(generalCapacityNumber - sessionCapacityTotal, 0)}
+              />
             </div>
-          ) : null}
+
+            {sessionCapacityErrorMessage ? (
+              <p className="mt-4 text-sm font-black text-rose-700">
+                {sessionCapacityErrorMessage}
+              </p>
+            ) : (
+              <p className="mt-4 text-sm font-semibold text-slate-500">
+                Todas as datas precisam ter início, fim e capacidade. A soma das
+                datas não pode ultrapassar a capacidade geral.
+              </p>
+            )}
+          </div>
 
           <div className="space-y-4">
             {sessions.map((session, index) => (
@@ -2377,10 +3909,10 @@ export default function NewEventPage() {
                 <div className="mb-5 flex items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
-                      {preset.sessionLabel} {index + 1}
+                      Data {index + 1}
                     </p>
                     <h3 className="text-lg font-black text-slate-950">
-                      {session.name || `${preset.sessionLabel} ${index + 1}`}
+                      {session.name || "Data sem início"}
                     </h3>
                   </div>
 
@@ -2397,22 +3929,26 @@ export default function NewEventPage() {
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field
-                    label="Nome"
+                    label="Nome da data"
                     value={session.name}
-                    onChange={(value) =>
-                      updateSession(session.localId, "name", value)
-                    }
-                    placeholder="Ex: Sábado 20h"
-                    required
+                    onChange={() => undefined}
+                    disabled
+                    helper="Gerado automaticamente pelo início."
                   />
                   <Field
-                    label="Capacidade da sessão"
+                    label="Capacidade da data"
                     value={session.capacity}
                     onChange={(value) =>
                       updateSession(session.localId, "capacity", value)
                     }
-                    type="number"
-                    min={1}
+                    type="text"
+                    onlyNumbers
+                    required
+                    error={
+                      requiredErrors.sessions &&
+                      getNumericValue(session.capacity) <= 0
+                    }
+                    helper="Obrigatória. A soma das datas não pode passar da capacidade geral."
                   />
                   <Field
                     label="Início"
@@ -2430,28 +3966,7 @@ export default function NewEventPage() {
                       updateSession(session.localId, "endsAt", value)
                     }
                     type="datetime-local"
-                  />
-                  <SelectField
-                    label="Status"
-                    value={session.status}
-                    onChange={(value) =>
-                      updateSession(session.localId, "status", value)
-                    }
-                    options={[
-                      { label: "Ativa", value: "ACTIVE" },
-                      { label: "Pausada", value: "PAUSED" },
-                      { label: "Cancelada", value: "CANCELED" },
-                      { label: "Encerrada", value: "ENDED" },
-                    ]}
-                  />
-                  <Field
-                    label="Ordem de exibição"
-                    value={session.displayOrder}
-                    onChange={(value) =>
-                      updateSession(session.localId, "displayOrder", value)
-                    }
-                    type="number"
-                    helper="Use 0 para aparecer primeiro, 1 para aparecer depois, e assim por diante."
+                    required
                   />
                   <div className="md:col-span-2">
                     <TextAreaField
@@ -2460,7 +3975,7 @@ export default function NewEventPage() {
                       onChange={(value) =>
                         updateSession(session.localId, "description", value)
                       }
-                      placeholder="Informações específicas desta data ou sessão."
+                      placeholder="Informações específicas desta data."
                     />
                   </div>
                 </div>
@@ -2473,820 +3988,8 @@ export default function NewEventPage() {
             onClick={addSession}
             className="rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-100"
           >
-            + Adicionar outra {preset.sessionLabel.toLowerCase()}
+            + Adicionar outra data
           </button>
-        </div>
-      </StepShell>
-    );
-  }
-
-  function renderSectorsStep() {
-    return (
-      <StepShell
-        eyebrow="Etapa 4"
-        title={isOpenAdmissionOnly ? "Área única do evento" : "Setores / áreas"}
-        description={
-          isOpenAdmissionOnly
-            ? "Este tipo usa o mesmo espaço para todos os ingressos, sem setores separados."
-            : "Configure os setores permitidos para o tipo de ocupação escolhido."
-        }
-      >
-        <div className="mb-6 rounded-3xl border border-sky-100 bg-sky-50 p-5">
-          <p className="text-sm font-black text-sky-950">
-            Tipo escolhido: {selectedOccupancyPreset.label}
-          </p>
-          <p className="mt-1 text-sm font-semibold leading-6 text-sky-800">
-            {selectedOccupancyPreset.description}
-          </p>
-        </div>
-
-        <div
-          className={`mb-6 rounded-3xl border p-5 ${
-            sectorCapacityErrorMessage
-              ? "border-rose-200 bg-rose-50"
-              : "border-slate-200 bg-slate-50"
-          }`}
-        >
-          <div className="grid gap-4 md:grid-cols-3">
-            <MiniStat label="Capacidade geral" value={capacity || "0"} />
-            <MiniStat label="Soma dos setores" value={sectorCapacityTotal} />
-            <MiniStat
-              label="Disponível"
-              value={Math.max(generalCapacityNumber - sectorCapacityTotal, 0)}
-            />
-          </div>
-
-          {sectorCapacityErrorMessage ? (
-            <p className="mt-4 text-sm font-black text-rose-700">
-              {sectorCapacityErrorMessage}
-            </p>
-          ) : (
-            <p className="mt-4 text-sm font-semibold text-slate-500">
-              A soma das capacidades dos setores deve ficar dentro da capacidade
-              geral configurada na etapa de dados principais.
-            </p>
-          )}
-        </div>
-
-        {isOpenAdmissionOnly ? (
-          <div className="rounded-[2rem] border border-emerald-200 bg-emerald-50 p-6">
-            <p className="text-xl font-black text-emerald-950">
-              Evento aberto, sem setores separados.
-            </p>
-            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-emerald-800">
-              Todos os ingressos compartilham a mesma capacidade geral. Use a
-              etapa de ingressos para criar lotes, tipos de ingresso e preços.
-            </p>
-
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
-              <Field
-                label="Tipo do espaço"
-                value="Livre / evento aberto"
-                onChange={() => undefined}
-                disabled
-                helper="Travado porque este tipo não usa setores separados."
-              />
-              <Field
-                label="Nome da área"
-                value={sectors[0]?.name || "Livre / evento aberto"}
-                onChange={(value) =>
-                  updateSector(sectors[0].localId, "name", value)
-                }
-                helper="Este nome é apenas interno."
-              />
-              <Field
-                label="Capacidade da área"
-                value={sectors[0]?.capacity || ""}
-                onChange={(value) =>
-                  updateSector(sectors[0].localId, "capacity", value)
-                }
-                type="number"
-                min={1}
-                error={Boolean(sectorCapacityErrorMessage)}
-                helper="Opcional. Se vazio, usa a capacidade geral do evento."
-              />
-            </div>
-          </div>
-        ) : (
-          <>
-            {requiredErrors.sectors ? (
-              <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
-                {sectorCapacityErrorMessage ||
-                  "Cadastre pelo menos um setor ou área."}
-              </div>
-            ) : null}
-
-            <div className="space-y-4">
-              {sectors.map((sector, index) => {
-                const currentSectorKind = getSectorKindConfig(sector.sectorKind);
-                const canChooseKind =
-                  selectedOccupancyPreset.allowedSectorKinds.length > 1;
-                const sectorCapacity = getNumericValue(sector.capacity);
-                const sectorHasCapacityError =
-                  generalCapacityNumber > 0 &&
-                  sectorCapacity > generalCapacityNumber;
-
-                return (
-                  <div
-                    key={sector.localId}
-                    className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
-                  >
-                    <div className="mb-5 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
-                          Setor {index + 1}
-                        </p>
-                        <h3 className="text-lg font-black text-slate-950">
-                          {sector.name || `Setor ${index + 1}`}
-                        </h3>
-                        <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-sky-700">
-                          {currentSectorKind.label}
-                        </p>
-                      </div>
-
-                      {sectors.length > 1 ? (
-                        <button
-                          type="button"
-                          onClick={() => removeSector(sector.localId)}
-                          className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
-                        >
-                          Remover
-                        </button>
-                      ) : null}
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <Field
-                        label="Nome"
-                        value={sector.name}
-                        onChange={(value) =>
-                          updateSector(sector.localId, "name", value)
-                        }
-                        required
-                      />
-
-                      {canChooseKind ? (
-                        <SelectField
-                          label="Tipo do setor"
-                          value={sector.sectorKind}
-                          onChange={(value) =>
-                            updateSectorKind(sector.localId, value as SectorKind)
-                          }
-                          options={selectedOccupancyPreset.allowedSectorKinds.map(
-                            (sectorKind) => {
-                              const config = getSectorKindConfig(sectorKind);
-
-                              return {
-                                value: sectorKind,
-                                label: config.label,
-                              };
-                            },
-                          )}
-                        />
-                      ) : (
-                        <Field
-                          label="Tipo do setor"
-                          value={currentSectorKind.label}
-                          onChange={() => undefined}
-                          disabled
-                          helper="Travado porque este modelo permite apenas este tipo de setor."
-                        />
-                      )}
-
-                      <Field
-                        label="Capacidade"
-                        value={sector.capacity}
-                        onChange={(value) =>
-                          updateSector(sector.localId, "capacity", value)
-                        }
-                        type="number"
-                        min={1}
-                        error={
-                          sectorHasCapacityError || hasSectorTotalOverCapacity
-                        }
-                        helper={
-                          sectorHasCapacityError
-                            ? "Este setor excede a capacidade geral."
-                            : "A soma dos setores não pode passar da capacidade geral."
-                        }
-                      />
-
-                      <SectorColorPicker
-                        value={sector.color}
-                        onChange={(value) =>
-                          updateSector(sector.localId, "color", value)
-                        }
-                      />
-
-                      <Field
-                        label="Portão de acesso"
-                        value={sector.gateName}
-                        onChange={(value) =>
-                          updateSector(sector.localId, "gateName", value)
-                        }
-                        placeholder="Ex: Portão A"
-                      />
-                      <Field
-                        label="Ordem de exibição"
-                        value={sector.displayOrder}
-                        onChange={(value) =>
-                          updateSector(sector.localId, "displayOrder", value)
-                        }
-                        type="number"
-                        helper="Use 0 para aparecer primeiro, 1 para aparecer depois."
-                      />
-                      <div className="md:col-span-2">
-                        <TextAreaField
-                          label="Descrição"
-                          value={sector.description}
-                          onChange={(value) =>
-                            updateSector(sector.localId, "description", value)
-                          }
-                          placeholder="Detalhes, regras e observações do setor."
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <button
-              type="button"
-              onClick={addSector}
-              className="mt-5 rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-100"
-            >
-              + Adicionar setor ou área
-            </button>
-          </>
-        )}
-      </StepShell>
-    );
-  }
-
-  function renderMapStep() {
-    return (
-      <StepShell
-        eyebrow="Etapa 5"
-        title="Mapa do evento"
-        description={
-          showMapBuilder
-            ? "Gere o mapa inicial somente para setores de cadeiras numeradas ou mesas."
-            : "Este tipo de ocupação não precisa de mapa. Você pode seguir para ingressos."
-        }
-      >
-        {!showMapBuilder ? (
-          <div className="rounded-[2rem] border border-emerald-200 bg-emerald-50 p-8">
-            <p className="text-xl font-black text-emerald-950">
-              Mapa desativado para este tipo de evento.
-            </p>
-            <p className="mt-2 text-sm font-semibold leading-6 text-emerald-800">
-              Como o tipo escolhido é {selectedOccupancyPreset.label}, a venda
-              será feita por quantidade, sem cadeira ou mesa marcada.
-            </p>
-          </div>
-        ) : (
-          <div className="grid gap-6">
-            {requiredErrors.map ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
-                Gere o mapa de cadeiras ou mesas para continuar.
-              </div>
-            ) : null}
-
-            <div className="grid gap-5 md:grid-cols-2">
-              {allowSeatMap ? (
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                  <h3 className="text-lg font-black text-slate-950">
-                    Gerar cadeiras numeradas
-                  </h3>
-                  <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
-                    Escolha o setor de cadeiras e gere uma grade inicial.
-                  </p>
-
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    <SelectField
-                      label="Setor de cadeiras"
-                      value={
-                        selectedSeatMapSectorId ||
-                        seatMapSectors[0]?.localId ||
-                        ""
-                      }
-                      onChange={setSelectedSeatMapSectorId}
-                      options={
-                        seatMapSectors.length > 0
-                          ? seatMapSectors.map((sector) => ({
-                              value: sector.localId,
-                              label: sector.name,
-                            }))
-                          : [
-                              {
-                                value: "",
-                                label: "Nenhum setor de cadeiras criado",
-                              },
-                            ]
-                      }
-                    />
-                    <Field
-                      label="Fileiras"
-                      value={seatRows}
-                      onChange={setSeatRows}
-                      type="number"
-                      min={1}
-                    />
-                    <Field
-                      label="Cadeiras por fileira"
-                      value={seatColumns}
-                      onChange={setSeatColumns}
-                      type="number"
-                      min={1}
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={generateSeatMap}
-                    className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-sky-700"
-                  >
-                    Gerar mapa de cadeiras
-                  </button>
-                </div>
-              ) : null}
-
-              {allowTableMap ? (
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                  <h3 className="text-lg font-black text-slate-950">
-                    Gerar mesas
-                  </h3>
-                  <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
-                    Escolha o setor de mesas e gere um mapa inicial.
-                  </p>
-
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    <SelectField
-                      label="Setor de mesas"
-                      value={
-                        selectedTableMapSectorId ||
-                        tableMapSectors[0]?.localId ||
-                        ""
-                      }
-                      onChange={setSelectedTableMapSectorId}
-                      options={
-                        tableMapSectors.length > 0
-                          ? tableMapSectors.map((sector) => ({
-                              value: sector.localId,
-                              label: sector.name,
-                            }))
-                          : [
-                              {
-                                value: "",
-                                label: "Nenhum setor de mesas criado",
-                              },
-                            ]
-                      }
-                    />
-                    <Field
-                      label="Quantidade de mesas"
-                      value={tableCount}
-                      onChange={setTableCount}
-                      type="number"
-                      min={1}
-                    />
-                    <Field
-                      label="Lugares por mesa"
-                      value={seatsPerTable}
-                      onChange={setSeatsPerTable}
-                      type="number"
-                      min={1}
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={generateTableMap}
-                    className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-sky-700"
-                  >
-                    Gerar mapa de mesas
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
-              <div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center">
-                <div>
-                  <h3 className="text-lg font-black text-slate-950">
-                    Prévia do mapa
-                  </h3>
-                  <p className="text-sm font-semibold text-slate-500">
-                    {mapObjects.length} objeto
-                    {mapObjects.length === 1 ? "" : "s"} gerado
-                    {mapObjects.length === 1 ? "" : "s"}.
-                  </p>
-                </div>
-
-                {mapObjects.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={clearMap}
-                    className="rounded-full border border-rose-200 px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
-                  >
-                    Limpar mapa
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="relative min-h-[360px] overflow-auto rounded-3xl bg-slate-100 p-6">
-                {mapObjects.length === 0 ? (
-                  <div className="flex h-[300px] items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white text-center">
-                    <div>
-                      <p className="text-lg font-black text-slate-950">
-                        Nenhum item no mapa ainda
-                      </p>
-                      <p className="mt-1 text-sm font-semibold text-slate-500">
-                        Use o gerador acima para criar cadeiras ou mesas.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="relative h-[620px] w-[900px] rounded-3xl bg-white">
-                    {mapObjects.map((object) => (
-                      <div
-                        key={object.localId}
-                        className={`absolute flex items-center justify-center border text-[10px] font-black ${
-                          object.type === "TABLE"
-                            ? "rounded-full border-amber-300 bg-amber-100 text-amber-950"
-                            : "rounded-xl border-sky-300 bg-sky-100 text-sky-950"
-                        }`}
-                        style={{
-                          left: object.x,
-                          top: object.y,
-                          width: object.width,
-                          height: object.height,
-                          transform: `rotate(${object.rotation}deg)`,
-                        }}
-                        title={object.label}
-                      >
-                        {object.code}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </StepShell>
-    );
-  }
-
-  function renderTicketsStep() {
-    return (
-      <StepShell
-        eyebrow="Etapa 6"
-        title="Ingressos / lotes"
-        description="Configure preços, quantidades e vínculos com sessão e setor."
-      >
-        {requiredErrors.tickets ? (
-          <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
-            Cadastre pelo menos um ingresso válido com nome, preço e quantidade.
-          </div>
-        ) : null}
-
-        <div className="mb-6 grid gap-4 md:grid-cols-3">
-          <MiniStat label="Tipos válidos" value={validTicketTypes.length} />
-          <MiniStat label="Quantidade total" value={totalTicketQuantity} />
-          <MiniStat label="Modelo" value={selectedOccupancyPreset.label} />
-        </div>
-
-        <div className="space-y-4">
-          {ticketTypes.map((ticketType, index) => (
-            <div
-              key={ticketType.localId}
-              className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
-            >
-              <div className="mb-5 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
-                    Ingresso / lote {index + 1}
-                  </p>
-                  <h3 className="text-lg font-black text-slate-950">
-                    {ticketType.name || `Ingresso ${index + 1}`}
-                  </h3>
-                </div>
-
-                {ticketTypes.length > 1 ? (
-                  <button
-                    type="button"
-                    onClick={() => removeTicketType(ticketType.localId)}
-                    className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
-                  >
-                    Remover
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field
-                  label="Nome"
-                  value={ticketType.name}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "name", value)
-                  }
-                  placeholder="Ex: Inteira"
-                  required
-                />
-                <Field
-                  label="Lote"
-                  value={ticketType.lotLabel}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "lotLabel", value)
-                  }
-                  placeholder="Ex: 1º Lote"
-                />
-                <Field
-                  label="Preço"
-                  value={ticketType.price}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "price", value)
-                  }
-                  placeholder="Ex: 50,00"
-                  required
-                />
-                <Field
-                  label="Quantidade"
-                  value={ticketType.quantity}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "quantity", value)
-                  }
-                  type="number"
-                  min={1}
-                  required
-                />
-                <SelectField
-                  label="Sessão"
-                  value={ticketType.eventSessionLocalId}
-                  onChange={(value) =>
-                    updateTicketType(
-                      ticketType.localId,
-                      "eventSessionLocalId",
-                      value,
-                    )
-                  }
-                  options={[
-                    { label: "Todas as sessões", value: "" },
-                    ...sessions.map((session) => ({
-                      value: session.localId,
-                      label: session.name || "Sessão sem nome",
-                    })),
-                  ]}
-                />
-                <SelectField
-                  label="Setor"
-                  value={ticketType.venueSectorLocalId}
-                  onChange={(value) =>
-                    updateTicketType(
-                      ticketType.localId,
-                      "venueSectorLocalId",
-                      value,
-                    )
-                  }
-                  options={
-                    isOpenAdmissionOnly
-                      ? [{ label: "Área única do evento", value: "" }]
-                      : [
-                          { label: "Todos os setores", value: "" },
-                          ...sectors.map((sector) => ({
-                            value: sector.localId,
-                            label: `${sector.name} - ${
-                              getSectorKindConfig(sector.sectorKind).label
-                            }`,
-                          })),
-                        ]
-                  }
-                />
-                <Field
-                  label="Início das vendas"
-                  value={ticketType.salesStartAt}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "salesStartAt", value)
-                  }
-                  type="datetime-local"
-                />
-                <Field
-                  label="Fim das vendas"
-                  value={ticketType.salesEndAt}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "salesEndAt", value)
-                  }
-                  type="datetime-local"
-                />
-                <Field
-                  label="Mínimo por pedido"
-                  value={ticketType.minPerOrder}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "minPerOrder", value)
-                  }
-                  type="number"
-                  min={1}
-                />
-                <Field
-                  label="Máximo por pedido"
-                  value={ticketType.maxPerOrder}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "maxPerOrder", value)
-                  }
-                  type="number"
-                  min={1}
-                />
-                <Field
-                  label="Taxa"
-                  value={ticketType.feeAmount}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "feeAmount", value)
-                  }
-                  placeholder="Ex: 5,00"
-                />
-                <SelectField
-                  label="Status"
-                  value={ticketType.status}
-                  onChange={(value) =>
-                    updateTicketType(ticketType.localId, "status", value)
-                  }
-                  options={[
-                    { label: "Ativo", value: "ACTIVE" },
-                    { label: "Pausado", value: "PAUSED" },
-                    { label: "Esgotado", value: "SOLD_OUT" },
-                    { label: "Encerrado", value: "ENDED" },
-                  ]}
-                />
-                <div className="md:col-span-2">
-                  <TextAreaField
-                    label="Descrição"
-                    value={ticketType.description}
-                    onChange={(value) =>
-                      updateTicketType(ticketType.localId, "description", value)
-                    }
-                    placeholder="Descrição do ingresso, lote ou benefício."
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <TextAreaField
-                    label="Benefícios"
-                    value={ticketType.benefitDescription}
-                    onChange={(value) =>
-                      updateTicketType(
-                        ticketType.localId,
-                        "benefitDescription",
-                        value,
-                      )
-                    }
-                    placeholder="Ex: acesso à área VIP, open bar, kit..."
-                  />
-                </div>
-                <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700 md:col-span-2">
-                  <input
-                    type="checkbox"
-                    checked={ticketType.isHidden}
-                    onChange={(event) =>
-                      updateTicketType(
-                        ticketType.localId,
-                        "isHidden",
-                        event.target.checked,
-                      )
-                    }
-                    className="h-5 w-5 rounded border-slate-300"
-                  />
-                  Ocultar este ingresso na página pública
-                </label>
-              </div>
-
-              <div className="mt-5 rounded-2xl bg-white p-4 text-sm font-black text-slate-700">
-                Prévia: {ticketType.name || "Ingresso"} por{" "}
-                {formatMoneyPreview(ticketType.price)}.
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <button
-          type="button"
-          onClick={addTicketType}
-          className="mt-5 rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-100"
-        >
-          + Adicionar ingresso ou lote
-        </button>
-      </StepShell>
-    );
-  }
-
-  function renderLocationStep() {
-    return (
-      <StepShell
-        eyebrow="Etapa 7"
-        title="Local e acesso"
-        description="Informe onde o evento acontece e como o comprador deve chegar."
-      >
-        <div className="grid gap-5 md:grid-cols-2">
-          <SelectField
-            label="Modo do evento"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { label: "Presencial", value: "PRESENTIAL" },
-              { label: "Online", value: "ONLINE" },
-              { label: "Híbrido", value: "HYBRID" },
-            ]}
-          />
-
-          <Field
-            label="Nome do local"
-            value={venueName}
-            onChange={setVenueName}
-            placeholder="Ex: Teatro Municipal"
-            required
-            error={requiredErrors.venueName}
-          />
-
-          <Field
-            label="Endereço"
-            value={addressLine1}
-            onChange={setAddressLine1}
-            placeholder="Rua, avenida, número..."
-          />
-
-          <Field
-            label="Complemento"
-            value={addressLine2}
-            onChange={setAddressLine2}
-            placeholder="Bloco, sala, portão..."
-          />
-
-          <Field
-            label="Bairro"
-            value={neighborhood}
-            onChange={setNeighborhood}
-          />
-
-          <Field
-            label="Cidade"
-            value={city}
-            onChange={setCity}
-            required
-            error={requiredErrors.city}
-          />
-
-          <Field
-            label="Estado"
-            value={stateName}
-            onChange={setStateName}
-            placeholder="Ex: SP"
-            required
-            error={requiredErrors.stateName}
-          />
-
-          <Field
-            label="CEP"
-            value={zipCode}
-            onChange={setZipCode}
-            placeholder="00000-000"
-          />
-
-          <Field
-            label="Referência"
-            value={reference}
-            onChange={setReference}
-            placeholder="Ex: Em frente à praça"
-          />
-
-          <Field
-            label="URL do mapa"
-            value={mapUrl}
-            onChange={setMapUrl}
-            placeholder="Link do Google Maps"
-          />
-
-          <Field
-            label="Latitude"
-            value={latitude}
-            onChange={setLatitude}
-            placeholder="-23.5505"
-          />
-
-          <Field
-            label="Longitude"
-            value={longitude}
-            onChange={setLongitude}
-            placeholder="-46.6333"
-          />
-
-          <div className="md:col-span-2">
-            <TextAreaField
-              label="Instruções de acesso"
-              value={instructions}
-              onChange={setInstructions}
-              placeholder="Estacionamento, entrada, portões, retirada de credencial..."
-            />
-          </div>
         </div>
       </StepShell>
     );
@@ -3295,74 +3998,100 @@ export default function NewEventPage() {
   function renderExtrasStep() {
     return (
       <StepShell
-        eyebrow="Etapa 8"
+        eyebrow="Etapa 4"
         title="Imagens e políticas"
-        description="Envie imagens do evento e configure regras importantes para o comprador."
+        description="Envie imagens ou vídeos do evento e configure regras importantes para o comprador."
       >
         <div className="grid gap-8">
-          <div>
-            <h3 className="text-lg font-black text-slate-950">
-              Imagens do evento
-            </h3>
+          {mediaErrorMessage || requiredErrors.extras ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+              {mediaErrorMessage}
+            </div>
+          ) : null}
 
-            <div className="mt-4 grid gap-5 md:grid-cols-2">
-              <ImageUploadField
+          <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
+                  Mídia do evento
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-slate-950">
+                  Imagens e vídeos
+                </h3>
+                <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+                  Aceita arquivos de imagem e vídeo. Capa, banner, thumbnail e
+                  banner mobile são obrigatórios.
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-slate-950 px-4 py-3 text-white">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                  Obrigatório
+                </p>
+                <p className="mt-1 text-sm font-black">4 arquivos principais</p>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-5 md:grid-cols-2">
+              <EventMediaUploadField
                 label="Capa"
-                helper="Imagem principal do evento."
+                helper="Arquivo principal do evento."
                 kind="cover"
                 value={coverImageUrl}
                 onChange={setCoverImageUrl}
+                required
+                error={requiredErrors.extras && !coverImageUrl}
               />
-              <ImageUploadField
+              <EventMediaUploadField
                 label="Banner"
-                helper="Imagem horizontal para hero e destaque."
+                helper="Arquivo horizontal para destaque."
                 kind="banner"
                 value={bannerImageUrl}
                 onChange={setBannerImageUrl}
+                required
+                error={requiredErrors.extras && !bannerImageUrl}
               />
-              <ImageUploadField
+              <EventMediaUploadField
                 label="Thumbnail"
-                helper="Imagem para cards e listas."
+                helper="Arquivo para cards e listagens."
                 kind="thumbnail"
                 value={thumbnailUrl}
                 onChange={setThumbnailUrl}
+                required
+                error={requiredErrors.extras && !thumbnailUrl}
               />
-              <ImageUploadField
+              <EventMediaUploadField
                 label="Banner mobile"
-                helper="Imagem otimizada para celular."
+                helper="Arquivo otimizado para celular."
                 kind="mobile-banner"
                 value={mobileBannerUrl}
                 onChange={setMobileBannerUrl}
+                required
+                error={requiredErrors.extras && !mobileBannerUrl}
               />
-
-              {(allowSeatMap || allowTableMap) && (
-                <ImageUploadField
-                  label="Imagem do mapa/setor"
-                  helper="Opcional. Pode ser usada como referência visual."
-                  kind="sector-map"
-                  value={sectorMapImageUrl}
-                  onChange={setSectorMapImageUrl}
-                />
-              )}
+              <EventMediaUploadField
+                label="Imagem do mapa/setor"
+                helper="Opcional. Referência visual do local ou mapa."
+                kind="sector-map"
+                value={sectorMapImageUrl}
+                onChange={setSectorMapImageUrl}
+              />
             </div>
 
             <div className="mt-5">
-              <TextAreaField
-                label="Galeria"
-                value={galleryText}
-                onChange={setGalleryText}
-                placeholder="Cole uma URL por linha."
-                helper="Cada linha vira uma imagem da galeria."
-              />
+              <GalleryUploadField value={galleryText} onChange={setGalleryText} />
             </div>
           </div>
 
-          <div>
-            <h3 className="text-lg font-black text-slate-950">
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
               Conteúdo público
+            </p>
+            <h3 className="mt-2 text-2xl font-black text-slate-950">
+              Textos comerciais do evento
             </h3>
 
-            <div className="mt-4 grid gap-5 md:grid-cols-2">
+            <div className="mt-6 grid gap-5 md:grid-cols-2">
               <Field
                 label="Título de checkout"
                 value={checkoutTitle}
@@ -3416,11 +4145,15 @@ export default function NewEventPage() {
                 onChange={setImportantInfo}
               />
               <TextAreaField label="FAQ" value={faq} onChange={setFaq} />
-              <TextAreaField
-                label="Sobre a produtora"
-                value={producerDescription}
-                onChange={setProducerDescription}
-              />
+              <div className="md:col-span-2">
+                <TextAreaField
+                  label="Sobre a produtora"
+                  value={producerDescription}
+                  onChange={() => undefined}
+                  disabled
+                  helper="Informações puxadas da produtora selecionada. A edição fica na tela de produtora."
+                />
+              </div>
               <div className="md:col-span-2">
                 <TextAreaField
                   label="Instruções de compra"
@@ -3431,51 +4164,1142 @@ export default function NewEventPage() {
             </div>
           </div>
 
-          <div>
-            <h3 className="text-lg font-black text-slate-950">
-              Políticas e regras
-            </h3>
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">
+                  Políticas do evento
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-slate-950">
+                  Regras, documentos e condições
+                </h3>
+                <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+                  O produtor pode configurar regras próprias, sempre respeitando
+                  as regras gerais da plataforma.
+                </p>
+              </div>
 
-            <div className="mt-4 grid gap-5 md:grid-cols-2">
-              <Field
-                label="Classificação indicativa"
-                value={ageRating}
-                onChange={setAgeRating}
-                placeholder="Ex: 18 anos"
-              />
-              <TextAreaField
-                label="Política de reembolso"
-                value={refundPolicy}
-                onChange={setRefundPolicy}
-              />
-              <TextAreaField
-                label="Política de meia-entrada"
-                value={halfEntryPolicy}
-                onChange={setHalfEntryPolicy}
-              />
-              <TextAreaField
-                label="Política de transferência"
-                value={transferPolicy}
-                onChange={setTransferPolicy}
-              />
-              <TextAreaField
-                label="Regras de entrada"
-                value={entryRules}
-                onChange={setEntryRules}
-              />
-              <TextAreaField
-                label="Documentos obrigatórios"
-                value={documentRules}
-                onChange={setDocumentRules}
-              />
-              <div className="md:col-span-2">
-                <TextAreaField
-                  label="Termos e observações"
-                  value={termsNotes}
-                  onChange={setTermsNotes}
-                />
+              <div className="rounded-2xl bg-slate-950 px-4 py-3 text-white">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                  Controle
+                </p>
+                <p className="mt-1 text-sm font-black">
+                  Reembolso e transferência opcionais
+                </p>
               </div>
             </div>
+
+            <div className="mt-6 grid gap-5 lg:grid-cols-2">
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <h4 className="text-base font-black text-slate-950">
+                  Classificação e meia-entrada
+                </h4>
+                <div className="mt-5 grid gap-4">
+                  <Field
+                    label="Classificação indicativa"
+                    value={ageRating}
+                    onChange={setAgeRating}
+                    placeholder="Ex: 18 anos"
+                  />
+                  <TextAreaField
+                    label="Política de meia-entrada"
+                    value={halfEntryPolicy}
+                    onChange={setHalfEntryPolicy}
+                    placeholder="Ex: estudantes, idosos, PCD, professores..."
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <h4 className="text-base font-black text-slate-950">
+                  Reembolso
+                </h4>
+                <label className="mt-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={refundPolicyEnabled}
+                    onChange={(event) =>
+                      setRefundPolicyEnabled(event.target.checked)
+                    }
+                    className="h-5 w-5 rounded border-slate-300"
+                  />
+                  Permitir reembolso neste evento
+                </label>
+
+                {refundPolicyEnabled ? (
+                  <div className="mt-4">
+                    <TextAreaField
+                      label="Política de reembolso"
+                      value={refundPolicy}
+                      onChange={setRefundPolicy}
+                      placeholder="Descreva prazo, condições e exceções."
+                      helper="A política do evento deve respeitar as regras gerais da plataforma."
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold leading-6 text-slate-500">
+                    Reembolso específico desativado. Valem as regras gerais da
+                    plataforma.
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <h4 className="text-base font-black text-slate-950">
+                  Transferência de ingresso
+                </h4>
+                <label className="mt-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={transferPolicyEnabled}
+                    onChange={(event) =>
+                      setTransferPolicyEnabled(event.target.checked)
+                    }
+                    className="h-5 w-5 rounded border-slate-300"
+                  />
+                  Permitir transferência neste evento
+                </label>
+
+                {transferPolicyEnabled ? (
+                  <div className="mt-4">
+                    <TextAreaField
+                      label="Política de transferência"
+                      value={transferPolicy}
+                      onChange={setTransferPolicy}
+                      placeholder="Descreva prazo, limite e regras."
+                      helper="A política do evento deve respeitar as regras gerais da plataforma."
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold leading-6 text-slate-500">
+                    Transferência específica desativada. O evento segue o padrão
+                    da plataforma.
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <h4 className="text-base font-black text-slate-950">
+                  Entrada e documentos
+                </h4>
+                <div className="mt-5 grid gap-4">
+                  <TextAreaField
+                    label="Regras de entrada"
+                    value={entryRules}
+                    onChange={setEntryRules}
+                    placeholder="Ex: horário de abertura, tolerância, revista..."
+                  />
+                  <TextAreaField
+                    label="Documentos obrigatórios"
+                    value={documentRules}
+                    onChange={setDocumentRules}
+                    placeholder="Ex: documento com foto, comprovante de meia..."
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 lg:col-span-2">
+                <h4 className="text-base font-black text-slate-950">
+                  Termos e observações gerais
+                </h4>
+                <div className="mt-5">
+                  <TextAreaField
+                    label="Termos e observações"
+                    value={termsNotes}
+                    onChange={setTermsNotes}
+                    placeholder="Avisos finais que precisam aparecer para o comprador."
+                    minHeight="min-h-[160px]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </StepShell>
+    );
+  }
+
+  function renderSectorsStep() {
+    return (
+      <StepShell
+        eyebrow="Etapa 5"
+        title={isOpenAdmissionOnly ? "Área única do evento" : "Setores / áreas"}
+        description={
+          isOpenAdmissionOnly
+            ? "Este tipo usa o mesmo espaço para todos os ingressos, sem setores separados."
+            : "Configure os setores permitidos para o tipo de ocupação escolhido."
+        }
+      >
+        <div className="mb-6 rounded-3xl border border-sky-100 bg-sky-50 p-5">
+          <p className="text-sm font-black text-sky-950">
+            Tipo escolhido: {selectedOccupancyPreset.label}
+          </p>
+          <p className="mt-1 text-sm font-semibold leading-6 text-sky-800">
+            {selectedOccupancyPreset.description}
+          </p>
+        </div>
+
+        <div
+          className={`mb-6 rounded-3xl border p-5 ${
+            sectorCapacityErrorMessage
+              ? "border-rose-200 bg-rose-50"
+              : "border-slate-200 bg-slate-50"
+          }`}
+        >
+          <div className="grid gap-4 md:grid-cols-3">
+            <MiniStat label="Capacidade geral" value={capacity || "0"} />
+            <MiniStat label="Soma dos setores" value={sectorCapacityTotal} />
+            <MiniStat
+              label="Disponível"
+              value={Math.max(generalCapacityNumber - sectorCapacityTotal, 0)}
+            />
+          </div>
+
+          {sectorCapacityErrorMessage ? (
+            <p className="mt-4 text-sm font-black text-rose-700">
+              {sectorCapacityErrorMessage}
+            </p>
+          ) : null}
+        </div>
+
+        {isOpenAdmissionOnly ? (
+          <div className="rounded-[2rem] border border-emerald-200 bg-emerald-50 p-6">
+            <p className="text-xl font-black text-emerald-950">
+              Evento aberto, sem setores separados.
+            </p>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <Field
+                label="Tipo do espaço"
+                value="Livre / evento aberto"
+                onChange={() => undefined}
+                disabled
+              />
+              <Field
+                label="Nome da área"
+                value={sectors[0]?.name || "Livre / evento aberto"}
+                onChange={(value) =>
+                  updateSector(sectors[0].localId, "name", value)
+                }
+              />
+              <Field
+                label="Capacidade da área"
+                value={sectors[0]?.capacity || ""}
+                onChange={(value) =>
+                  updateSector(sectors[0].localId, "capacity", value)
+                }
+                type="text"
+                onlyNumbers
+                required
+                error={Boolean(sectorCapacityErrorMessage)}
+              />
+            </div>
+          </div>
+        ) : (
+          <>
+            {requiredErrors.sectors ? (
+              <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+                {sectorCapacityErrorMessage ||
+                  "Cadastre pelo menos um setor ou área."}
+              </div>
+            ) : null}
+
+            <div className="space-y-4">
+              {sectors.map((sector, index) => {
+                const currentSectorKind = getSectorKindConfig(sector.sectorKind);
+                const canChooseKind =
+                  selectedOccupancyPreset.allowedSectorKinds.length > 1;
+                const sectorCapacity = getNumericValue(sector.capacity);
+                const sectorHasCapacityError =
+                  generalCapacityNumber > 0 &&
+                  sectorCapacity > generalCapacityNumber;
+                const usedColors = sectors
+                  .filter((item) => item.localId !== sector.localId)
+                  .map((item) => item.color)
+                  .filter(Boolean);
+
+                return (
+                  <div
+                    key={sector.localId}
+                    className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
+                  >
+                    <div className="mb-5 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                          Setor {index + 1}
+                        </p>
+                        <h3 className="text-lg font-black text-slate-950">
+                          {sector.name || `Setor ${index + 1}`}
+                        </h3>
+                      </div>
+
+                      {sectors.length > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => removeSector(sector.localId)}
+                          className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                        >
+                          Remover
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Field
+                        label="Nome"
+                        value={sector.name}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "name", value)
+                        }
+                        required
+                      />
+
+                      {canChooseKind ? (
+                        <SelectField
+                          label="Tipo do setor"
+                          value={sector.sectorKind}
+                          onChange={(value) =>
+                            updateSectorKind(sector.localId, value as SectorKind)
+                          }
+                          options={selectedOccupancyPreset.allowedSectorKinds.map(
+                            (sectorKind) => {
+                              const config = getSectorKindConfig(sectorKind);
+
+                              return {
+                                value: sectorKind,
+                                label: config.label,
+                              };
+                            },
+                          )}
+                        />
+                      ) : (
+                        <Field
+                          label="Tipo do setor"
+                          value={currentSectorKind.label}
+                          onChange={() => undefined}
+                          disabled
+                        />
+                      )}
+
+                      <Field
+                        label="Capacidade"
+                        value={sector.capacity}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "capacity", value)
+                        }
+                        type="text"
+                        onlyNumbers
+                        required
+                        error={
+                          sectorHasCapacityError ||
+                          hasSectorTotalOverCapacity ||
+                          getNumericValue(sector.capacity) <= 0
+                        }
+                      />
+
+                      <SectorColorPicker
+                        value={sector.color}
+                        usedColors={usedColors}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "color", value)
+                        }
+                      />
+
+                      <Field
+                        label="Portão de acesso"
+                        value={sector.gateName}
+                        onChange={(value) =>
+                          updateSector(sector.localId, "gateName", value)
+                        }
+                        placeholder="Ex: Portão A"
+                      />
+
+                      <div className="md:col-span-2">
+                        <TextAreaField
+                          label="Descrição"
+                          value={sector.description}
+                          onChange={(value) =>
+                            updateSector(sector.localId, "description", value)
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={addSector}
+              className="mt-5 rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-100"
+            >
+              + Adicionar setor ou área
+            </button>
+          </>
+        )}
+      </StepShell>
+    );
+  }
+
+    function renderMapStep() {
+    const selectedMapObject =
+      mapObjects.find((object) => object.localId === selectedMapObjectId) ||
+      null;
+
+    const selectedMapObjectShape = selectedMapObject
+      ? getMapObjectShape(selectedMapObject)
+      : null;
+
+    return (
+      <StepShell
+        eyebrow="Etapa 6"
+        title="Mapa do evento"
+        description="Monte o mapa visualmente com blocos, formatos e setores quebrados."
+      >
+        <div className="grid gap-6">
+          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <h3 className="text-lg font-black text-slate-950">
+              Editor visual do mapa
+            </h3>
+            <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+              Clique em um bloco para selecionar. Arraste para mover. Puxe as
+              bolinhas dos cantos para redimensionar. No formato quebrado,
+              arraste os pontos azuis para modelar o setor.
+            </p>
+
+            {allowTableMap ? (
+              <div className="mt-5 grid gap-4 md:grid-cols-3">
+                <SelectField
+                  label="Venda de mesas"
+                  value={tableSaleMode}
+                  onChange={(value) =>
+                    setTableSaleMode(value as "WHOLE_TABLE" | "BY_SEAT")
+                  }
+                  options={[
+                    { label: "Comprar mesa inteira", value: "WHOLE_TABLE" },
+                    { label: "Comprar lugares da mesa", value: "BY_SEAT" },
+                  ]}
+                />
+                <Field
+                  label="Lugares por mesa"
+                  value={seatsPerTable}
+                  onChange={setSeatsPerTable}
+                  type="text"
+                  onlyNumbers
+                />
+                <Field
+                  label="Quantidade de mesas"
+                  value={tableCount}
+                  onChange={setTableCount}
+                  type="text"
+                  onlyNumbers
+                />
+              </div>
+            ) : null}
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={generateBlockMap}
+                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-sky-700"
+              >
+                Gerar mapa em blocos
+              </button>
+
+              {mapObjects.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={clearMap}
+                  className="rounded-2xl border border-rose-200 bg-white px-5 py-3 text-sm font-black text-rose-600 hover:bg-rose-50"
+                >
+                  Limpar mapa
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {requiredErrors.map ? (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+              Gere o mapa em blocos para continuar.
+            </div>
+          ) : null}
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
+            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
+              <div>
+                <h3 className="text-lg font-black text-slate-950">
+                  Área de montagem do mapa
+                </h3>
+                <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+                  {selectedMapObject
+                    ? `Selecionado: ${selectedMapObject.label}`
+                    : "Selecione um bloco para editar o formato."}
+                </p>
+              </div>
+
+              {selectedMapObject ? (
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                    Formato do setor
+                  </p>
+
+                  <div className="flex flex-wrap gap-2">
+                    {mapShapeOptions.map((shapeOption) => {
+                      const active = selectedMapObjectShape === shapeOption.value;
+
+                      return (
+                        <button
+                          key={shapeOption.value}
+                          type="button"
+                          onClick={() =>
+                            updateMapObjectShape(
+                              selectedMapObject.localId,
+                              shapeOption.value,
+                            )
+                          }
+                          className={`rounded-2xl px-4 py-2 text-xs font-black transition ${
+                            active
+                              ? "bg-slate-950 text-white"
+                              : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          {shapeOption.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {selectedMapObjectShape === "FREEFORM" ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={addPointToSelectedMapObject}
+                        className="rounded-2xl bg-sky-600 px-4 py-2 text-xs font-black text-white hover:bg-sky-700"
+                      >
+                        + Adicionar ponto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={removePointFromSelectedMapObject}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-100"
+                      >
+                        Remover ponto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetSelectedMapObjectPolygon}
+                        className="rounded-2xl border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                      >
+                        Resetar quebrado
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-5 relative min-h-[760px] overflow-auto rounded-3xl bg-slate-100 p-6">
+              {mapObjects.length === 0 ? (
+                <div className="flex h-[680px] items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white text-center">
+                  <div>
+                    <p className="text-lg font-black text-slate-950">
+                      Nenhum bloco criado ainda
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">
+                      Clique em “Gerar mapa em blocos”.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className="relative touch-none overflow-hidden rounded-3xl bg-gradient-to-b from-slate-50 to-slate-200 shadow-inner"
+                  style={{
+                    width: MAP_CANVAS_WIDTH,
+                    height: MAP_CANVAS_HEIGHT,
+                  }}
+                  onPointerMove={handleMapPointerMove}
+                  onPointerUp={stopMapInteraction}
+                  onPointerLeave={stopMapInteraction}
+                  onPointerCancel={stopMapInteraction}
+                  onPointerDown={() => setSelectedMapObjectId("")}
+                >
+                  <div
+                    className="absolute rounded-t-[2rem] bg-white/70 shadow-inner"
+                    style={{
+                      left: MAP_CANVAS_WIDTH / 2 - 45,
+                      top: 150,
+                      width: 90,
+                      height: 620,
+                    }}
+                  />
+
+                  {mapObjects.map((object) => {
+                    const linkedSector = sectors.find(
+                      (sector) => sector.localId === object.venueSectorLocalId,
+                    );
+                    const backgroundColor =
+                      linkedSector?.color ||
+                      String(object.metadata?.sectorColor || "#111827");
+                    const isStage = object.type === "STAGE";
+                    const isTable = object.type === "TABLE";
+                    const selected = selectedMapObjectId === object.localId;
+                    const shape = getMapObjectShape(object);
+                    const isFreeform = shape === "FREEFORM";
+                    const polygonPoints = getMapObjectPolygonPoints(object);
+                    const seatsInfo =
+                      isTable && object.metadata?.tableSaleMode === "BY_SEAT"
+                        ? `${object.metadata?.seatsPerTable || 0} lugares por mesa`
+                        : isTable
+                          ? "Mesa inteira"
+                          : `${object.capacity || 0} pessoas`;
+
+                    return (
+                      <div
+                        key={object.localId}
+                        onPointerDown={(event) =>
+                          startMoveMapObject(event, object)
+                        }
+                        className={`absolute cursor-move select-none ${
+                          selected ? "z-20" : "z-10"
+                        }`}
+                        style={{
+                          left: object.x,
+                          top: object.y,
+                          width: object.width,
+                          height: object.height,
+                          transform: `rotate(${object.rotation}deg)`,
+                          outline: selected
+                            ? "3px solid rgba(56, 189, 248, 0.65)"
+                            : undefined,
+                          outlineOffset: 4,
+                        }}
+                        title={object.label}
+                      >
+                        {isFreeform ? (
+                          <svg
+                            className="absolute inset-0 h-full w-full overflow-visible"
+                            viewBox={`0 0 ${object.width} ${object.height}`}
+                            preserveAspectRatio="none"
+                          >
+                            <polygon
+                              points={getSvgPolygonPoints(object)}
+                              fill={backgroundColor}
+                              stroke={selected ? "#38bdf8" : "#ffffff"}
+                              strokeWidth="5"
+                              filter="drop-shadow(0px 12px 12px rgba(15,23,42,0.25))"
+                            />
+                          </svg>
+                        ) : (
+                          <div
+                            className={`absolute inset-0 border-4 shadow-xl ${
+                              isStage
+                                ? "border-slate-950 bg-slate-950"
+                                : "border-white"
+                            }`}
+                            style={{
+                              backgroundColor,
+                              borderRadius: getMapObjectBorderRadius(object),
+                            }}
+                          />
+                        )}
+
+                        <div
+                          className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center text-white"
+                          style={
+                            isFreeform
+                              ? {
+                                  clipPath: `polygon(${getCssPolygonPoints(
+                                    object,
+                                  )})`,
+                                }
+                              : undefined
+                          }
+                        >
+                          <span className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]">
+                            {isStage
+                              ? "Palco"
+                              : linkedSector
+                                ? getSectorKindConfig(linkedSector.sectorKind)
+                                    .label
+                                : "Setor"}
+                          </span>
+
+                          <strong className="mt-2 px-3 text-2xl font-black uppercase leading-none">
+                            {object.label}
+                          </strong>
+
+                          {!isStage ? (
+                            <span className="mt-3 rounded-full bg-black/20 px-3 py-1 text-xs font-black">
+                              {seatsInfo}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        {selected && isFreeform
+                          ? polygonPoints.map((point, pointIndex) => (
+                              <button
+                                key={`${object.localId}-point-${pointIndex}`}
+                                type="button"
+                                aria-label={`Mover ponto ${pointIndex + 1}`}
+                                onPointerDown={(event) =>
+                                  startMovePolygonPoint(
+                                    event,
+                                    object,
+                                    pointIndex,
+                                  )
+                                }
+                                className="absolute z-30 h-5 w-5 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border-2 border-white bg-sky-500 shadow active:cursor-grabbing"
+                                style={{
+                                  left: `${point.x}%`,
+                                  top: `${point.y}%`,
+                                }}
+                              />
+                            ))
+                          : null}
+
+                        {selected ? (
+                          <>
+                            <button
+                              type="button"
+                              aria-label="Redimensionar canto superior esquerdo"
+                              onPointerDown={(event) =>
+                                startResizeMapObject(event, object, "nw")
+                              }
+                              className="absolute -left-3 -top-3 z-30 h-6 w-6 cursor-nwse-resize rounded-full border-2 border-white bg-sky-500 shadow"
+                            />
+                            <button
+                              type="button"
+                              aria-label="Redimensionar canto superior direito"
+                              onPointerDown={(event) =>
+                                startResizeMapObject(event, object, "ne")
+                              }
+                              className="absolute -right-3 -top-3 z-30 h-6 w-6 cursor-nesw-resize rounded-full border-2 border-white bg-sky-500 shadow"
+                            />
+                            <button
+                              type="button"
+                              aria-label="Redimensionar canto inferior esquerdo"
+                              onPointerDown={(event) =>
+                                startResizeMapObject(event, object, "sw")
+                              }
+                              className="absolute -bottom-3 -left-3 z-30 h-6 w-6 cursor-nesw-resize rounded-full border-2 border-white bg-sky-500 shadow"
+                            />
+                            <button
+                              type="button"
+                              aria-label="Redimensionar canto inferior direito"
+                              onPointerDown={(event) =>
+                                startResizeMapObject(event, object, "se")
+                              }
+                              className="absolute -bottom-3 -right-3 z-30 h-6 w-6 cursor-nwse-resize rounded-full border-2 border-white bg-sky-500 shadow"
+                            />
+                          </>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+              <p className="text-sm font-black text-slate-950">
+                Como usar o setor quebrado
+              </p>
+              <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
+                Selecione um setor, clique em “Quebrado” e mova os pontos azuis.
+                Use “Adicionar ponto” para criar recortes, curvas falsas,
+                setores em L, áreas tortas e camarotes irregulares.
+              </p>
+            </div>
+          </div>
+        </div>
+      </StepShell>
+    );
+  }
+
+  function renderTicketsStep() {
+    return (
+      <StepShell
+        eyebrow="Etapa 7"
+        title="Ingressos / lotes"
+        description="Configure tipos de ingresso, preços, lotes, quantidades e vínculos."
+      >
+        {requiredErrors.tickets ||
+        ticketLotPriceErrorMessage ||
+        ticketDateErrorMessage ? (
+          <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
+            {ticketLotPriceErrorMessage ||
+              ticketDateErrorMessage ||
+              "Cadastre pelo menos um ingresso válido com tipo, lote, nome, preço e quantidade."}
+          </div>
+        ) : null}
+
+        <div className="mb-6 grid gap-4 md:grid-cols-3">
+          <MiniStat label="Tipos válidos" value={validTicketTypes.length} />
+          <MiniStat label="Quantidade total" value={totalTicketQuantity} />
+          <MiniStat label="Modelo" value={selectedOccupancyPreset.label} />
+        </div>
+
+        <div className="space-y-4">
+          {ticketTypes.map((ticketType, index) => {
+            const shouldAutoHide =
+              ticketType.lotLabel !== "1º Lote" &&
+              hasFirstLotForTicket(ticketType);
+
+            return (
+              <div
+                key={ticketType.localId}
+                className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
+              >
+                <div className="mb-5 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                      Ingresso / lote {index + 1}
+                    </p>
+                    <h3 className="text-lg font-black text-slate-950">
+                      {ticketType.name || `Ingresso ${index + 1}`}
+                    </h3>
+                    {shouldAutoHide ? (
+                      <p className="mt-1 text-xs font-black text-amber-700">
+                        Lote oculto até o lote anterior encerrar.
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {ticketTypes.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => removeTicketType(ticketType.localId)}
+                      className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600 hover:bg-rose-50"
+                    >
+                      Remover
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <SelectField
+                    label="Tipo do ingresso"
+                    value={ticketType.ticketKind}
+                    onChange={(value) =>
+                      updateTicketType(
+                        ticketType.localId,
+                        "ticketKind",
+                        value as TicketKind,
+                      )
+                    }
+                    required
+                    options={ticketKindOptions}
+                  />
+
+                  <Field
+                    label="Nome"
+                    value={ticketType.name}
+                    onChange={(value) =>
+                      updateTicketType(ticketType.localId, "name", value)
+                    }
+                    placeholder="Ex: Inteira"
+                    required
+                  />
+
+                  <SelectField
+                    label="Lote"
+                    value={ticketType.lotLabel}
+                    onChange={(value) =>
+                      updateTicketType(ticketType.localId, "lotLabel", value)
+                    }
+                    required
+                    options={getTicketLotOptions(ticketType)}
+                  />
+
+                  <Field
+                    label="Preço"
+                    value={ticketType.price}
+                    onChange={(value) =>
+                      updateTicketType(ticketType.localId, "price", value)
+                    }
+                    placeholder="Ex: 250,00"
+                    required
+                    money
+                    helper="Use vírgula para centavos."
+                  />
+
+                  <Field
+                    label="Quantidade"
+                    value={ticketType.quantity}
+                    onChange={(value) =>
+                      updateTicketType(ticketType.localId, "quantity", value)
+                    }
+                    type="text"
+                    onlyNumbers
+                    required
+                  />
+
+                  <SelectField
+                    label="Data"
+                    value={ticketType.eventSessionLocalId}
+                    onChange={(value) =>
+                      updateTicketType(
+                        ticketType.localId,
+                        "eventSessionLocalId",
+                        value,
+                      )
+                    }
+                    options={[
+                      { label: "Todas as datas", value: "" },
+                      ...sessions.map((session) => ({
+                        value: session.localId,
+                        label: session.name || "Data sem nome",
+                      })),
+                    ]}
+                  />
+
+                  <SelectField
+                    label="Setor"
+                    value={ticketType.venueSectorLocalId}
+                    onChange={(value) =>
+                      updateTicketType(
+                        ticketType.localId,
+                        "venueSectorLocalId",
+                        value,
+                      )
+                    }
+                    options={
+                      isOpenAdmissionOnly
+                        ? [{ label: "Área única do evento", value: "" }]
+                        : [
+                            { label: "Todos os setores", value: "" },
+                            ...sectors.map((sector) => ({
+                              value: sector.localId,
+                              label: `${sector.name} - ${
+                                getSectorKindConfig(sector.sectorKind).label
+                              }`,
+                            })),
+                          ]
+                    }
+                  />
+
+                  <Field
+                    label="Início das vendas"
+                    value={ticketType.salesStartAt}
+                    onChange={(value) =>
+                      updateTicketType(ticketType.localId, "salesStartAt", value)
+                    }
+                    type="datetime-local"
+                    helper="Não pode ser antes de agora."
+                  />
+
+                  <Field
+                    label="Fim das vendas"
+                    value={ticketType.salesEndAt}
+                    onChange={(value) =>
+                      updateTicketType(ticketType.localId, "salesEndAt", value)
+                    }
+                    type="datetime-local"
+                    helper="O dia fica preso à data selecionada."
+                  />
+
+                  <Field
+                    label="Mínimo por pedido"
+                    value="1"
+                    onChange={() => undefined}
+                    type="text"
+                    disabled
+                    helper="Travado em 1 para todos os lotes."
+                  />
+
+                  <Field
+                    label="Máximo por pedido"
+                    value={ticketType.maxPerOrder}
+                    onChange={(value) =>
+                      updateTicketType(ticketType.localId, "maxPerOrder", value)
+                    }
+                    type="text"
+                    onlyNumbers
+                  />
+
+                  <div className="md:col-span-2">
+                    <TextAreaField
+                      label="Descrição e benefícios"
+                      value={ticketType.description}
+                      onChange={(value) =>
+                        updateTicketType(ticketType.localId, "description", value)
+                      }
+                      placeholder="Descrição do ingresso, benefícios, regras e observações."
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black text-slate-700 md:col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={ticketType.isHidden || shouldAutoHide}
+                      onChange={(event) =>
+                        updateTicketType(
+                          ticketType.localId,
+                          "isHidden",
+                          event.target.checked,
+                        )
+                      }
+                      disabled={shouldAutoHide}
+                      className="h-5 w-5 rounded border-slate-300 disabled:cursor-not-allowed"
+                    />
+                    Ocultar este ingresso na página pública
+                  </label>
+                </div>
+
+                <div className="mt-5 rounded-2xl bg-white p-4 text-sm font-black text-slate-700">
+                  Prévia: {ticketType.name || "Ingresso"} por{" "}
+                  {formatMoneyPreview(ticketType.price)}.
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={addTicketType}
+          className="mt-5 rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-100"
+        >
+          + Adicionar ingresso ou lote
+        </button>
+      </StepShell>
+    );
+  }
+
+  function renderLocationStep() {
+    return (
+      <StepShell
+        eyebrow="Etapa 8"
+        title="Local e acesso"
+        description="Informe onde o evento acontece e como o comprador deve chegar."
+      >
+        <div className="grid gap-5 md:grid-cols-2">
+          <SelectField
+            label="Modo do evento"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { label: "Presencial", value: "PRESENTIAL" },
+              { label: "Online", value: "ONLINE" },
+              { label: "Híbrido", value: "HYBRID" },
+            ]}
+          />
+
+          <Field
+            label={isOnlineEvent ? "Nome ou canal do evento" : "Nome do local"}
+            value={venueName}
+            onChange={setVenueName}
+            placeholder={
+              isOnlineEvent ? "Ex: Transmissão online" : "Ex: Teatro Municipal"
+            }
+            required
+            error={requiredErrors.venueName}
+          />
+
+          {!isOnlineEvent ? (
+            <>
+              <Field
+                label="CEP"
+                value={zipCode}
+                onChange={handleZipCodeChange}
+                placeholder="00000000"
+                onlyNumbers
+                required
+                error={requiredErrors.zipCode}
+                helper="Ao preencher 8 números, o endereço será buscado automaticamente."
+              />
+
+              <Field
+                label="Endereço"
+                value={addressLine1}
+                onChange={setAddressLine1}
+                placeholder="Rua, avenida, número..."
+              />
+
+              <Field
+                label="Complemento"
+                value={addressLine2}
+                onChange={setAddressLine2}
+              />
+
+              <Field
+                label="Bairro"
+                value={neighborhood}
+                onChange={setNeighborhood}
+              />
+
+              <Field label="Cidade" value={city} onChange={setCity} />
+
+              <Field
+                label="Estado"
+                value={stateName}
+                onChange={setStateName}
+                placeholder="Ex: SP"
+              />
+
+              <Field
+                label="Referência"
+                value={reference}
+                onChange={setReference}
+                placeholder="Ex: Em frente à praça"
+                required
+                error={requiredErrors.reference}
+              />
+
+              <Field
+                label="URL do mapa"
+                value={mapUrl}
+                onChange={handleMapUrlChange}
+                placeholder="Link do Google Maps, Waze ou OpenStreetMap"
+                required
+                error={requiredErrors.mapUrl}
+                helper={
+                  requiredErrors.mapUrl
+                    ? "Informe um link válido de mapa."
+                    : "Links de mapa podem preencher latitude e longitude automaticamente."
+                }
+              />
+
+              <Field
+                label="Latitude"
+                value={latitude}
+                onChange={setLatitude}
+                placeholder="-23.5505"
+              />
+
+              <Field
+                label="Longitude"
+                value={longitude}
+                onChange={setLongitude}
+                placeholder="-46.6333"
+              />
+            </>
+          ) : (
+            <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 md:col-span-2">
+              <p className="text-lg font-black text-emerald-950">
+                Evento online
+              </p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-emerald-800">
+                Para evento online, endereço físico, CEP, URL do mapa e
+                coordenadas não são obrigatórios.
+              </p>
+            </div>
+          )}
+
+          <div className="md:col-span-2">
+            <TextAreaField
+              label={
+                isOnlineEvent ? "Instruções de acesso online" : "Instruções de acesso"
+              }
+              value={instructions}
+              onChange={setInstructions}
+              placeholder={
+                isOnlineEvent
+                  ? "Link, plataforma, horário de liberação, senha ou instruções."
+                  : "Estacionamento, entrada, portões, retirada de credencial..."
+              }
+            />
           </div>
         </div>
       </StepShell>
@@ -3493,12 +5317,20 @@ export default function NewEventPage() {
           <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5">
             <div className="overflow-hidden rounded-[1.5rem] bg-slate-950">
               {mainPreviewImage ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={mainPreviewImage}
-                  alt={name || "Prévia do evento"}
-                  className="h-64 w-full object-cover"
-                />
+                mainPreviewImage.toLowerCase().includes(".mp4") ? (
+                  <video
+                    src={normalizeMediaUrl(mainPreviewImage)}
+                    className="h-64 w-full object-cover"
+                    controls
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={normalizeMediaUrl(mainPreviewImage)}
+                    alt={name || "Prévia do evento"}
+                    className="h-64 w-full object-cover"
+                  />
+                )
               ) : (
                 <div className="flex h-64 items-center justify-center text-center">
                   <div>
@@ -3506,7 +5338,7 @@ export default function NewEventPage() {
                       {name || "Nome do evento"}
                     </p>
                     <p className="mt-2 text-sm font-semibold text-slate-400">
-                      Nenhuma imagem principal adicionada.
+                      Nenhum arquivo principal adicionado.
                     </p>
                   </div>
                 </div>
@@ -3568,14 +5400,20 @@ export default function NewEventPage() {
                 {venueName || "Local não informado"}
               </p>
               <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">
-                {[city, stateName].filter(Boolean).join(" - ") ||
-                  "Cidade/estado não informados"}
+                {isOnlineEvent
+                  ? "Evento online"
+                  : [city, stateName].filter(Boolean).join(" - ") ||
+                    "Cidade/estado não informados"}
               </p>
             </div>
 
             <div
               className={`rounded-3xl border p-5 ${
-                sectorCapacityErrorMessage
+                sectorCapacityErrorMessage ||
+                ticketLotPriceErrorMessage ||
+                ticketDateErrorMessage ||
+                mediaErrorMessage ||
+                sessionCapacityErrorMessage
                   ? "border-rose-200 bg-rose-50"
                   : "border-slate-200 bg-white"
               }`}
@@ -3584,7 +5422,8 @@ export default function NewEventPage() {
                 Resumo técnico
               </p>
               <ul className="mt-3 space-y-2 text-sm font-semibold text-slate-600">
-                <li>Sessões: {sessions.length}</li>
+                <li>Datas: {sessions.length}</li>
+                <li>Soma das datas: {sessionCapacityTotal}</li>
                 <li>
                   {isOpenAdmissionOnly
                     ? "Área única: sim"
@@ -3593,15 +5432,24 @@ export default function NewEventPage() {
                 <li>Capacidade geral: {capacity || "0"}</li>
                 <li>Soma dos setores: {sectorCapacityTotal}</li>
                 <li>Itens no mapa: {mapObjects.length}</li>
-                <li>Galeria: {galleryPreview.length} imagem(ns)</li>
-                <li>Status: {status}</li>
+                <li>Galeria: {galleryPreview.length} arquivo(s)</li>
+                <li>Status: publicado</li>
+                <li>Visibilidade: público</li>
               </ul>
 
-              {sectorCapacityErrorMessage ? (
-                <p className="mt-4 text-sm font-black text-rose-700">
-                  {sectorCapacityErrorMessage}
-                </p>
-              ) : null}
+              {[
+                sessionCapacityErrorMessage,
+                mediaErrorMessage,
+                sectorCapacityErrorMessage,
+                ticketLotPriceErrorMessage,
+                ticketDateErrorMessage,
+              ]
+                .filter(Boolean)
+                .map((message) => (
+                  <p key={message} className="mt-4 text-sm font-black text-rose-700">
+                    {message}
+                  </p>
+                ))}
             </div>
           </div>
         </div>
@@ -3617,11 +5465,11 @@ export default function NewEventPage() {
     if (currentStep.id === "type") return renderTypeStep();
     if (currentStep.id === "basic") return renderBasicStep();
     if (currentStep.id === "sessions") return renderSessionsStep();
+    if (currentStep.id === "extras") return renderExtrasStep();
     if (currentStep.id === "sectors") return renderSectorsStep();
     if (currentStep.id === "map") return renderMapStep();
     if (currentStep.id === "tickets") return renderTicketsStep();
     if (currentStep.id === "location") return renderLocationStep();
-    if (currentStep.id === "extras") return renderExtrasStep();
     if (currentStep.id === "review") return renderReviewStep();
 
     return null;
@@ -3642,8 +5490,8 @@ export default function NewEventPage() {
               Criar evento
             </h1>
             <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
-              Criação guiada com categoria, ocupação personalizada, sessões,
-              setores, mapa, ingressos, local, imagens e políticas.
+              Criação guiada com categoria, ocupação personalizada, datas,
+              imagens, setores, mapa, ingressos e local.
             </p>
           </div>
 
@@ -3692,11 +5540,6 @@ export default function NewEventPage() {
                     >
                       {completed ? "✓" : index + 1}
                     </span>
-                    {step.optional ? (
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">
-                        Opcional
-                      </span>
-                    ) : null}
                   </div>
 
                   <p className="mt-3 text-xs font-black text-slate-950">
@@ -3743,7 +5586,14 @@ export default function NewEventPage() {
             ) : (
               <button
                 type="submit"
-                disabled={saving || Boolean(sectorCapacityErrorMessage)}
+                disabled={
+                  saving ||
+                  Boolean(sessionCapacityErrorMessage) ||
+                  Boolean(mediaErrorMessage) ||
+                  Boolean(sectorCapacityErrorMessage) ||
+                  Boolean(ticketLotPriceErrorMessage) ||
+                  Boolean(ticketDateErrorMessage)
+                }
                 className="rounded-2xl bg-sky-600 px-6 py-3 text-sm font-black text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? "Salvando..." : "Criar evento"}
