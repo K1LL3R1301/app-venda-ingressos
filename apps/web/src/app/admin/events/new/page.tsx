@@ -76,6 +76,8 @@ type SectorItem = {
   chairsPerRow: string;
   tableCount: string;
   seatsPerTable: string;
+  passportEnabled: boolean;
+  passportCapacity: string;
 };
 
 type MapPoint = { x: number; y: number };
@@ -348,6 +350,27 @@ function positiveInt(value: string | undefined, fallback = 1) {
   }
 
   return parsed;
+}
+
+function positiveIntOrZero(value: string | undefined) {
+  const parsed = Number.parseInt(value || "", 10);
+
+  if (Number.isNaN(parsed) || parsed < 1) {
+    return 0;
+  }
+
+  return parsed;
+}
+
+function cappedPassportReserve(sector: Pick<SectorItem, "capacity" | "passportEnabled" | "passportCapacity"> | undefined) {
+  if (!sector?.passportEnabled) return 0;
+
+  const sectorCapacity = positiveIntOrZero(sector.capacity);
+  const requested = positiveIntOrZero(sector.passportCapacity);
+
+  if (sectorCapacity <= 0 || requested <= 0) return 0;
+
+  return Math.min(requested, sectorCapacity);
 }
 
 function moneyNumber(value: string) {
@@ -660,6 +683,8 @@ function newSector(category: Category, preset: OccupancyPreset, index = 0, force
     chairsPerRow,
     tableCount,
     seatsPerTable,
+    passportEnabled: false,
+    passportCapacity: "",
   };
 }
 
@@ -1221,6 +1246,8 @@ export default function NewEventPage() {
   const sectorError = useMemo(() => {
     if (sectors.some((item) => toNumber(item.capacity) <= 0)) return "A capacidade de cada setor é obrigatória.";
     if (sectors.some((item) => toNumber(item.capacity) > generalCapacity)) return "Nenhum setor pode ultrapassar a capacidade geral.";
+    if (sectors.some((item) => item.passportEnabled && toNumber(item.passportCapacity) <= 0)) return "Todo setor marcado para passaporte precisa informar a quantidade reservada.";
+    if (sectors.some((item) => item.passportEnabled && toNumber(item.passportCapacity) > toNumber(item.capacity))) return "A reserva de passaporte não pode ultrapassar a capacidade do setor.";
     if (sectorTotal > generalCapacity) return "A soma dos setores não pode ultrapassar a capacidade geral.";
     if (new Set(sectors.map((item) => item.color)).size !== sectors.length) return "Cada setor precisa ter uma cor diferente.";
     return "";
@@ -1308,8 +1335,8 @@ export default function NewEventPage() {
     for (const session of sessions) {
       for (const sector of sectors) {
         const sectorId = isOpenOnly ? "" : sector.localId;
-        const sessionCapacity = positiveInt(session.capacity || capacity, generalCapacity || 1);
-        const sectorCapacity = positiveInt(sector.capacity || capacity, generalCapacity || 1);
+        const sessionCapacity = positiveIntOrZero(session.capacity || capacity);
+        const sectorCapacity = positiveIntOrZero(sector.capacity || capacity);
         const totalAvailable = Math.min(sessionCapacity, sectorCapacity);
         const totalCreated = tickets
           .filter((ticket) => {
@@ -3077,13 +3104,22 @@ export default function NewEventPage() {
   }
 
   function renderSectorsStep() {
+    function calculatedStructuredCapacity(firstValue: string, secondValue: string) {
+      const first = positiveIntOrZero(firstValue);
+      const second = positiveIntOrZero(secondValue);
+
+      if (first <= 0 || second <= 0) return 0;
+
+      return first * second;
+    }
+
     function sectorCapacity(sector: SectorItem) {
       if (sector.kind === "NUMBERED_SEATS") {
-        return positiveInt(sector.chairRows || "10") * positiveInt(sector.chairsPerRow || "10");
+        return calculatedStructuredCapacity(sector.chairRows, sector.chairsPerRow);
       }
 
       if (sector.kind === "TABLES") {
-        return positiveInt(sector.tableCount || "20") * positiveInt(sector.seatsPerTable || "4");
+        return calculatedStructuredCapacity(sector.tableCount, sector.seatsPerTable);
       }
 
       return toNumber(sector.capacity);
@@ -3093,43 +3129,87 @@ export default function NewEventPage() {
       updateSector(localId, { kind });
     }
 
+    function passportReserveForSectorForm(sector: SectorItem) {
+      return cappedPassportReserve({
+        capacity: String(sectorCapacity(sector)),
+        passportEnabled: sector.passportEnabled,
+        passportCapacity: sector.passportCapacity,
+      });
+    }
+
+    function updatePassportCapacity(sector: SectorItem, value: string) {
+      const cleanValue = onlyDigits(value);
+      const maxAllowed = sectorCapacity(sector);
+      const nextValue = cleanValue && maxAllowed > 0 ? String(Math.min(toNumber(cleanValue), maxAllowed)) : cleanValue;
+
+      updateSector(sector.localId, { passportCapacity: nextValue });
+    }
+
     function updateChairRows(sector: SectorItem, value: string) {
       const chairRows = onlyDigits(value);
-      updateSector(sector.localId, {
+      const nextCapacity = calculatedStructuredCapacity(chairRows, sector.chairsPerRow);
+      const patch: Partial<SectorItem> = {
         chairRows,
-        capacity: String(positiveInt(chairRows) * positiveInt(sector.chairsPerRow || "10")),
-      });
+        capacity: nextCapacity > 0 ? String(nextCapacity) : "",
+      };
+
+      if (sector.passportEnabled && toNumber(sector.passportCapacity) > nextCapacity) {
+        patch.passportCapacity = nextCapacity > 0 ? String(nextCapacity) : "";
+      }
+
+      updateSector(sector.localId, patch);
     }
 
     function updateChairsPerRow(sector: SectorItem, value: string) {
       const chairsPerRow = onlyDigits(value);
-      updateSector(sector.localId, {
+      const nextCapacity = calculatedStructuredCapacity(sector.chairRows, chairsPerRow);
+      const patch: Partial<SectorItem> = {
         chairsPerRow,
-        capacity: String(positiveInt(sector.chairRows || "10") * positiveInt(chairsPerRow)),
-      });
+        capacity: nextCapacity > 0 ? String(nextCapacity) : "",
+      };
+
+      if (sector.passportEnabled && toNumber(sector.passportCapacity) > nextCapacity) {
+        patch.passportCapacity = nextCapacity > 0 ? String(nextCapacity) : "";
+      }
+
+      updateSector(sector.localId, patch);
     }
 
     function updateTableCount(sector: SectorItem, value: string) {
       const tableCount = onlyDigits(value);
-      updateSector(sector.localId, {
+      const nextCapacity = calculatedStructuredCapacity(tableCount, sector.seatsPerTable);
+      const patch: Partial<SectorItem> = {
         tableCount,
-        capacity: String(positiveInt(tableCount) * positiveInt(sector.seatsPerTable || "4")),
-      });
+        capacity: nextCapacity > 0 ? String(nextCapacity) : "",
+      };
+
+      if (sector.passportEnabled && toNumber(sector.passportCapacity) > nextCapacity) {
+        patch.passportCapacity = nextCapacity > 0 ? String(nextCapacity) : "";
+      }
+
+      updateSector(sector.localId, patch);
     }
 
     function updateSeatsPerTable(sector: SectorItem, value: string) {
       const seatsPerTable = onlyDigits(value);
-      updateSector(sector.localId, {
+      const nextCapacity = calculatedStructuredCapacity(sector.tableCount, seatsPerTable);
+      const patch: Partial<SectorItem> = {
         seatsPerTable,
-        capacity: String(positiveInt(sector.tableCount || "20") * positiveInt(seatsPerTable)),
-      });
+        capacity: nextCapacity > 0 ? String(nextCapacity) : "",
+      };
+
+      if (sector.passportEnabled && toNumber(sector.passportCapacity) > nextCapacity) {
+        patch.passportCapacity = nextCapacity > 0 ? String(nextCapacity) : "";
+      }
+
+      updateSector(sector.localId, patch);
     }
 
     function renderStructuredFields(sector: SectorItem) {
       if (sector.kind === "NUMBERED_SEATS") {
-        const chairRows = sector.chairRows || "10";
-        const chairsPerRow = sector.chairsPerRow || "10";
-        const total = positiveInt(chairRows) * positiveInt(chairsPerRow);
+        const chairRows = sector.chairRows;
+        const chairsPerRow = sector.chairsPerRow;
+        const total = calculatedStructuredCapacity(chairRows, chairsPerRow);
 
         return (
           <div className="rounded-3xl border border-sky-100 bg-sky-50 p-5 md:col-span-2">
@@ -3143,22 +3223,22 @@ export default function NewEventPage() {
               </div>
               <div className="rounded-2xl bg-white px-4 py-3 shadow-sm">
                 <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Capacidade automática</p>
-                <p className="mt-1 text-xl font-black text-slate-950">{total} cadeiras</p>
+                <p className="mt-1 text-xl font-black text-slate-950">{total > 0 ? `${total} cadeiras` : "Preencha os campos"}</p>
               </div>
             </div>
             <div className="mt-5 grid gap-4 md:grid-cols-3">
               <Field label="Quantidade de fileiras" value={chairRows} onChange={(value) => updateChairRows(sector, value)} onlyNumbers required />
               <Field label="Cadeiras por fileira" value={chairsPerRow} onChange={(value) => updateChairsPerRow(sector, value)} onlyNumbers required />
-              <Field label="Total de cadeiras" value={String(total)} onChange={() => undefined} disabled />
+              <Field label="Total de cadeiras" value={total > 0 ? String(total) : ""} onChange={() => undefined} disabled />
             </div>
           </div>
         );
       }
 
       if (sector.kind === "TABLES") {
-        const tableCountValue = sector.tableCount || "20";
-        const seatsPerTableValue = sector.seatsPerTable || "4";
-        const total = positiveInt(tableCountValue) * positiveInt(seatsPerTableValue);
+        const tableCountValue = sector.tableCount;
+        const seatsPerTableValue = sector.seatsPerTable;
+        const total = calculatedStructuredCapacity(tableCountValue, seatsPerTableValue);
 
         return (
           <div className="rounded-3xl border border-amber-100 bg-amber-50 p-5 md:col-span-2">
@@ -3172,13 +3252,13 @@ export default function NewEventPage() {
               </div>
               <div className="rounded-2xl bg-white px-4 py-3 shadow-sm">
                 <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Capacidade automática</p>
-                <p className="mt-1 text-xl font-black text-slate-950">{total} lugares</p>
+                <p className="mt-1 text-xl font-black text-slate-950">{total > 0 ? `${total} lugares` : "Preencha os campos"}</p>
               </div>
             </div>
             <div className="mt-5 grid gap-4 md:grid-cols-3">
               <Field label="Quantidade de mesas" value={tableCountValue} onChange={(value) => updateTableCount(sector, value)} onlyNumbers required />
               <Field label="Cadeiras por mesa" value={seatsPerTableValue} onChange={(value) => updateSeatsPerTable(sector, value)} onlyNumbers required />
-              <Field label="Capacidade total" value={String(total)} onChange={() => undefined} disabled />
+              <Field label="Capacidade total" value={total > 0 ? String(total) : ""} onChange={() => undefined} disabled />
             </div>
           </div>
         );
@@ -3246,6 +3326,48 @@ export default function NewEventPage() {
                     </div>
                   </div>
                   {renderStructuredFields(sector)}
+                  <div className="md:col-span-2 rounded-3xl border border-amber-200 bg-amber-50 p-5">
+                    <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-600">Passaporte</p>
+                        <h4 className="mt-1 text-lg font-black text-slate-950">Reservar ingressos deste setor para passaporte</h4>
+                        <p className="mt-1 text-sm font-semibold leading-6 text-amber-900">
+                          Marque somente se este setor puder vender passaporte. A quantidade reservada sai da venda normal de Inteira, Meia e Social.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSector(sector.localId, {
+                            passportEnabled: !sector.passportEnabled,
+                            passportCapacity: sector.passportEnabled ? "" : sector.passportCapacity,
+                          })
+                        }
+                        className={`rounded-2xl px-5 py-3 text-sm font-black transition ${
+                          sector.passportEnabled
+                            ? "bg-amber-600 text-white hover:bg-amber-700"
+                            : "border border-amber-300 bg-white text-amber-700 hover:bg-amber-100"
+                        }`}
+                      >
+                        {sector.passportEnabled ? "Passaporte marcado" : "Marcar passaporte"}
+                      </button>
+                    </div>
+
+                    {sector.passportEnabled ? (
+                      <div className="mt-5 grid gap-4 md:grid-cols-3">
+                        <Field
+                          label="Ingressos reservados"
+                          value={sector.passportCapacity}
+                          onChange={(value) => updatePassportCapacity(sector, value)}
+                          onlyNumbers
+                          placeholder="Ex: 500"
+                          helper={`Máximo deste setor: ${sectorCapacity(sector) || 0}. Reservado agora: ${passportReserveForSectorForm(sector)}.`}
+                        />
+                        <MiniStat label="Venda normal" value={Math.max(sectorCapacity(sector) - passportReserveForSectorForm(sector), 0)} />
+                        <MiniStat label="Passaporte" value={passportReserveForSectorForm(sector)} />
+                      </div>
+                    ) : null}
+                  </div>
                   <Field label="Portão de acesso" value={sector.gateName} onChange={(value) => updateSector(sector.localId, { gateName: value })} />
                   <div className="md:col-span-2">
                     <TextArea label="Descrição" value={sector.description} onChange={(value) => updateSector(sector.localId, { description: value })} />
@@ -3845,6 +3967,17 @@ export default function NewEventPage() {
       );
     }
 
+    function normalizeTicketList(list: TicketItem[]) {
+      const byLot = new Map<string, TicketItem>();
+
+      list.forEach((ticket) => {
+        const key = `${ticketGroupId(ticket)}::${lotNumber(ticket.lotLabel) || ticket.lotLabel}`;
+        byLot.set(key, ticket);
+      });
+
+      return Array.from(byLot.values());
+    }
+
     function sessionLabel(sessionId: string) {
       if (!sessionId) return "Passaporte";
       return sessions.find((session) => session.localId === sessionId)?.name || "Data";
@@ -3855,22 +3988,94 @@ export default function NewEventPage() {
       return sectors.find((sector) => sector.localId === sectorId)?.name || "Setor";
     }
 
-    function sessionSectorCapacity(sessionId: string, sectorId: string) {
-      const session = sessions.find((item) => item.localId === sessionId);
-      const sector = isOpenOnly ? sectors[0] : sectors.find((item) => item.localId === sectorId);
-      const sessionCapacity = positiveInt(session?.capacity || capacity, generalCapacity || 1);
-      const sectorCapacity = positiveInt(sector?.capacity || capacity, generalCapacity || 1);
+    function selectedSectorForTicket(sectorId: string) {
+      return isOpenOnly ? sectors[0] : sectors.find((item) => item.localId === sectorId);
+    }
 
-      return Math.min(sessionCapacity, sectorCapacity);
+    function sectorPassportReserve(sectorId: string) {
+      return cappedPassportReserve(selectedSectorForTicket(sectorId));
+    }
+
+    function sectorCapacityForSession(sessionId: string, sectorId: string) {
+      const session = sessions.find((item) => item.localId === sessionId);
+      const sessionCapacity = positiveIntOrZero(session?.capacity || capacity);
+
+      if (sessionCapacity <= 0) return 0;
+
+      if (isOpenOnly) {
+        return sessionCapacity;
+      }
+
+      const sector = selectedSectorForTicket(sectorId);
+      const sectorTotalCapacity = positiveIntOrZero(sector?.capacity);
+      const eventCapacity = Math.max(positiveIntOrZero(capacity), 1);
+
+      if (!sector || sectorTotalCapacity <= 0) return 0;
+
+      const realSectors = sectors.filter((item) => positiveIntOrZero(item.capacity) > 0);
+      const totalSectorCapacity = realSectors.reduce((sum, item) => sum + positiveIntOrZero(item.capacity), 0);
+      const targetTotalForDate = Math.min(
+        sessionCapacity,
+        Math.round((Math.min(totalSectorCapacity, eventCapacity) / eventCapacity) * sessionCapacity),
+      );
+
+      if (targetTotalForDate <= 0) return 0;
+
+      const rawAllocations = realSectors.map((item, index) => {
+        const raw = (positiveIntOrZero(item.capacity) / eventCapacity) * sessionCapacity;
+        const base = Math.floor(raw);
+
+        return {
+          localId: item.localId,
+          index,
+          base,
+          rest: raw - base,
+        };
+      });
+      const baseTotal = rawAllocations.reduce((sum, item) => sum + item.base, 0);
+      const missing = Math.max(targetTotalForDate - baseTotal, 0);
+      const winners = new Set(
+        [...rawAllocations]
+          .sort((a, b) => b.rest - a.rest || a.index - b.index)
+          .slice(0, missing)
+          .map((item) => item.localId),
+      );
+      const allocation = rawAllocations.find((item) => item.localId === sectorId);
+
+      if (!allocation) return 0;
+
+      return allocation.base + (winners.has(sectorId) ? 1 : 0);
+    }
+
+    function sessionSectorPhysicalCapacity(sessionId: string, sectorId: string) {
+      return sectorCapacityForSession(sessionId, sectorId);
+    }
+
+    function passportReserveForSessionSector(sessionId: string, sectorId: string) {
+      return Math.min(sectorPassportReserve(sectorId), sessionSectorPhysicalCapacity(sessionId, sectorId));
+    }
+
+    function normalAvailableForSessionSector(sessionId: string, sectorId: string) {
+      return Math.max(sessionSectorPhysicalCapacity(sessionId, sectorId) - passportReserveForSessionSector(sessionId, sectorId), 0);
+    }
+
+    function passportAvailableForSector(sectorId: string) {
+      const reserve = sectorPassportReserve(sectorId);
+
+      if (reserve <= 0) return 0;
+
+      const values = sessions.map((session) => passportReserveForSessionSector(session.localId, sectorId));
+      const physicalLimit = values.length ? Math.min(...values) : reserve;
+
+      return Math.min(reserve, physicalLimit);
     }
 
     function availableForSessionSector(sessionId: string, sectorId: string) {
       if (!sessionId) {
-        const values = sessions.map((session) => sessionSectorCapacity(session.localId, sectorId));
-        return values.length ? Math.min(...values) : generalCapacity;
+        return passportAvailableForSector(sectorId);
       }
 
-      return sessionSectorCapacity(sessionId, sectorId);
+      return normalAvailableForSessionSector(sessionId, sectorId);
     }
 
     function passportCreatedForSessionSector(sessionId: string, sectorId: string, exceptTicketId = "") {
@@ -3884,9 +4089,7 @@ export default function NewEventPage() {
     }
 
     function kindCapacityForSessionSector(sessionId: string, sectorId: string, ticketKind: TicketKind, exceptTicketId = "") {
-      const baseAvailable = availableForSessionSector(sessionId, sectorId);
-      const sharedPassport = passportCreatedForSessionSector(sessionId, sectorId, exceptTicketId);
-      const sellableForDate = Math.max(baseAvailable - sharedPassport, 0);
+      const sellableForDate = availableForSessionSector(sessionId, sectorId);
       const kindIndex = Math.max(0, TICKET_KIND_OPTIONS.findIndex((option) => option.value === ticketKind));
 
       return splitCapacityByIndex(sellableForDate, TICKET_KIND_OPTIONS.length, kindIndex);
@@ -3925,20 +4128,14 @@ export default function NewEventPage() {
         .filter((ticket) =>
           ticket.localId !== exceptTicketId &&
           ticket.venueSectorLocalId === sectorId &&
-          (ticket.eventSessionLocalId === sessionId || ticket.eventSessionLocalId === ""),
+          ticket.eventSessionLocalId === sessionId,
         )
         .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
     }
 
     function remainingForSessionSector(sessionId: string, sectorId: string, exceptTicketId = "") {
       if (!sessionId) {
-        const values = sessions.map((session) => {
-          const available = availableForSessionSector(session.localId, sectorId);
-          const created = createdForSessionSector(session.localId, sectorId, exceptTicketId);
-          return available - created;
-        });
-
-        return Math.max(values.length ? Math.min(...values) : generalCapacity, 0);
+        return Math.max(passportAvailableForSector(sectorId) - passportCreatedForSessionSector("", sectorId, exceptTicketId), 0);
       }
 
       return Math.max(
@@ -4098,7 +4295,7 @@ export default function NewEventPage() {
                 nextConfigs[targetKey] = {
                   ...base,
                   ...(shouldReplicateLotCount
-                    ? { lotCount: onlyDigits(patch.lotCount || "") || "1" }
+                    ? { lotCount: onlyDigits(patch.lotCount || "") }
                     : {}),
                   ...(shouldReplicatePriceStep
                     ? { priceStep: onlyMoney(patch.priceStep || "") || "0" }
@@ -4123,7 +4320,7 @@ export default function NewEventPage() {
                   ? { salesStartAt: inputDateDay(patch.salesStartAt || inputDateToday()) }
                   : {}),
                 ...(patch.lotCount !== undefined
-                  ? { lotCount: onlyDigits(patch.lotCount || "") || "1" }
+                  ? { lotCount: onlyDigits(patch.lotCount || "") }
                   : {}),
                 ...(patch.priceStep !== undefined
                   ? { priceStep: onlyMoney(patch.priceStep || "") || "0" }
@@ -4173,20 +4370,8 @@ export default function NewEventPage() {
       const limitAt = lotLimitDate(sessionId);
       const firstStartAt = inputDateDay(config.salesStartAt || inputDateToday());
       const available = passport
-        ? remainingForSessionSector(sessionId, sectorId) + tickets
-            .filter((ticket) =>
-              ticket.eventSessionLocalId === sessionId &&
-              ticket.venueSectorLocalId === sectorId &&
-              ticket.ticketKind === ticketKind,
-            )
-            .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0)
-        : kindCapacityForSessionSector(sessionId, sectorId, ticketKind) + tickets
-            .filter((ticket) =>
-              ticket.eventSessionLocalId === sessionId &&
-              ticket.venueSectorLocalId === sectorId &&
-              ticket.ticketKind === ticketKind,
-            )
-            .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+        ? remainingForSessionSector(sessionId, sectorId)
+        : kindCapacityForSessionSector(sessionId, sectorId, ticketKind);
 
       if (available <= 0) {
         if (showAlerts) alert("Não há disponibilidade para gerar lotes neste setor/data.");
@@ -4278,12 +4463,12 @@ export default function NewEventPage() {
         const generatedTickets = generatedByTarget.flatMap((item) => item.generated);
         const targetKeys = new Set(generatedByTarget.map((item) => `${item.sessionId}::${sectorId}::${item.ticketKind}`));
 
-        setTickets((current) => [
+        setTickets((current) => normalizeTicketList([
           ...current.filter((ticket) =>
             !targetKeys.has(`${ticket.eventSessionLocalId}::${ticket.venueSectorLocalId}::${ticket.ticketKind}`),
           ),
           ...generatedTickets,
-        ]);
+        ]));
         setTicketBuilderStep("REVIEW");
         return;
       }
@@ -4292,14 +4477,14 @@ export default function NewEventPage() {
 
       if (!generated) return;
 
-      setTickets((current) => [
+      setTickets((current) => normalizeTicketList([
         ...current.filter((ticket) =>
           !(ticket.eventSessionLocalId === sessionId &&
             ticket.venueSectorLocalId === sectorId &&
             ticket.ticketKind === ticketKind),
         ),
         ...generated,
-      ]);
+      ]));
       setTicketBuilderStep("REVIEW");
     }
 
@@ -4346,10 +4531,10 @@ export default function NewEventPage() {
         ...configs,
         ...nextConfigs,
       }));
-      setTickets((current) => [
+      setTickets((current) => normalizeTicketList([
         ...current.filter((ticket) => isPassportTicket(ticket)),
         ...generatedTickets,
-      ]);
+      ]));
       setTicketBuilderStep("REVIEW");
     }
 
@@ -4402,20 +4587,8 @@ export default function NewEventPage() {
     function renderAutomationFields(sessionId: string, sectorId: string, ticketKind: TicketKind, passport = false) {
       const config = getAutomationConfig(sessionId, sectorId, ticketKind);
       const available = passport
-        ? remainingForSessionSector(sessionId, sectorId) + tickets
-            .filter((ticket) =>
-              ticket.eventSessionLocalId === sessionId &&
-              ticket.venueSectorLocalId === sectorId &&
-              ticket.ticketKind === ticketKind,
-            )
-            .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0)
-        : kindCapacityForSessionSector(sessionId, sectorId, ticketKind) + tickets
-            .filter((ticket) =>
-              ticket.eventSessionLocalId === sessionId &&
-              ticket.venueSectorLocalId === sectorId &&
-              ticket.ticketKind === ticketKind,
-            )
-            .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+        ? remainingForSessionSector(sessionId, sectorId)
+        : kindCapacityForSessionSector(sessionId, sectorId, ticketKind);
       const lotCount = Math.max(1, Math.min(20, positiveInt(config.lotCount, 1)));
       const plannedQuantity = available;
       const baseLotQuantity = Math.ceil(available / lotCount);
@@ -4435,7 +4608,7 @@ export default function NewEventPage() {
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center">
-              <MiniStat label="Disponível" value={available} />
+              <MiniStat label="Tipo" value={available} />
               <MiniStat label="Planejado" value={plannedQuantity} />
               <MiniStat label="Sobra" value={leftover} />
             </div>
@@ -4447,7 +4620,7 @@ export default function NewEventPage() {
               value={String(baseLotQuantity)}
               onChange={() => undefined}
               disabled
-              helper="O sistema divide o disponível pelo número de lotes."
+              helper="Capacidade do tipo ÷ número de lotes."
             />
             <Field
               label="Número de lotes"
@@ -4600,7 +4773,7 @@ export default function NewEventPage() {
                 <p className="text-xs font-black uppercase tracking-[0.24em] text-sky-300">Ingressos automáticos</p>
                 <h3 className="mt-2 text-2xl font-black">Crie lotes por dia e setor, sem garimpo manual</h3>
                 <p className="mt-3 max-w-4xl text-sm font-semibold leading-6 text-slate-300">
-                  Abra uma data para ver os setores. Abra um setor para configurar Inteira, Meia e Social. O primeiro dia funciona como molde para os outros dias, e a quantidade de lotes e o aumento por lote do setor são compartilhados entre Inteira, Meia e Social.
+                  Abra uma data para ver os setores. O sistema divide a capacidade total em datas, depois distribui os setores dentro da capacidade da data, depois divide cada setor entre Inteira, Meia e Social, e por fim divide cada tipo em lotes.
                 </p>
               </div>
 
@@ -4821,9 +4994,9 @@ export default function NewEventPage() {
                               </div>
 
                               <div className="grid gap-2 sm:grid-cols-3">
-                                <MiniStat label="Disponível" value={available} />
-                                <MiniStat label="Distribuído" value={distributed} />
-                                <MiniStat label="Livre" value={free} />
+                                <MiniStat label="Setor nesta data" value={sessionSectorPhysicalCapacity(session.localId, sectorId)} />
+                                <MiniStat label="Vendido normal" value={distributed} />
+                                <MiniStat label="Livre normal" value={free} />
                               </div>
                             </button>
 
@@ -4832,7 +5005,7 @@ export default function NewEventPage() {
                                 <div className="mb-4 rounded-3xl border border-sky-100 bg-sky-50 p-4">
                                   <p className="text-sm font-black text-sky-950">Tipos de ingresso deste setor</p>
                                   <p className="mt-1 text-sm font-semibold leading-6 text-sky-800">
-                                    Configure Inteira, Meia e Social somente aqui. Ao alterar número de lotes ou aumento por lote em um tipo, o mesmo setor replica essa regra para os outros tipos. Na primeira data, esses valores viram molde para as demais datas.
+                                    Fluxo de capacidade: capacidade geral → datas → setores por data → tipos de ingresso → lotes. Inteira, Meia e Social dividem a capacidade deste setor, sem multiplicar ingressos.
                                   </p>
                                 </div>
 
@@ -5000,12 +5173,16 @@ export default function NewEventPage() {
     }
 
     function renderPassportStep() {
+      const passportSectors = visibleSectors.filter((sector) => {
+        const realSector = selectedSectorForTicket(sectorTicketId(sector));
+        return Boolean(realSector?.passportEnabled && sectorPassportReserve(sectorTicketId(sector)) > 0);
+      });
       const activeSectorKey = expandedTicketSectorKey.startsWith("passport::")
         ? expandedTicketSectorKey.replace("passport::", "")
-        : sectorTicketId(visibleSectors[0]);
+        : sectorTicketId(passportSectors[0] || visibleSectors[0]);
       const activeSector =
-        visibleSectors.find((sector) => sectorTicketId(sector) === activeSectorKey) ||
-        visibleSectors[0];
+        passportSectors.find((sector) => sectorTicketId(sector) === activeSectorKey) ||
+        passportSectors[0];
       const activeSectorId = activeSector ? sectorTicketId(activeSector) : "";
       const activePassportCount = tickets
         .filter((ticket) =>
@@ -5032,7 +5209,7 @@ export default function NewEventPage() {
 
               <div className="grid gap-2 sm:grid-cols-3">
                 <MiniStat label="Passaportes" value={passportTickets.length} />
-                <MiniStat label="Setores" value={visibleSectors.length} />
+                <MiniStat label="Setores" value={passportSectors.length} />
                 <MiniStat label="Selecionado" value={activeSector?.name || "Setor"} />
               </div>
             </div>
@@ -5054,8 +5231,15 @@ export default function NewEventPage() {
               </span>
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-4">
-              {visibleSectors.map((sector) => {
+            {passportSectors.length === 0 ? (
+              <div className="mt-5 rounded-3xl border border-dashed border-amber-300 bg-amber-50 p-5 text-sm font-black text-amber-800">
+                Nenhum setor foi marcado para passaporte. Volte em Setores / áreas, marque o botão Passaporte e informe a quantidade reservada.
+              </div>
+            ) : null}
+
+            {passportSectors.length > 0 ? (
+              <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-4">
+              {passportSectors.map((sector) => {
                 const sectorId = sectorTicketId(sector);
                 const active = sectorId === activeSectorId;
                 const generatedCount = tickets
@@ -5109,7 +5293,8 @@ export default function NewEventPage() {
                   </button>
                 );
               })}
-            </div>
+              </div>
+            ) : null}
           </div>
 
           {activeSector ? (
@@ -5123,7 +5308,7 @@ export default function NewEventPage() {
                     {activeSector.name || "Área única"}
                   </h4>
                   <p className="mt-1 text-sm font-semibold text-slate-500">
-                    Configure os tipos de passaporte abaixo. A disponibilidade é compartilhada com os ingressos das datas.
+                    Configure os tipos de passaporte abaixo. A disponibilidade vem da reserva feita na etapa de setores.
                   </p>
                 </div>
 
