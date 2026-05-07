@@ -1,4 +1,4 @@
-﻿import { Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -380,7 +380,7 @@ export class CreateEventLocationDto {
   reference?: string;
 
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsUrl()
   mapUrl?: string;
 
   @IsOptional()
@@ -398,23 +398,23 @@ export class CreateEventLocationDto {
 
 export class CreateEventMediaDto {
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsUrl()
   coverImageUrl?: string;
 
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsUrl()
   bannerImageUrl?: string;
 
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsUrl()
   thumbnailUrl?: string;
 
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsUrl()
   mobileBannerUrl?: string;
 
   @IsOptional()
-  @IsUrl({ require_tld: false })
+  @IsUrl()
   sectorMapImageUrl?: string;
 
   @IsOptional()

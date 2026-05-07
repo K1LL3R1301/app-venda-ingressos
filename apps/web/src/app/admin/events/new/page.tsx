@@ -365,7 +365,13 @@ function isoOrUndefined(value: string) {
 
 function getApiOrigin() {
   try {
-    return new URL(API_BASE_URL).origin;
+    const url = new URL(API_BASE_URL);
+
+    if (url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
+    }
+
+    return url.origin;
   } catch {
     return "";
   }
@@ -373,14 +379,33 @@ function getApiOrigin() {
 
 function normalizeUrl(value: string | undefined) {
   if (!value) return undefined;
+
   const trimmed = value.trim();
+
   if (!trimmed) return undefined;
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const url = new URL(trimmed);
+
+      if (url.hostname === "localhost") {
+        url.hostname = "127.0.0.1";
+      }
+
+      return url.toString();
+    } catch {
+      return undefined;
+    }
+  }
+
   const origin = getApiOrigin();
-  if (!origin) return trimmed;
+
+  if (!origin) return undefined;
+
   if (trimmed.startsWith("/")) return `${origin}${trimmed}`;
   if (trimmed.startsWith("uploads/")) return `${origin}/${trimmed}`;
-  return trimmed;
+
+  return undefined;
 }
 
 function isHttpUrl(value: string | undefined) {
@@ -393,9 +418,39 @@ function isHttpUrl(value: string | undefined) {
   }
 }
 
+function urlOrUndefined(value: string | undefined) {
+  const normalized = normalizeUrl(value);
+
+  return isHttpUrl(normalized) ? normalized : undefined;
+}
+
+function normalizeExternalUrl(value: string | undefined) {
+  if (!value) return "";
+
+  const trimmed = value.trim();
+
+  if (!trimmed) return "";
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (
+    /^(www\.|google\.|maps\.app\.goo\.gl|goo\.gl|waze\.com|openstreetmap\.org|bing\.com)/i.test(
+      trimmed,
+    )
+  ) {
+    return `https://${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 function isMapUrl(value: string) {
+  const normalized = normalizeExternalUrl(value);
+
   try {
-    const host = new URL(value).hostname.toLowerCase();
+    const host = new URL(normalized).hostname.toLowerCase();
     return (
       host.includes("google.") ||
       host.includes("maps.app.goo.gl") ||
@@ -431,6 +486,35 @@ function formatSessionName(value: string) {
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" });
 }
 
+function inputDateDay(value: string) {
+  return value ? value.slice(0, 10) : "";
+}
+
+function sameInputDay(a: string, b: string) {
+  return Boolean(inputDateDay(a) && inputDateDay(a) === inputDateDay(b));
+}
+
+function isDateTimeBetween(value: string, start: string, end: string) {
+  if (!value || !start || !end) return true;
+  return value >= start && value <= end;
+}
+
+function shiftInputDays(value: string, days: number) {
+  return shiftInputDate(value, days * 24 * 60 * 60 * 1000);
+}
+
+function suggestLotEnd(startAt: string, limitAt: string, days = 30) {
+  if (!startAt) return "";
+
+  const suggested = shiftInputDays(startAt, days);
+
+  if (limitAt && suggested > limitAt) {
+    return limitAt;
+  }
+
+  return suggested;
+}
+
 function mergeDateAndTime(dateSource: string, timeSource: string, fallback = "23:59") {
   const day = dateSource.slice(0, 10);
   const time = timeSource.includes("T") ? timeSource.slice(11, 16) : fallback;
@@ -448,6 +532,20 @@ function parseGallery(value: string) {
 
 function formatMoney(value: string) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(moneyNumber(value));
+}
+
+function moneyInputFromNumber(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+
+  return value.toFixed(2).replace(".", ",");
+}
+
+function addMoneyValue(value: string, amount: number) {
+  const base = moneyNumber(value);
+
+  if (!Number.isFinite(base) || base <= 0) return "";
+
+  return moneyInputFromNumber(base + amount);
 }
 
 function newSession(index = 0): SessionItem {
@@ -940,7 +1038,7 @@ export default function NewEventPage() {
   const [tableCount, setTableCount] = useState("20");
   const [seatsPerTable, setSeatsPerTable] = useState("4");
 
-  const [tickets, setTickets] = useState<TicketItem[]>([newTicket()]);
+  const [tickets, setTickets] = useState<TicketItem[]>([]);
   const [mode, setMode] = useState("PRESENTIAL");
   const [venueName, setVenueName] = useState("");
   const [zipCode, setZipCode] = useState("");
@@ -1003,10 +1101,10 @@ export default function NewEventPage() {
   }, []);
 
   const mediaError = useMemo(() => {
-    const cover = normalizeUrl(coverImageUrl);
-    const banner = normalizeUrl(bannerImageUrl);
-    const thumb = normalizeUrl(thumbnailUrl);
-    const mobile = normalizeUrl(mobileBannerUrl);
+    const cover = urlOrUndefined(coverImageUrl);
+    const banner = urlOrUndefined(bannerImageUrl);
+    const thumb = urlOrUndefined(thumbnailUrl);
+    const mobile = urlOrUndefined(mobileBannerUrl);
     if (!cover) return "A capa é obrigatória.";
     if (!banner) return "O banner é obrigatório.";
     if (!thumb) return "A thumbnail é obrigatória.";
@@ -1024,6 +1122,9 @@ export default function NewEventPage() {
     if (endDate < startDate) return "O fim geral não pode ser antes do início geral.";
     if (sessions.some((item) => !item.startsAt || !item.endsAt || toNumber(item.capacity) <= 0)) return "Todas as datas precisam ter início, fim e capacidade.";
     if (sessions.some((item) => item.endsAt < item.startsAt)) return "Nenhuma data pode ter fim antes do início.";
+    if (sessions.some((item) => !isDateTimeBetween(item.startsAt, startDate, endDate) || !isDateTimeBetween(item.endsAt, startDate, endDate))) return "Todas as datas devem ficar entre o início geral e o fim geral.";
+    const days = sessions.map((item) => inputDateDay(item.startsAt)).filter(Boolean);
+    if (new Set(days).size !== days.length) return "Não pode existir duas datas no mesmo dia.";
     if (sessions.some((item) => toNumber(item.capacity) > generalCapacity)) return "A capacidade de uma data não pode ultrapassar a capacidade geral.";
     if (sessionTotal > generalCapacity) return "A soma das capacidades das datas não pode ultrapassar a capacidade geral.";
     if (sessions.some((item, index) => index > 0 && item.startsAt < sessions[index - 1].startsAt)) return "A data 2 e as próximas não podem começar antes da data anterior.";
@@ -1039,25 +1140,106 @@ export default function NewEventPage() {
   }, [sectors, generalCapacity, sectorTotal]);
 
   const ticketError = useMemo(() => {
-    for (const ticket of tickets) {
-      if (ticket.salesStartAt && ticket.salesStartAt < today) return "O início das vendas não pode ser antes de agora.";
-      if (ticket.salesEndAt && ticket.salesStartAt && ticket.salesEndAt < ticket.salesStartAt) return "O fim das vendas não pode ser antes do início.";
-      const currentLot = lotNumber(ticket.lotLabel);
-      if (currentLot <= 1) continue;
-      const previous = tickets.filter((other) => {
-        return (
-          other.localId !== ticket.localId &&
-          other.venueSectorLocalId === ticket.venueSectorLocalId &&
-          other.eventSessionLocalId === ticket.eventSessionLocalId &&
-          other.ticketKind === ticket.ticketKind &&
-          lotNumber(other.lotLabel) < currentLot
-        );
-      });
-      const maxPrevious = previous.reduce((max, item) => Math.max(max, moneyNumber(item.price)), 0);
-      if (maxPrevious > 0 && moneyNumber(ticket.price) < maxPrevious) return "Lote posterior não pode ser mais barato que lote anterior do mesmo setor e tipo.";
+    if (tickets.length === 0) {
+      return "Crie pelo menos um lote para cada data e setor.";
     }
+
+    const normalizedSectorIds = sectors.map((sector) => (isOpenOnly ? "" : sector.localId));
+
+    for (const session of sessions) {
+      for (const sectorId of normalizedSectorIds) {
+        const hasRequiredLot = tickets.some((ticket) => {
+          return (
+            ticket.eventSessionLocalId === session.localId &&
+            ticket.venueSectorLocalId === sectorId &&
+            ticket.name.trim() &&
+            ticket.price.trim() &&
+            toNumber(ticket.quantity) > 0
+          );
+        });
+
+        if (!hasRequiredLot) {
+          return "Todos os setores definidos precisam ter pelo menos um lote em cada data. O passaporte é opcional e não substitui o lote da data.";
+        }
+      }
+    }
+
+    for (const ticket of tickets) {
+      if (!ticket.name.trim()) return "Todo lote precisa ter nome.";
+      if (!ticket.price.trim()) return "Todo lote precisa ter preço.";
+      if (moneyNumber(ticket.price) < 0) return "O preço do lote não pode ser negativo.";
+      if (toNumber(ticket.quantity) <= 0) return "Todo lote precisa ter quantidade maior que zero.";
+      if (!ticket.salesStartAt) return "Todo lote precisa ter início das vendas.";
+      if (!ticket.salesEndAt) return "Todo lote precisa ter fim das vendas.";
+      if (ticket.salesStartAt < today) return "O início das vendas não pode ser antes de agora.";
+      if (ticket.salesEndAt <= ticket.salesStartAt) return "O fim das vendas precisa ser depois do início.";
+
+      const session = sessions.find((item) => item.localId === ticket.eventSessionLocalId);
+      const isPassport = !ticket.eventSessionLocalId;
+
+      if (!isPassport && session?.startsAt && ticket.salesEndAt > session.startsAt) {
+        return "O fim das vendas do lote não pode passar do início da data do evento.";
+      }
+
+      if (isPassport) {
+        const firstSessionStart = sessions
+          .map((item) => item.startsAt)
+          .filter(Boolean)
+          .sort()[0];
+
+        if (firstSessionStart && ticket.salesEndAt > firstSessionStart) {
+          return "O fim das vendas do passaporte não pode passar do início da primeira data do evento.";
+        }
+      }
+
+      const currentLot = lotNumber(ticket.lotLabel);
+
+      if (currentLot > 1) {
+        const previousLots = tickets.filter((other) => {
+          return (
+            other.localId !== ticket.localId &&
+            other.venueSectorLocalId === ticket.venueSectorLocalId &&
+            other.eventSessionLocalId === ticket.eventSessionLocalId &&
+            other.ticketKind === ticket.ticketKind &&
+            lotNumber(other.lotLabel) < currentLot
+          );
+        });
+
+        if (previousLots.length === 0) {
+          return "Não pode existir lote posterior sem lote anterior do mesmo setor, data e tipo.";
+        }
+
+        const maxPreviousPrice = previousLots.reduce((max, item) => Math.max(max, moneyNumber(item.price)), 0);
+
+        if (maxPreviousPrice > 0 && moneyNumber(ticket.price) < maxPreviousPrice) {
+          return "Lote posterior não pode ser mais barato que lote anterior do mesmo setor, data e tipo.";
+        }
+      }
+    }
+
+    for (const session of sessions) {
+      for (const sector of sectors) {
+        const sectorId = isOpenOnly ? "" : sector.localId;
+        const sessionCapacity = positiveInt(session.capacity || capacity, generalCapacity || 1);
+        const sectorCapacity = positiveInt(sector.capacity || capacity, generalCapacity || 1);
+        const totalAvailable = Math.min(sessionCapacity, sectorCapacity);
+        const totalCreated = tickets
+          .filter((ticket) => {
+            return (
+              ticket.venueSectorLocalId === sectorId &&
+              (ticket.eventSessionLocalId === session.localId || ticket.eventSessionLocalId === "")
+            );
+          })
+          .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+
+        if (totalCreated > totalAvailable) {
+          return "A soma dos lotes da data, incluindo passaporte, não pode ultrapassar a capacidade disponível do setor.";
+        }
+      }
+    }
+
     return "";
-  }, [tickets, today]);
+  }, [tickets, today, sessions, sectors, capacity, generalCapacity, isOpenOnly]);
 
   const steps: Array<{ id: StepId; title: string; description: string }> = [
     { id: "type", title: "Tipo de evento", description: "Categoria e ocupação." },
@@ -1134,6 +1316,25 @@ export default function NewEventPage() {
     setStepIndex((value) => Math.max(value - 1, 0));
   }
 
+  function clampSessionInsideGeneral(session: SessionItem, fallbackIndex = 0): SessionItem {
+    let startsAt = session.startsAt || startDate;
+    let endsAt = session.endsAt || endDate || startsAt;
+
+    if (startDate && startsAt < startDate) startsAt = startDate;
+    if (endDate && startsAt > endDate) startsAt = endDate;
+    if (startDate && endsAt < startDate) endsAt = startDate;
+    if (endDate && endsAt > endDate) endsAt = endDate;
+    if (startsAt && endsAt && endsAt < startsAt) endsAt = startsAt;
+
+    return {
+      ...session,
+      startsAt,
+      endsAt,
+      name: session.name?.trim() || (startsAt ? formatSessionName(startsAt) : `Data ${fallbackIndex + 1}`),
+      capacity: onlyDigits(session.capacity || capacity),
+    };
+  }
+
   function setGeneralStart(value: string) {
     const old = startDate;
     const hasOld = Boolean(old);
@@ -1142,9 +1343,9 @@ export default function NewEventPage() {
     setEndDate((current) => (current ? (hasOld ? shiftInputDate(current, diff) : current) : value));
     setSessions((current) =>
       current.map((item, index) => {
-        const startsAt = item.startsAt ? (hasOld ? shiftInputDate(item.startsAt, diff) : item.startsAt) : value;
-        const endsAt = item.endsAt ? (hasOld ? shiftInputDate(item.endsAt, diff) : item.endsAt) : value;
-        return { ...item, startsAt, endsAt, name: startsAt ? formatSessionName(startsAt) : `Data ${index + 1}`, capacity: item.capacity || capacity };
+        const startsAt = item.startsAt ? (hasOld ? shiftInputDate(item.startsAt, diff) : item.startsAt) : shiftInputDays(value, index);
+        const endsAt = item.endsAt ? (hasOld ? shiftInputDate(item.endsAt, diff) : item.endsAt) : shiftInputDays(value, index);
+        return clampSessionInsideGeneral({ ...item, startsAt, endsAt, name: startsAt ? formatSessionName(startsAt) : `Data ${index + 1}`, capacity: item.capacity || capacity }, index);
       }),
     );
   }
@@ -1154,7 +1355,11 @@ export default function NewEventPage() {
     const hasOld = Boolean(old);
     const diff = hasOld ? new Date(value).getTime() - new Date(old).getTime() : 0;
     setEndDate(value);
-    setSessions((current) => current.map((item) => ({ ...item, endsAt: item.endsAt ? (hasOld ? shiftInputDate(item.endsAt, diff) : item.endsAt) : value })));
+    setSessions((current) =>
+      current.map((item, index) =>
+        clampSessionInsideGeneral({ ...item, endsAt: item.endsAt ? (hasOld ? shiftInputDate(item.endsAt, diff) : item.endsAt) : value }, index),
+      ),
+    );
   }
 
   function changeCategory(next: Category) {
@@ -1178,15 +1383,35 @@ export default function NewEventPage() {
   }
 
   function addSession() {
-    setSessions((current) => [...current, { ...newSession(current.length), startsAt: startDate, endsAt: endDate, name: startDate ? formatSessionName(startDate) : `Data ${current.length + 1}`, capacity }]);
+    setSessions((current) => {
+      const usedDays = new Set(current.map((item) => inputDateDay(item.startsAt)).filter(Boolean));
+      let startsAt = startDate || inputDateNow();
+
+      for (let i = 0; i < 365 && usedDays.has(inputDateDay(startsAt)); i += 1) {
+        startsAt = shiftInputDays(startsAt, 1);
+      }
+
+      if (endDate && startsAt > endDate) {
+        alert("Não há outro dia disponível dentro do início/fim geral.");
+        return current;
+      }
+
+      const endsAt = endDate && sameInputDay(startsAt, endDate) ? endDate : startsAt;
+
+      return [
+        ...current,
+        clampSessionInsideGeneral({ ...newSession(current.length), startsAt, endsAt, name: formatSessionName(startsAt), capacity }, current.length),
+      ];
+    });
   }
 
   function updateSession(localId: string, patch: Partial<SessionItem>) {
     setSessions((current) =>
-      current.map((item) => {
+      current.map((item, index) => {
         if (item.localId !== localId) return item;
-        const next = { ...item, ...patch };
+        const next = clampSessionInsideGeneral({ ...item, ...patch }, index);
         if (patch.startsAt) next.name = formatSessionName(patch.startsAt);
+        if (patch.name !== undefined) next.name = patch.name;
         if (patch.capacity !== undefined) next.capacity = onlyDigits(patch.capacity);
         return next;
       }),
@@ -1329,6 +1554,58 @@ export default function NewEventPage() {
     return previous?.salesEndAt || "";
   }
 
+  function ticketKindLabel(ticketKind: TicketKind) {
+    return TICKET_KIND_OPTIONS.find((option) => option.value === ticketKind)?.label || "Inteira";
+  }
+
+  function ticketSectorName(sectorId: string) {
+    if (isOpenOnly || !sectorId) return "Área única";
+
+    return sectors.find((sector) => sector.localId === sectorId)?.name || "Setor";
+  }
+
+  function automaticTicketName(ticket: Pick<TicketItem, "lotLabel" | "venueSectorLocalId" | "ticketKind" | "eventSessionLocalId">) {
+    const kindLabel = ticketKindLabel(ticket.ticketKind);
+    const sectorName = ticketSectorName(ticket.venueSectorLocalId);
+    const typeLabel = ticket.eventSessionLocalId ? kindLabel : `Passaporte ${kindLabel}`;
+
+    return `${ticket.lotLabel} • ${sectorName} • ${typeLabel}`;
+  }
+
+  function findPreviousTicketLot(list: TicketItem[], ticket: TicketItem) {
+    const previousNumber = lotNumber(ticket.lotLabel) - 1;
+
+    if (previousNumber < 1) return undefined;
+
+    return list.find((other) => {
+      return (
+        other.localId !== ticket.localId &&
+        other.venueSectorLocalId === ticket.venueSectorLocalId &&
+        other.eventSessionLocalId === ticket.eventSessionLocalId &&
+        other.ticketKind === ticket.ticketKind &&
+        lotNumber(other.lotLabel) === previousNumber
+      );
+    });
+  }
+
+  function maxPreviousTicketPrice(list: TicketItem[], ticket: TicketItem) {
+    const currentLot = lotNumber(ticket.lotLabel);
+
+    if (currentLot <= 1) return 0;
+
+    return list
+      .filter((other) => {
+        return (
+          other.localId !== ticket.localId &&
+          other.venueSectorLocalId === ticket.venueSectorLocalId &&
+          other.eventSessionLocalId === ticket.eventSessionLocalId &&
+          other.ticketKind === ticket.ticketKind &&
+          lotNumber(other.lotLabel) < currentLot
+        );
+      })
+      .reduce((max, item) => Math.max(max, moneyNumber(item.price)), 0);
+  }
+
   function addTicket() {
     const sessionId = sessions[0]?.localId || "";
     const sectorId = isOpenOnly ? "" : sectors[0]?.localId || "";
@@ -1338,7 +1615,8 @@ export default function NewEventPage() {
       ...current,
       {
         ...newTicket(current.length, sessionId, sectorId, sector?.mode || preset.mode),
-        salesEndAt: session?.startsAt ? mergeDateAndTime(session.startsAt, session.endsAt) : "",
+        salesStartAt: today,
+        salesEndAt: suggestLotEnd(today, session?.startsAt || endDate),
       },
     ]);
   }
@@ -1354,36 +1632,46 @@ export default function NewEventPage() {
         if (patch.quantity !== undefined) next.quantity = onlyDigits(patch.quantity);
         if (patch.maxPerOrder !== undefined) next.maxPerOrder = onlyDigits(patch.maxPerOrder);
 
-        if (patch.ticketKind) {
-          next.name = TICKET_KIND_OPTIONS.find((option) => option.value === patch.ticketKind)?.label || next.name;
-        }
-
         if (patch.venueSectorLocalId !== undefined) {
           const sector = sectors.find((sectorItem) => sectorItem.localId === patch.venueSectorLocalId);
           next.occupancyMode = sector?.mode || preset.mode;
         }
 
-        const nextSession = sessions.find((sessionItem) => sessionItem.localId === next.eventSessionLocalId);
-
-        if ((patch.eventSessionLocalId !== undefined || patch.salesEndAt !== undefined) && nextSession?.startsAt) {
-          next.salesEndAt = mergeDateAndTime(nextSession.startsAt, patch.salesEndAt || next.salesEndAt || nextSession.endsAt);
+        if (patch.lotLabel || patch.venueSectorLocalId !== undefined || patch.ticketKind || patch.eventSessionLocalId !== undefined) {
+          next.name = automaticTicketName(next);
         }
 
-        if (patch.lotLabel || patch.venueSectorLocalId !== undefined || patch.eventSessionLocalId !== undefined || patch.ticketKind) {
-          const previousNumber = lotNumber(next.lotLabel) - 1;
+        const nextSession = sessions.find((sessionItem) => sessionItem.localId === next.eventSessionLocalId);
 
-          if (previousNumber >= 1) {
-            const previousLot = current.find((other) =>
-              other.localId !== next.localId &&
-              other.venueSectorLocalId === next.venueSectorLocalId &&
-              other.eventSessionLocalId === next.eventSessionLocalId &&
-              other.ticketKind === next.ticketKind &&
-              lotNumber(other.lotLabel) === previousNumber,
-            );
+        if (patch.eventSessionLocalId !== undefined && nextSession?.startsAt && next.salesEndAt > nextSession.startsAt) {
+          next.salesEndAt = nextSession.startsAt;
+        }
 
-            if (previousLot?.salesEndAt) {
-              next.salesStartAt = previousLot.salesEndAt;
-            }
+        if (patch.eventSessionLocalId !== undefined && nextSession?.startsAt && next.salesStartAt > nextSession.startsAt) {
+          next.salesStartAt = today;
+        }
+
+        const previousLot = findPreviousTicketLot(current, next);
+
+        if (previousLot && (patch.lotLabel || patch.venueSectorLocalId !== undefined || patch.eventSessionLocalId !== undefined || patch.ticketKind)) {
+          if (previousLot.salesEndAt) {
+            next.salesStartAt = previousLot.salesEndAt;
+          }
+
+          if (patch.price === undefined && previousLot.price) {
+            next.price = addMoneyValue(previousLot.price, 100);
+          }
+
+          if (patch.quantity === undefined && previousLot.quantity) {
+            next.quantity = previousLot.quantity;
+          }
+        }
+
+        if (patch.price !== undefined && lotNumber(next.lotLabel) > 1) {
+          const minimumPrice = maxPreviousTicketPrice(current, next);
+
+          if (minimumPrice > 0 && moneyNumber(next.price) < minimumPrice) {
+            next.price = moneyInputFromNumber(minimumPrice);
           }
         }
 
@@ -1649,8 +1937,194 @@ export default function NewEventPage() {
     });
   }
 
+  type MapRect = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+
+  const MAP_GRID_SIZE = 40;
+  const MAP_STRONG_GRID_SIZE = 120;
+  const MAP_SNAP_DISTANCE = 14;
+
+  function clampMapRect(rect: MapRect): MapRect {
+    const width = Math.min(Math.max(rect.width, MAP_MIN), MAP_W);
+    const height = Math.min(Math.max(rect.height, MAP_MIN), MAP_H);
+
+    return {
+      x: Math.min(Math.max(rect.x, 0), MAP_W - width),
+      y: Math.min(Math.max(rect.y, 0), MAP_H - height),
+      width,
+      height,
+    };
+  }
+
+  function rectsOverlap(first: MapRect, second: MapRect) {
+    return !(
+      first.x + first.width <= second.x ||
+      first.x >= second.x + second.width ||
+      first.y + first.height <= second.y ||
+      first.y >= second.y + second.height
+    );
+  }
+
+  function mapObjectRect(object: MapObject): MapRect {
+    return {
+      x: object.x,
+      y: object.y,
+      width: object.width,
+      height: object.height,
+    };
+  }
+
+  function snapValue(value: number, target: number, distance = MAP_SNAP_DISTANCE) {
+    return Math.abs(value - target) <= distance ? target : value;
+  }
+
+  function snapToGrid(rect: MapRect): MapRect {
+    let nextX = rect.x;
+    let nextY = rect.y;
+
+    const xLines = [
+      Math.round(rect.x / MAP_GRID_SIZE) * MAP_GRID_SIZE,
+      Math.round((rect.x + rect.width) / MAP_GRID_SIZE) * MAP_GRID_SIZE - rect.width,
+      Math.round((rect.x + rect.width / 2) / MAP_GRID_SIZE) * MAP_GRID_SIZE - rect.width / 2,
+      Math.round(rect.x / MAP_STRONG_GRID_SIZE) * MAP_STRONG_GRID_SIZE,
+      Math.round((rect.x + rect.width) / MAP_STRONG_GRID_SIZE) * MAP_STRONG_GRID_SIZE - rect.width,
+      Math.round((rect.x + rect.width / 2) / MAP_STRONG_GRID_SIZE) * MAP_STRONG_GRID_SIZE - rect.width / 2,
+    ];
+
+    const yLines = [
+      Math.round(rect.y / MAP_GRID_SIZE) * MAP_GRID_SIZE,
+      Math.round((rect.y + rect.height) / MAP_GRID_SIZE) * MAP_GRID_SIZE - rect.height,
+      Math.round((rect.y + rect.height / 2) / MAP_GRID_SIZE) * MAP_GRID_SIZE - rect.height / 2,
+      Math.round(rect.y / MAP_STRONG_GRID_SIZE) * MAP_STRONG_GRID_SIZE,
+      Math.round((rect.y + rect.height) / MAP_STRONG_GRID_SIZE) * MAP_STRONG_GRID_SIZE - rect.height,
+      Math.round((rect.y + rect.height / 2) / MAP_STRONG_GRID_SIZE) * MAP_STRONG_GRID_SIZE - rect.height / 2,
+    ];
+
+    for (const line of xLines) {
+      nextX = snapValue(nextX, line);
+    }
+
+    for (const line of yLines) {
+      nextY = snapValue(nextY, line);
+    }
+
+    return clampMapRect({
+      ...rect,
+      x: Math.round(nextX),
+      y: Math.round(nextY),
+    });
+  }
+
+  function snapToObjects(rect: MapRect, objectId: string, objects: MapObject[]) {
+    let nextRect = { ...rect };
+
+    for (const object of objects) {
+      if (object.localId === objectId) continue;
+
+      const other = mapObjectRect(object);
+      const verticalIntersects =
+        nextRect.y < other.y + other.height &&
+        nextRect.y + nextRect.height > other.y;
+      const horizontalIntersects =
+        nextRect.x < other.x + other.width &&
+        nextRect.x + nextRect.width > other.x;
+
+      if (verticalIntersects) {
+        nextRect.x = snapValue(nextRect.x, other.x);
+        nextRect.x = snapValue(nextRect.x, other.x + other.width);
+        nextRect.x = snapValue(nextRect.x, other.x - nextRect.width);
+        nextRect.x = snapValue(nextRect.x + nextRect.width, other.x) - nextRect.width;
+        nextRect.x = snapValue(nextRect.x + nextRect.width, other.x + other.width) - nextRect.width;
+      }
+
+      if (horizontalIntersects) {
+        nextRect.y = snapValue(nextRect.y, other.y);
+        nextRect.y = snapValue(nextRect.y, other.y + other.height);
+        nextRect.y = snapValue(nextRect.y, other.y - nextRect.height);
+        nextRect.y = snapValue(nextRect.y + nextRect.height, other.y) - nextRect.height;
+        nextRect.y = snapValue(nextRect.y + nextRect.height, other.y + other.height) - nextRect.height;
+      }
+    }
+
+    return clampMapRect({
+      ...nextRect,
+      x: Math.round(nextRect.x),
+      y: Math.round(nextRect.y),
+    });
+  }
+
+  function resolveCollision(proposed: MapRect, previous: MapRect, objectId: string, objects: MapObject[]) {
+    let nextRect = { ...proposed };
+
+    for (const object of objects) {
+      if (object.localId === objectId) continue;
+
+      const other = mapObjectRect(object);
+      if (!rectsOverlap(nextRect, other)) continue;
+
+      const cameFromLeft = previous.x + previous.width <= other.x;
+      const cameFromRight = previous.x >= other.x + other.width;
+      const cameFromTop = previous.y + previous.height <= other.y;
+      const cameFromBottom = previous.y >= other.y + other.height;
+
+      if (cameFromLeft) {
+        nextRect.x = other.x - nextRect.width;
+        continue;
+      }
+
+      if (cameFromRight) {
+        nextRect.x = other.x + other.width;
+        continue;
+      }
+
+      if (cameFromTop) {
+        nextRect.y = other.y - nextRect.height;
+        continue;
+      }
+
+      if (cameFromBottom) {
+        nextRect.y = other.y + other.height;
+        continue;
+      }
+
+      const pushLeft = Math.abs(nextRect.x + nextRect.width - other.x);
+      const pushRight = Math.abs(other.x + other.width - nextRect.x);
+      const pushUp = Math.abs(nextRect.y + nextRect.height - other.y);
+      const pushDown = Math.abs(other.y + other.height - nextRect.y);
+      const smallestPush = Math.min(pushLeft, pushRight, pushUp, pushDown);
+
+      if (smallestPush === pushLeft) {
+        nextRect.x = other.x - nextRect.width;
+      } else if (smallestPush === pushRight) {
+        nextRect.x = other.x + other.width;
+      } else if (smallestPush === pushUp) {
+        nextRect.y = other.y - nextRect.height;
+      } else {
+        nextRect.y = other.y + other.height;
+      }
+    }
+
+    return clampMapRect({
+      ...nextRect,
+      x: Math.round(nextRect.x),
+      y: Math.round(nextRect.y),
+    });
+  }
+
+  function hasCollision(rect: MapRect, objectId: string, objects: MapObject[]) {
+    return objects.some((object) => {
+      if (object.localId === objectId) return false;
+      return rectsOverlap(rect, mapObjectRect(object));
+    });
+  }
+
   function dragMove(event: ReactPointerEvent<HTMLDivElement>) {
     if (!interaction) return;
+
     const dx = event.clientX - interaction.clientX;
     const dy = event.clientY - interaction.clientY;
 
@@ -1658,19 +2132,49 @@ export default function NewEventPage() {
       current.map((object) => {
         if (object.localId !== interaction.objectId) return object;
 
+        if (object.type === "STAGE") {
+          return object;
+        }
+
         if (interaction.type === "move") {
+          const previousRect: MapRect = {
+            x: interaction.startX,
+            y: interaction.startY,
+            width: object.width,
+            height: object.height,
+          };
+
+          let proposedRect: MapRect = {
+            x: interaction.startX + dx,
+            y: interaction.startY + dy,
+            width: object.width,
+            height: object.height,
+          };
+
+          proposedRect = clampMapRect(proposedRect);
+          proposedRect = snapToGrid(proposedRect);
+          proposedRect = snapToObjects(proposedRect, object.localId, current);
+          proposedRect = resolveCollision(proposedRect, previousRect, object.localId, current);
+
           return {
             ...object,
-            x: Math.min(Math.max(interaction.startX + dx, 0), MAP_W - object.width),
-            y: Math.min(Math.max(interaction.startY + dy, 0), MAP_H - object.height),
+            x: proposedRect.x,
+            y: proposedRect.y,
           };
         }
 
         if (interaction.type === "point") {
           const points = objectPoints(object);
           const index = interaction.pointIndex || 0;
-          const nextX = Math.min(Math.max((interaction.startPointX || 0) + (dx / interaction.startWidth) * 100, 0), 100);
-          const nextY = Math.min(Math.max((interaction.startPointY || 0) + (dy / interaction.startHeight) * 100, 0), 100);
+          const nextX = Math.min(
+            Math.max((interaction.startPointX || 0) + (dx / interaction.startWidth) * 100, 0),
+            100,
+          );
+          const nextY = Math.min(
+            Math.max((interaction.startPointY || 0) + (dy / interaction.startHeight) * 100, 0),
+            100,
+          );
+
           return {
             ...object,
             metadata: {
@@ -1701,17 +2205,26 @@ export default function NewEventPage() {
           if (interaction.dir?.includes("w")) x = interaction.startX + interaction.startWidth - MAP_MIN;
           width = MAP_MIN;
         }
+
         if (height < MAP_MIN) {
           if (interaction.dir?.includes("n")) y = interaction.startY + interaction.startHeight - MAP_MIN;
           height = MAP_MIN;
         }
 
-        x = Math.min(Math.max(x, 0), MAP_W - MAP_MIN);
-        y = Math.min(Math.max(y, 0), MAP_H - MAP_MIN);
-        width = Math.min(Math.max(width, MAP_MIN), MAP_W - x);
-        height = Math.min(Math.max(height, MAP_MIN), MAP_H - y);
+        let proposedRect = clampMapRect({ x, y, width, height });
+        proposedRect = snapToGrid(proposedRect);
 
-        return { ...object, x, y, width, height };
+        if (hasCollision(proposedRect, object.localId, current)) {
+          return object;
+        }
+
+        return {
+          ...object,
+          x: proposedRect.x,
+          y: proposedRect.y,
+          width: proposedRect.width,
+          height: proposedRect.height,
+        };
       }),
     );
   }
@@ -2025,6 +2538,20 @@ export default function NewEventPage() {
   }
 
   function payload() {
+    const mediaPayload = Object.fromEntries(
+      Object.entries({
+        coverImageUrl: urlOrUndefined(coverImageUrl),
+        bannerImageUrl: urlOrUndefined(bannerImageUrl),
+        thumbnailUrl: urlOrUndefined(thumbnailUrl),
+        mobileBannerUrl: urlOrUndefined(mobileBannerUrl),
+        sectorMapImageUrl: urlOrUndefined(sectorMapImageUrl),
+        gallery: gallery.map((item) => urlOrUndefined(item)).filter((item): item is string => Boolean(item)),
+      }).filter(([, value]) => {
+        if (Array.isArray(value)) return value.length > 0;
+        return value !== undefined && value !== "";
+      }),
+    );
+
     return {
       organizerId,
       name: eventName.trim(),
@@ -2060,19 +2587,12 @@ export default function NewEventPage() {
         state: textOrUndefined(stateName),
         zipCode: textOrUndefined(zipCode),
         reference: textOrUndefined(reference),
-        mapUrl: textOrUndefined(mapUrl),
+        mapUrl: textOrUndefined(normalizeExternalUrl(mapUrl)),
         instructions: textOrUndefined(instructions),
         latitude: textOrUndefined(latitude),
         longitude: textOrUndefined(longitude),
       },
-      media: {
-        coverImageUrl: normalizeUrl(coverImageUrl),
-        bannerImageUrl: normalizeUrl(bannerImageUrl),
-        thumbnailUrl: normalizeUrl(thumbnailUrl),
-        mobileBannerUrl: normalizeUrl(mobileBannerUrl),
-        sectorMapImageUrl: normalizeUrl(sectorMapImageUrl),
-        gallery: gallery.map((item) => normalizeUrl(item)).filter(Boolean),
-      },
+      media: mediaPayload,
       policy: {
         ageRating: textOrUndefined(ageRating),
         refundPolicy: refundEnabled ? textOrUndefined(refundPolicy) : undefined,
@@ -2134,6 +2654,13 @@ export default function NewEventPage() {
           : [],
       ticketTypes: tickets.map((ticket, index) => {
         const sector = sectors.find((item) => item.localId === ticket.venueSectorLocalId);
+        const autoHidden = lotNumber(ticket.lotLabel) > 1 && tickets.some((other) =>
+          other.localId !== ticket.localId &&
+          other.eventSessionLocalId === ticket.eventSessionLocalId &&
+          other.venueSectorLocalId === ticket.venueSectorLocalId &&
+          other.ticketKind === ticket.ticketKind &&
+          other.lotLabel === "1º Lote",
+        );
         return {
           eventSessionLocalId: textOrUndefined(ticket.eventSessionLocalId),
           venueSectorLocalId: textOrUndefined(ticket.venueSectorLocalId),
@@ -2151,7 +2678,7 @@ export default function NewEventPage() {
           feeAmount: undefined,
           feeDescription: undefined,
           benefitDescription: undefined,
-          isHidden: ticket.isHidden,
+          isHidden: ticket.isHidden || autoHidden,
           status: "ACTIVE",
         };
       }),
@@ -2295,7 +2822,7 @@ export default function NewEventPage() {
                 {sessions.length > 1 ? <button type="button" onClick={() => removeSession(session.localId)} className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-600">Remover</button> : null}
               </div>
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Nome da data" value={session.name} onChange={() => undefined} disabled />
+                <Field label="Nome da data" value={session.name} onChange={(value) => updateSession(session.localId, { name: value })} />
                 <Field label="Capacidade da data" value={session.capacity} onChange={(value) => updateSession(session.localId, { capacity: value })} onlyNumbers required />
                 <Field label="Início" value={session.startsAt} onChange={(value) => updateSession(session.localId, { startsAt: value })} type="datetime-local" required />
                 <Field label="Fim" value={session.endsAt} onChange={(value) => updateSession(session.localId, { endsAt: value })} type="datetime-local" required />
@@ -2321,10 +2848,10 @@ export default function NewEventPage() {
           <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5">
             <h3 className="text-2xl font-black">Imagens e vídeos</h3>
             <div className="mt-6 grid gap-5 md:grid-cols-2">
-              <MediaField label="Capa" kind="cover" value={coverImageUrl} onChange={setCoverImageUrl} required error={requiredErrors.media && !coverImageUrl} />
-              <MediaField label="Banner" kind="banner" value={bannerImageUrl} onChange={setBannerImageUrl} required error={requiredErrors.media && !bannerImageUrl} />
-              <MediaField label="Thumbnail" kind="thumbnail" value={thumbnailUrl} onChange={setThumbnailUrl} required error={requiredErrors.media && !thumbnailUrl} />
-              <MediaField label="Banner mobile" kind="mobile-banner" value={mobileBannerUrl} onChange={setMobileBannerUrl} required error={requiredErrors.media && !mobileBannerUrl} />
+              <MediaField label="Capa" kind="cover" value={coverImageUrl} onChange={setCoverImageUrl} required error={requiredErrors.media && !urlOrUndefined(coverImageUrl)} />
+              <MediaField label="Banner" kind="banner" value={bannerImageUrl} onChange={setBannerImageUrl} required error={requiredErrors.media && !urlOrUndefined(bannerImageUrl)} />
+              <MediaField label="Thumbnail" kind="thumbnail" value={thumbnailUrl} onChange={setThumbnailUrl} required error={requiredErrors.media && !urlOrUndefined(thumbnailUrl)} />
+              <MediaField label="Banner mobile" kind="mobile-banner" value={mobileBannerUrl} onChange={setMobileBannerUrl} required error={requiredErrors.media && !urlOrUndefined(mobileBannerUrl)} />
               <MediaField label="Imagem do mapa/setor" kind="sector-map" value={sectorMapImageUrl} onChange={setSectorMapImageUrl} />
             </div>
             <div className="mt-5">
@@ -3107,8 +3634,16 @@ export default function NewEventPage() {
   }
 
   function renderTicketsStep() {
+    function sectorTicketId(sector: SectorItem) {
+      return isOpenOnly ? "" : sector.localId;
+    }
+
+    function isPassportTicket(ticket: TicketItem) {
+      return !ticket.eventSessionLocalId;
+    }
+
     function ticketGroupId(ticket: TicketItem) {
-      return `${ticket.eventSessionLocalId || "all"}::${ticket.venueSectorLocalId || "all"}::${ticket.ticketKind}`;
+      return `${ticket.eventSessionLocalId || "passport"}::${ticket.venueSectorLocalId || "open"}::${ticket.ticketKind}`;
     }
 
     function sameTicketGroup(a: TicketItem, b: TicketItem) {
@@ -3125,17 +3660,74 @@ export default function NewEventPage() {
         groups.set(key, current);
       });
 
-      return Array.from(groups.values()).map((group) => group.sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel)));
+      return Array.from(groups.values()).map((group) =>
+        group.sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel)),
+      );
     }
 
     function sessionLabel(sessionId: string) {
-      if (!sessionId) return "Todas as datas";
+      if (!sessionId) return "Passaporte";
       return sessions.find((session) => session.localId === sessionId)?.name || "Data";
     }
 
     function sectorLabel(sectorId: string) {
-      if (isOpenOnly || !sectorId) return isOpenOnly ? "Área única" : "Todos os setores";
+      if (isOpenOnly || !sectorId) return "Área única";
       return sectors.find((sector) => sector.localId === sectorId)?.name || "Setor";
+    }
+
+    function sessionSectorCapacity(sessionId: string, sectorId: string) {
+      const session = sessions.find((item) => item.localId === sessionId);
+      const sector = isOpenOnly ? sectors[0] : sectors.find((item) => item.localId === sectorId);
+      const sessionCapacity = positiveInt(session?.capacity || capacity, generalCapacity || 1);
+      const sectorCapacity = positiveInt(sector?.capacity || capacity, generalCapacity || 1);
+
+      return Math.min(sessionCapacity, sectorCapacity);
+    }
+
+    function availableForSessionSector(sessionId: string, sectorId: string) {
+      if (!sessionId) {
+        const values = sessions.map((session) => sessionSectorCapacity(session.localId, sectorId));
+        return values.length ? Math.min(...values) : generalCapacity;
+      }
+
+      return sessionSectorCapacity(sessionId, sectorId);
+    }
+
+    function createdForSessionSector(sessionId: string, sectorId: string, exceptTicketId = "") {
+      if (!sessionId) {
+        return tickets
+          .filter((ticket) =>
+            ticket.localId !== exceptTicketId &&
+            ticket.eventSessionLocalId === "" &&
+            ticket.venueSectorLocalId === sectorId,
+          )
+          .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+      }
+
+      return tickets
+        .filter((ticket) =>
+          ticket.localId !== exceptTicketId &&
+          ticket.venueSectorLocalId === sectorId &&
+          (ticket.eventSessionLocalId === sessionId || ticket.eventSessionLocalId === ""),
+        )
+        .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+    }
+
+    function remainingForSessionSector(sessionId: string, sectorId: string, exceptTicketId = "") {
+      if (!sessionId) {
+        const values = sessions.map((session) => {
+          const available = availableForSessionSector(session.localId, sectorId);
+          const created = createdForSessionSector(session.localId, sectorId, exceptTicketId);
+          return available - created;
+        });
+
+        return Math.max(values.length ? Math.min(...values) : generalCapacity, 0);
+      }
+
+      return Math.max(
+        availableForSessionSector(sessionId, sectorId) - createdForSessionSector(sessionId, sectorId, exceptTicketId),
+        0,
+      );
     }
 
     function groupLimit(ticket: TicketItem) {
@@ -3149,9 +3741,31 @@ export default function NewEventPage() {
       );
     }
 
+    function lotLimitDate(sessionId: string) {
+      if (!sessionId) {
+        return sessions
+          .map((item) => item.startsAt)
+          .filter(Boolean)
+          .sort()[0] || endDate;
+      }
+
+      return sessions.find((item) => item.localId === sessionId)?.startsAt || endDate;
+    }
+
     function addLotFor(sessionId: string, sectorId: string, ticketKind: TicketKind) {
-      const sector = sectors.find((item) => item.localId === sectorId);
-      const session = sessions.find((item) => item.localId === sessionId) || sessions[0];
+      const passport = !sessionId;
+      const sector = isOpenOnly ? sectors[0] : sectors.find((item) => item.localId === sectorId);
+      const session = sessions.find((item) => item.localId === sessionId);
+
+      if (!sector && !isOpenOnly) {
+        alert("Escolha um setor para criar o lote.");
+        return;
+      }
+
+      if (!passport && !session) {
+        alert("Escolha uma data para criar o lote.");
+        return;
+      }
 
       setTickets((current) => {
         const group = current
@@ -3165,88 +3779,143 @@ export default function NewEventPage() {
         const previous = group[group.length - 1];
         const nextLotNumber = group.length + 1;
         const nextLotLabel = `${nextLotNumber}º Lote`;
-        const kindLabel = TICKET_KIND_OPTIONS.find((option) => option.value === ticketKind)?.label || "Inteira";
         const firstLimit = group.find((ticket) => lotNumber(ticket.lotLabel) === 1)?.maxPerOrder || previous?.maxPerOrder || "";
+        const limitDate = lotLimitDate(sessionId);
+        const startSuggestion = previous?.salesEndAt || today;
+        const endSuggestion = suggestLotEnd(startSuggestion, limitDate);
+        const totalAvailable = remainingForSessionSector(sessionId, sectorId);
+        const suggestedQuantity = previous?.quantity || String(Math.min(100, totalAvailable));
+        const nextQuantity = String(Math.min(positiveInt(suggestedQuantity, 1), totalAvailable));
+        const suggestedPrice = previous?.price ? addMoneyValue(previous.price, 100) : "";
+
+        if (totalAvailable <= 0) {
+          alert("Não há quantidade disponível para criar mais ingressos neste setor/data.");
+          return current;
+        }
+
+        const draft: TicketItem = {
+          ...newTicket(current.length, sessionId, sectorId, sector?.mode || preset.mode),
+          ticketKind,
+          lotLabel: nextLotLabel,
+          price: suggestedPrice,
+          quantity: nextQuantity,
+          salesStartAt: startSuggestion,
+          salesEndAt: endSuggestion,
+          maxPerOrder: firstLimit,
+          isHidden: nextLotNumber > 1 && group.some((ticket) => ticket.lotLabel === "1º Lote"),
+        };
 
         return [
           ...current,
           {
-            ...newTicket(current.length, sessionId, sectorId, sector?.mode || preset.mode),
-            ticketKind,
-            name: kindLabel,
-            lotLabel: nextLotLabel,
-            salesStartAt: previous?.salesEndAt || today,
-            salesEndAt: session?.startsAt ? mergeDateAndTime(session.startsAt, previous?.salesEndAt || session.endsAt || session.startsAt) : "",
-            maxPerOrder: firstLimit,
-            isHidden: nextLotNumber > 1 && group.some((ticket) => ticket.lotLabel === "1º Lote"),
+            ...draft,
+            name: automaticTicketName(draft),
           },
         ];
       });
     }
 
+
     const groups = groupTickets(tickets);
     const validTickets = tickets.filter((item) => item.name.trim() && item.price.trim());
-    const sessionOptions = [{ label: "Todas as datas", value: "" }, ...sessions.map((item) => ({ label: item.name, value: item.localId }))];
-    const sectorOptions = isOpenOnly
-      ? [{ label: "Área única", value: "" }]
-      : [{ label: "Todos os setores", value: "" }, ...sectors.map((item) => ({ label: item.name, value: item.localId }))];
+    const visibleSectors = isOpenOnly ? [{ ...sectors[0], localId: "", name: "Área única", mode: preset.mode } as SectorItem] : sectors;
 
     return (
       <StepShell
         eyebrow="Etapa 7"
         title="Ingressos e lotes"
-        description="Crie lotes por setor, data e tipo de ingresso. O próximo lote começa quando o anterior termina ou esgota a quantidade disponível."
+        description="Crie lotes por data, setor e tipo de ingresso. O próximo lote abre quando o anterior termina ou quando sua quantidade esgota."
       >
         <div className="grid gap-6">
           <div className="rounded-[2rem] border border-sky-100 bg-sky-50 p-5">
             <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
               <div>
-                <h3 className="text-xl font-black text-slate-950">Criador rápido por setor</h3>
+                <h3 className="text-xl font-black text-slate-950">Criador rápido por data e setor</h3>
                 <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-sky-900">
-                  Escolha a data e o setor abaixo e clique no tipo de ingresso. Se já existir 1º lote para aquele setor/data/tipo, o sistema cria o próximo lote como oculto e usa o fim do lote anterior como início sugerido.
+                  Cada setor definido precisa ter pelo menos um lote em cada data. Use os botões para criar Inteira, Meia ou Social. Lotes posteriores ficam ocultos automaticamente até o lote anterior terminar ou esgotar.
                 </p>
               </div>
 
               <div className="grid gap-2 sm:grid-cols-3">
-                <MiniStat label="Tipos válidos" value={validTickets.length} />
-                <MiniStat label="Quantidade total" value={tickets.reduce((sum, item) => sum + toNumber(item.quantity), 0)} />
+                <MiniStat label="Lotes válidos" value={validTickets.length} />
+                <MiniStat label="Ingressos distribuídos" value={tickets.reduce((sum, item) => sum + toNumber(item.quantity), 0)} />
                 <MiniStat label="Grupos" value={groups.length} />
               </div>
             </div>
 
             <div className="mt-5 grid gap-4 lg:grid-cols-2">
-              {(sessions.length ? sessions : [newSession(0)]).map((session) => (
-                <div key={session.localId || "all-session"} className="rounded-3xl border border-sky-200 bg-white p-4">
+              {sessions.map((session) => (
+                <div key={session.localId} className="rounded-3xl border border-sky-200 bg-white p-4">
                   <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">{session.name || "Data"}</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">Fim padrão das vendas: {datePreview(session.startsAt || startDate)}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">Vendas podem ir até: {datePreview(session.startsAt)}</p>
 
                   <div className="mt-4 grid gap-3">
-                    {(isOpenOnly ? [{ localId: "", name: "Área única", mode: preset.mode } as SectorItem] : sectors).map((sector) => (
-                      <div key={`${session.localId}-${sector.localId || "open"}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                          <div>
-                            <p className="text-sm font-black text-slate-950">{sector.name || "Área única"}</p>
-                            <p className="mt-1 text-xs font-semibold text-slate-500">Capacidade do setor: {sector.capacity || capacity}</p>
-                          </div>
+                    {visibleSectors.map((sector) => {
+                      const sectorId = sectorTicketId(sector);
+                      return (
+                        <div key={`${session.localId}-${sectorId || "open"}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                            <div>
+                              <p className="text-sm font-black text-slate-950">{sector.name || "Área única"}</p>
+                              <p className="mt-1 text-xs font-semibold text-slate-500">
+                                Ainda livre nesta data/setor: {remainingForSessionSector(session.localId, sectorId)}
+                              </p>
+                            </div>
 
-                          <div className="flex flex-wrap gap-2">
-                            {TICKET_KIND_OPTIONS.map((option) => (
-                              <button
-                                key={option.value}
-                                type="button"
-                                onClick={() => addLotFor(session.localId, sector.localId || "", option.value)}
-                                className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-sky-700"
-                              >
-                                + {option.label}
-                              </button>
-                            ))}
+                            <div className="flex flex-wrap gap-2">
+                              {TICKET_KIND_OPTIONS.map((option) => (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  onClick={() => addLotFor(session.localId, sectorId, option.value)}
+                                  className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-sky-700"
+                                >
+                                  + {option.label}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5">
+            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
+              <div>
+                <h3 className="text-xl font-black text-slate-950">Passaporte opcional</h3>
+                <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-amber-900">
+                  O passaporte dá acesso a todas as datas. Ele é opcional e precisa ser associado a um setor específico. A quantidade dele reduz a disponibilidade daquele setor em todas as datas.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {visibleSectors.map((sector) => {
+                const sectorId = sectorTicketId(sector);
+                return (
+                  <div key={`passport-${sectorId || "open"}`} className="rounded-3xl border border-amber-200 bg-white p-4">
+                    <p className="text-sm font-black text-slate-950">{sector.name || "Área única"}</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">Disponível para passaporte: {remainingForSessionSector("", sectorId)}</p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {TICKET_KIND_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => addLotFor("", sectorId, option.value)}
+                          className="rounded-2xl border border-amber-300 bg-amber-100 px-4 py-2 text-xs font-black text-amber-900 hover:bg-amber-200"
+                        >
+                          + Passaporte {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -3259,24 +3928,35 @@ export default function NewEventPage() {
           {groups.length === 0 ? (
             <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white p-8 text-center">
               <p className="text-lg font-black text-slate-950">Nenhum lote criado ainda</p>
-              <p className="mt-2 text-sm font-semibold text-slate-500">Use o criador rápido acima para gerar os primeiros lotes.</p>
+              <p className="mt-2 text-sm font-semibold text-slate-500">Use o criador rápido acima para gerar os primeiros lotes obrigatórios. O passaporte é opcional.</p>
             </div>
           ) : (
             <div className="grid gap-5">
               {groups.map((group) => {
                 const first = group[0];
+                const passport = isPassportTicket(first);
                 const groupTitle = `${sessionLabel(first.eventSessionLocalId)} • ${sectorLabel(first.venueSectorLocalId)} • ${TICKET_KIND_OPTIONS.find((item) => item.value === first.ticketKind)?.label || "Inteira"}`;
                 const maxPerOrder = groupLimit(first);
+                const totalAvailable = availableForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
+                const totalDistributed = createdForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
+                const totalFree = remainingForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
 
                 return (
-                  <div key={ticketGroupId(first)} className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+                  <div key={ticketGroupId(first)} className={`rounded-[2rem] border bg-white p-5 shadow-sm ${passport ? "border-amber-200" : "border-slate-200"}`}>
                     <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
                       <div>
-                        <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">Grupo de venda</p>
+                        <p className={`text-xs font-black uppercase tracking-[0.18em] ${passport ? "text-amber-600" : "text-sky-600"}`}>
+                          {passport ? "Grupo de venda passaporte" : "Grupo de venda"}
+                        </p>
                         <h3 className="mt-1 text-xl font-black text-slate-950">{groupTitle}</h3>
                         <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
                           Mínimo por pedido travado em 1. O máximo definido aqui vale para todos os lotes deste grupo.
                         </p>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                          <MiniStat label="Total disponível" value={totalAvailable} />
+                          <MiniStat label="Já distribuído" value={totalDistributed} />
+                          <MiniStat label="Ainda livre" value={totalFree} />
+                        </div>
                       </div>
 
                       <Field
@@ -3288,65 +3968,80 @@ export default function NewEventPage() {
                       />
                     </div>
 
-                    <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
-                      <div className="grid grid-cols-[110px_1fr_120px_120px_190px_190px_120px] gap-0 bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-white">
-                        <span>Lote</span>
-                        <span>Nome</span>
-                        <span>Preço</span>
-                        <span>Qtd.</span>
-                        <span>Início</span>
-                        <span>Fim</span>
-                        <span>Status</span>
-                      </div>
+                    <div className="mt-5 overflow-x-auto rounded-3xl border border-slate-200">
+                      <div className="min-w-[1070px]">
+                        <div className="grid grid-cols-[110px_1fr_120px_120px_190px_190px_120px] gap-0 bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-white">
+                          <span>Lote</span>
+                          <span>Nome</span>
+                          <span>Preço</span>
+                          <span>Qtd.</span>
+                          <span>Início</span>
+                          <span>Fim</span>
+                          <span>Status</span>
+                        </div>
 
-                      <div className="divide-y divide-slate-200">
-                        {group.map((ticket) => {
-                          const autoHidden = lotNumber(ticket.lotLabel) > 1 && group.some((item) => item.lotLabel === "1º Lote");
-                          const previousEnd = previousLotEnd(ticket, ticket.lotLabel);
+                        <div className="divide-y divide-slate-200">
+                          {group.map((ticket) => {
+                            const autoHidden = lotNumber(ticket.lotLabel) > 1 && group.some((item) => item.lotLabel === "1º Lote");
+                            const previousEnd = previousLotEnd(ticket, ticket.lotLabel);
+                            const freeWithoutCurrent = remainingForSessionSector(ticket.eventSessionLocalId, ticket.venueSectorLocalId, ticket.localId);
+                            const remainingAfterCurrent = Math.max(freeWithoutCurrent - toNumber(ticket.quantity), 0);
 
-                          return (
-                            <div key={ticket.localId} className="grid grid-cols-[110px_1fr_120px_120px_190px_190px_120px] items-start gap-0 bg-white px-4 py-4 text-sm">
-                              <Select label="" value={ticket.lotLabel} onChange={(value) => updateTicket(ticket.localId, { lotLabel: value })} options={ticketLotOptions(ticket)} />
-                              <Field label="" value={ticket.name} onChange={(value) => updateTicket(ticket.localId, { name: value })} />
-                              <Field label="" value={ticket.price} onChange={(value) => updateTicket(ticket.localId, { price: value })} money placeholder="250,00" helper={formatMoney(ticket.price)} />
-                              <Field label="" value={ticket.quantity} onChange={(value) => updateTicket(ticket.localId, { quantity: value })} onlyNumbers />
-                              <Field
-                                label=""
-                                value={ticket.salesStartAt || previousEnd}
-                                onChange={(value) => updateTicket(ticket.localId, { salesStartAt: value })}
-                                type="datetime-local"
-                                helper={previousEnd ? "Sugerido pelo fim do lote anterior." : undefined}
-                              />
-                              <Field
-                                label=""
-                                value={ticket.salesEndAt}
-                                onChange={(value) => updateTicket(ticket.localId, { salesEndAt: value })}
-                                type="datetime-local"
-                                helper="Dia preso à data escolhida."
-                              />
-                              <div className="grid gap-2">
-                                <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">
-                                  <input
-                                    type="checkbox"
-                                    checked={ticket.isHidden || autoHidden}
-                                    disabled={autoHidden}
-                                    onChange={(event) => updateTicket(ticket.localId, { isHidden: event.target.checked })}
-                                  />
-                                  Oculto
-                                </label>
-                                {tickets.length > 1 ? (
-                                  <button type="button" onClick={() => removeTicket(ticket.localId)} className="rounded-2xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50">
-                                    Remover
-                                  </button>
-                                ) : null}
+                            return (
+                              <div key={ticket.localId} className="grid grid-cols-[110px_1fr_120px_120px_190px_190px_120px] items-start gap-0 bg-white px-4 py-4 text-sm">
+                                <Select label="" value={ticket.lotLabel} onChange={(value) => updateTicket(ticket.localId, { lotLabel: value })} options={ticketLotOptions(ticket)} />
+                                <Field label="" value={ticket.name} onChange={(value) => updateTicket(ticket.localId, { name: value })} />
+                                <Field label="" value={ticket.price} onChange={(value) => updateTicket(ticket.localId, { price: value })} money placeholder="250,00" helper={formatMoney(ticket.price)} />
+                                <Field
+                                  label=""
+                                  value={ticket.quantity}
+                                  onChange={(value) => {
+                                    const clean = onlyDigits(value);
+                                    const maxAllowed = remainingForSessionSector(ticket.eventSessionLocalId, ticket.venueSectorLocalId, ticket.localId);
+                                    const nextQuantity = Math.min(toNumber(clean), maxAllowed);
+                                    updateTicket(ticket.localId, { quantity: String(nextQuantity) });
+                                  }}
+                                  onlyNumbers
+                                  helper={`Restante após este lote: ${remainingAfterCurrent}`}
+                                />
+                                <Field
+                                  label=""
+                                  value={ticket.salesStartAt || previousEnd}
+                                  onChange={(value) => updateTicket(ticket.localId, { salesStartAt: value })}
+                                  type="datetime-local"
+                                  helper={previousEnd ? "Sugerido pelo fim do lote anterior." : "Editável."}
+                                />
+                                <Field
+                                  label=""
+                                  value={ticket.salesEndAt}
+                                  onChange={(value) => updateTicket(ticket.localId, { salesEndAt: value })}
+                                  type="datetime-local"
+                                  helper={passport ? "Máximo: início da primeira data." : "Máximo: início da data do evento."}
+                                />
+                                <div className="grid gap-2">
+                                  <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">
+                                    <input
+                                      type="checkbox"
+                                      checked={ticket.isHidden || autoHidden}
+                                      disabled={autoHidden}
+                                      onChange={(event) => updateTicket(ticket.localId, { isHidden: event.target.checked })}
+                                    />
+                                    Oculto
+                                  </label>
+                                  {tickets.length > 1 ? (
+                                    <button type="button" onClick={() => removeTicket(ticket.localId)} className="rounded-2xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50">
+                                      Remover
+                                    </button>
+                                  ) : null}
+                                </div>
+
+                                <div className="col-span-7 mt-3">
+                                  <TextArea label="Descrição e benefícios" value={ticket.description} onChange={(value) => updateTicket(ticket.localId, { description: value })} />
+                                </div>
                               </div>
-
-                              <div className="col-span-7 mt-3">
-                                <TextArea label="Descrição e benefícios" value={ticket.description} onChange={(value) => updateTicket(ticket.localId, { description: value })} />
-                              </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
 
@@ -3368,7 +4063,6 @@ export default function NewEventPage() {
       </StepShell>
     );
   }
-
   function renderLocationStep() {
     const coordinatesReady = Boolean(latitude.trim() && longitude.trim());
     const isShortGoogleLink = /maps\.app\.goo\.gl|goo\.gl\/maps/i.test(mapUrl);
