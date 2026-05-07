@@ -113,6 +113,16 @@ type TicketItem = {
   isHidden: boolean;
 };
 
+type TicketAutomationConfig = {
+  lotCount: string;
+  lotQuantity: string;
+  firstPrice: string;
+  priceStep: string;
+  intervalDays: string;
+  maxPerOrder: string;
+  salesStartAt: string;
+};
+
 type Interaction = {
   type: "move" | "resize" | "point";
   objectId: string;
@@ -470,13 +480,52 @@ function inputDateNow() {
   return now.toISOString().slice(0, 16);
 }
 
+function inputDateToday() {
+  return inputDateNow().slice(0, 10);
+}
+
+function eventDayStart(value: string) {
+  const day = inputDateDay(value);
+  return day ? `${day}T00:00` : "";
+}
+
+function eventDayEnd(value: string) {
+  const day = inputDateDay(value);
+  return day ? `${day}T23:59` : "";
+}
+
+function isoEventStartOrUndefined(value: string) {
+  if (!value) return undefined;
+  const normalized = value.length === 10 ? eventDayStart(value) : value;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function isoEventEndOrUndefined(value: string) {
+  if (!value) return undefined;
+  const normalized = value.length === 10 ? eventDayEnd(value) : value;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function isoSalesStartOrUndefined(value: string) {
+  const day = inputDateDay(value);
+  return day ? new Date(`${day}T00:00`).toISOString() : undefined;
+}
+
+function isoSalesEndOrUndefined(value: string) {
+  const day = inputDateDay(value);
+  return day ? new Date(`${day}T23:59`).toISOString() : undefined;
+}
+
 function shiftInputDate(value: string, diffMs: number) {
   if (!value) return value;
-  const date = new Date(value);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(isDateOnly ? `${value}T00:00` : value);
   if (Number.isNaN(date.getTime())) return value;
   const next = new Date(date.getTime() + diffMs);
   next.setMinutes(next.getMinutes() - next.getTimezoneOffset());
-  return next.toISOString().slice(0, 16);
+  return next.toISOString().slice(0, isDateOnly ? 10 : 16);
 }
 
 function formatSessionName(value: string) {
@@ -484,6 +533,26 @@ function formatSessionName(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Data sem início";
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" });
+}
+
+function daysUntilEventLabel(value: string) {
+  const day = inputDateDay(value);
+
+  if (!day) return "Sem data";
+
+  const today = new Date(`${inputDateToday()}T00:00`);
+  const eventDay = new Date(`${day}T00:00`);
+
+  if (Number.isNaN(eventDay.getTime())) return "Sem data";
+
+  const diffDays = Math.ceil((eventDay.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+
+  if (diffDays === 0) return "Hoje";
+  if (diffDays === 1) return "Falta 1 dia";
+  if (diffDays > 1) return `Faltam ${diffDays} dias`;
+  if (diffDays === -1) return "Foi ontem";
+
+  return `Passou há ${Math.abs(diffDays)} dias`;
 }
 
 function inputDateDay(value: string) {
@@ -496,7 +565,11 @@ function sameInputDay(a: string, b: string) {
 
 function isDateTimeBetween(value: string, start: string, end: string) {
   if (!value || !start || !end) return true;
-  return value >= start && value <= end;
+  const day = inputDateDay(value);
+  const startDay = inputDateDay(start);
+  const endDay = inputDateDay(end);
+  if (!day || !startDay || !endDay) return true;
+  return day >= startDay && day <= endDay;
 }
 
 function shiftInputDays(value: string, days: number) {
@@ -611,8 +684,16 @@ function newTicket(index = 0, sessionId = "", sectorId = "", mode: OccupancyMode
 
 function datePreview(value: string) {
   if (!value) return "A definir";
-  const date = new Date(value);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(isDateOnly ? `${value}T00:00` : value);
   if (Number.isNaN(date.getTime())) return "A definir";
+  if (isDateOnly) {
+    return date.toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  }
   return date.toLocaleString("pt-BR", {
     day: "2-digit",
     month: "short",
@@ -1039,6 +1120,12 @@ export default function NewEventPage() {
   const [seatsPerTable, setSeatsPerTable] = useState("4");
 
   const [tickets, setTickets] = useState<TicketItem[]>([]);
+  const [ticketBuilderStep, setTicketBuilderStep] = useState<"CREATE" | "PASSPORT" | "REVIEW">("CREATE");
+  const [ticketMaxPerOrder, setTicketMaxPerOrder] = useState("");
+  const [ticketLotIntervalDays, setTicketLotIntervalDays] = useState("20");
+  const [expandedTicketSessionId, setExpandedTicketSessionId] = useState("");
+  const [expandedTicketSectorKey, setExpandedTicketSectorKey] = useState("");
+  const [ticketAutomationConfigs, setTicketAutomationConfigs] = useState<Record<string, TicketAutomationConfig>>({});
   const [mode, setMode] = useState("PRESENTIAL");
   const [venueName, setVenueName] = useState("");
   const [zipCode, setZipCode] = useState("");
@@ -1121,7 +1208,7 @@ export default function NewEventPage() {
     if (!endDate) return "O fim geral é obrigatório.";
     if (endDate < startDate) return "O fim geral não pode ser antes do início geral.";
     if (sessions.some((item) => !item.startsAt || !item.endsAt || toNumber(item.capacity) <= 0)) return "Todas as datas precisam ter início, fim e capacidade.";
-    if (sessions.some((item) => item.endsAt < item.startsAt)) return "Nenhuma data pode ter fim antes do início.";
+    if (sessions.some((item) => item.endsAt < item.startsAt)) return "Nenhuma data pode terminar antes do início.";
     if (sessions.some((item) => !isDateTimeBetween(item.startsAt, startDate, endDate) || !isDateTimeBetween(item.endsAt, startDate, endDate))) return "Todas as datas devem ficar entre o início geral e o fim geral.";
     const days = sessions.map((item) => inputDateDay(item.startsAt)).filter(Boolean);
     if (new Set(days).size !== days.length) return "Não pode existir duas datas no mesmo dia.";
@@ -1171,14 +1258,15 @@ export default function NewEventPage() {
       if (toNumber(ticket.quantity) <= 0) return "Todo lote precisa ter quantidade maior que zero.";
       if (!ticket.salesStartAt) return "Todo lote precisa ter início das vendas.";
       if (!ticket.salesEndAt) return "Todo lote precisa ter fim das vendas.";
-      if (ticket.salesStartAt < today) return "O início das vendas não pode ser antes de agora.";
-      if (ticket.salesEndAt <= ticket.salesStartAt) return "O fim das vendas precisa ser depois do início.";
+      const todayDay = inputDateToday();
+      if (inputDateDay(ticket.salesStartAt) < todayDay) return "O início das vendas não pode ser antes de hoje.";
+      if (inputDateDay(ticket.salesEndAt) < inputDateDay(ticket.salesStartAt)) return "O fim das vendas precisa ser igual ou depois do início.";
 
       const session = sessions.find((item) => item.localId === ticket.eventSessionLocalId);
       const isPassport = !ticket.eventSessionLocalId;
 
-      if (!isPassport && session?.startsAt && ticket.salesEndAt > session.startsAt) {
-        return "O fim das vendas do lote não pode passar do início da data do evento.";
+      if (!isPassport && session?.startsAt && inputDateDay(ticket.salesEndAt) > inputDateDay(session.startsAt)) {
+        return "O fim das vendas do lote não pode passar do dia da sessão.";
       }
 
       if (isPassport) {
@@ -1187,8 +1275,8 @@ export default function NewEventPage() {
           .filter(Boolean)
           .sort()[0];
 
-        if (firstSessionStart && ticket.salesEndAt > firstSessionStart) {
-          return "O fim das vendas do passaporte não pode passar do início da primeira data do evento.";
+        if (firstSessionStart && inputDateDay(ticket.salesEndAt) > inputDateDay(firstSessionStart)) {
+          return "O fim das vendas do passaporte não pode passar do dia da primeira sessão.";
         }
       }
 
@@ -1316,6 +1404,31 @@ export default function NewEventPage() {
     setStepIndex((value) => Math.max(value - 1, 0));
   }
 
+  function splitCapacityByIndex(totalCapacity: number, count: number, index: number) {
+    if (count <= 0) return 0;
+
+    const safeTotal = Math.max(totalCapacity, 0);
+    const base = Math.floor(safeTotal / count);
+    const remainder = safeTotal % count;
+
+    return base + (index < remainder ? 1 : 0);
+  }
+
+  function rebalanceSessionCapacities(items: SessionItem[], totalValue = capacity) {
+    const total = toNumber(totalValue);
+
+    return items.map((item, index) => ({
+      ...item,
+      capacity: String(splitCapacityByIndex(total, items.length, index)),
+    }));
+  }
+
+  function setEventCapacity(value: string) {
+    const nextValue = onlyDigits(value);
+    setCapacity(nextValue);
+    setSessions((current) => rebalanceSessionCapacities(current, nextValue));
+  }
+
   function clampSessionInsideGeneral(session: SessionItem, fallbackIndex = 0): SessionItem {
     let startsAt = session.startsAt || startDate;
     let endsAt = session.endsAt || endDate || startsAt;
@@ -1342,11 +1455,13 @@ export default function NewEventPage() {
     setStartDate(value);
     setEndDate((current) => (current ? (hasOld ? shiftInputDate(current, diff) : current) : value));
     setSessions((current) =>
-      current.map((item, index) => {
-        const startsAt = item.startsAt ? (hasOld ? shiftInputDate(item.startsAt, diff) : item.startsAt) : shiftInputDays(value, index);
-        const endsAt = item.endsAt ? (hasOld ? shiftInputDate(item.endsAt, diff) : item.endsAt) : shiftInputDays(value, index);
-        return clampSessionInsideGeneral({ ...item, startsAt, endsAt, name: startsAt ? formatSessionName(startsAt) : `Data ${index + 1}`, capacity: item.capacity || capacity }, index);
-      }),
+      rebalanceSessionCapacities(
+        current.map((item, index) => {
+          const startsAt = item.startsAt ? (hasOld ? shiftInputDate(item.startsAt, diff) : item.startsAt) : shiftInputDays(value, index);
+          const endsAt = item.endsAt ? (hasOld ? shiftInputDate(item.endsAt, diff) : item.endsAt) : shiftInputDays(value, index);
+          return clampSessionInsideGeneral({ ...item, startsAt, endsAt, name: startsAt ? formatSessionName(startsAt) : `Data ${index + 1}` }, index);
+        }),
+      ),
     );
   }
 
@@ -1385,7 +1500,7 @@ export default function NewEventPage() {
   function addSession() {
     setSessions((current) => {
       const usedDays = new Set(current.map((item) => inputDateDay(item.startsAt)).filter(Boolean));
-      let startsAt = startDate || inputDateNow();
+      let startsAt = startDate || inputDateToday();
 
       for (let i = 0; i < 365 && usedDays.has(inputDateDay(startsAt)); i += 1) {
         startsAt = shiftInputDays(startsAt, 1);
@@ -1398,10 +1513,10 @@ export default function NewEventPage() {
 
       const endsAt = endDate && sameInputDay(startsAt, endDate) ? endDate : startsAt;
 
-      return [
+      return rebalanceSessionCapacities([
         ...current,
-        clampSessionInsideGeneral({ ...newSession(current.length), startsAt, endsAt, name: formatSessionName(startsAt), capacity }, current.length),
-      ];
+        clampSessionInsideGeneral({ ...newSession(current.length), startsAt, endsAt, name: formatSessionName(startsAt) }, current.length),
+      ]);
     });
   }
 
@@ -1419,7 +1534,9 @@ export default function NewEventPage() {
   }
 
   function removeSession(localId: string) {
-    setSessions((current) => (current.length <= 1 ? current : current.filter((item) => item.localId !== localId)));
+    setSessions((current) =>
+      current.length <= 1 ? current : rebalanceSessionCapacities(current.filter((item) => item.localId !== localId)),
+    );
     setTickets((current) => current.map((item) => (item.eventSessionLocalId === localId ? { ...item, eventSessionLocalId: "" } : item)));
   }
 
@@ -1615,8 +1732,8 @@ export default function NewEventPage() {
       ...current,
       {
         ...newTicket(current.length, sessionId, sectorId, sector?.mode || preset.mode),
-        salesStartAt: today,
-        salesEndAt: suggestLotEnd(today, session?.startsAt || endDate),
+        salesStartAt: inputDateToday(),
+        salesEndAt: suggestLotEnd(inputDateToday(), inputDateDay(session?.startsAt || endDate)),
       },
     ]);
   }
@@ -1643,12 +1760,12 @@ export default function NewEventPage() {
 
         const nextSession = sessions.find((sessionItem) => sessionItem.localId === next.eventSessionLocalId);
 
-        if (patch.eventSessionLocalId !== undefined && nextSession?.startsAt && next.salesEndAt > nextSession.startsAt) {
-          next.salesEndAt = nextSession.startsAt;
+        if (patch.eventSessionLocalId !== undefined && nextSession?.startsAt && inputDateDay(next.salesEndAt) > inputDateDay(nextSession.startsAt)) {
+          next.salesEndAt = inputDateDay(nextSession.startsAt);
         }
 
-        if (patch.eventSessionLocalId !== undefined && nextSession?.startsAt && next.salesStartAt > nextSession.startsAt) {
-          next.salesStartAt = today;
+        if (patch.eventSessionLocalId !== undefined && nextSession?.startsAt && inputDateDay(next.salesStartAt) > inputDateDay(nextSession.startsAt)) {
+          next.salesStartAt = inputDateToday();
         }
 
         const previousLot = findPreviousTicketLot(current, next);
@@ -1946,7 +2063,8 @@ export default function NewEventPage() {
 
   const MAP_GRID_SIZE = 40;
   const MAP_STRONG_GRID_SIZE = 120;
-  const MAP_SNAP_DISTANCE = 14;
+  const MAP_SNAP_DISTANCE = 22;
+  const MAP_OBJECT_GAP = 0;
 
   function clampMapRect(rect: MapRect): MapRect {
     const width = Math.min(Math.max(rect.width, MAP_MIN), MAP_W);
@@ -2019,6 +2137,28 @@ export default function NewEventPage() {
     });
   }
 
+  function snapSizeToGrid(rect: MapRect, dir?: ResizeDir): MapRect {
+    const snappedWidth = Math.max(MAP_MIN, Math.round(rect.width / MAP_GRID_SIZE) * MAP_GRID_SIZE);
+    const snappedHeight = Math.max(MAP_MIN, Math.round(rect.height / MAP_GRID_SIZE) * MAP_GRID_SIZE);
+    let nextX = rect.x;
+    let nextY = rect.y;
+
+    if (dir?.includes("w")) {
+      nextX = rect.x + rect.width - snappedWidth;
+    }
+
+    if (dir?.includes("n")) {
+      nextY = rect.y + rect.height - snappedHeight;
+    }
+
+    return clampMapRect({
+      x: nextX,
+      y: nextY,
+      width: snappedWidth,
+      height: snappedHeight,
+    });
+  }
+
   function snapToObjects(rect: MapRect, objectId: string, objects: MapObject[]) {
     let nextRect = { ...rect };
 
@@ -2027,25 +2167,25 @@ export default function NewEventPage() {
 
       const other = mapObjectRect(object);
       const verticalIntersects =
-        nextRect.y < other.y + other.height &&
-        nextRect.y + nextRect.height > other.y;
+        nextRect.y < other.y + other.height + MAP_SNAP_DISTANCE &&
+        nextRect.y + nextRect.height > other.y - MAP_SNAP_DISTANCE;
       const horizontalIntersects =
-        nextRect.x < other.x + other.width &&
-        nextRect.x + nextRect.width > other.x;
+        nextRect.x < other.x + other.width + MAP_SNAP_DISTANCE &&
+        nextRect.x + nextRect.width > other.x - MAP_SNAP_DISTANCE;
 
       if (verticalIntersects) {
         nextRect.x = snapValue(nextRect.x, other.x);
-        nextRect.x = snapValue(nextRect.x, other.x + other.width);
-        nextRect.x = snapValue(nextRect.x, other.x - nextRect.width);
-        nextRect.x = snapValue(nextRect.x + nextRect.width, other.x) - nextRect.width;
+        nextRect.x = snapValue(nextRect.x, other.x + other.width + MAP_OBJECT_GAP);
+        nextRect.x = snapValue(nextRect.x, other.x - nextRect.width - MAP_OBJECT_GAP);
+        nextRect.x = snapValue(nextRect.x + nextRect.width, other.x - MAP_OBJECT_GAP) - nextRect.width;
         nextRect.x = snapValue(nextRect.x + nextRect.width, other.x + other.width) - nextRect.width;
       }
 
       if (horizontalIntersects) {
         nextRect.y = snapValue(nextRect.y, other.y);
-        nextRect.y = snapValue(nextRect.y, other.y + other.height);
-        nextRect.y = snapValue(nextRect.y, other.y - nextRect.height);
-        nextRect.y = snapValue(nextRect.y + nextRect.height, other.y) - nextRect.height;
+        nextRect.y = snapValue(nextRect.y, other.y + other.height + MAP_OBJECT_GAP);
+        nextRect.y = snapValue(nextRect.y, other.y - nextRect.height - MAP_OBJECT_GAP);
+        nextRect.y = snapValue(nextRect.y + nextRect.height, other.y - MAP_OBJECT_GAP) - nextRect.height;
         nextRect.y = snapValue(nextRect.y + nextRect.height, other.y + other.height) - nextRect.height;
       }
     }
@@ -2072,22 +2212,22 @@ export default function NewEventPage() {
       const cameFromBottom = previous.y >= other.y + other.height;
 
       if (cameFromLeft) {
-        nextRect.x = other.x - nextRect.width;
+        nextRect.x = other.x - nextRect.width - MAP_OBJECT_GAP;
         continue;
       }
 
       if (cameFromRight) {
-        nextRect.x = other.x + other.width;
+        nextRect.x = other.x + other.width + MAP_OBJECT_GAP;
         continue;
       }
 
       if (cameFromTop) {
-        nextRect.y = other.y - nextRect.height;
+        nextRect.y = other.y - nextRect.height - MAP_OBJECT_GAP;
         continue;
       }
 
       if (cameFromBottom) {
-        nextRect.y = other.y + other.height;
+        nextRect.y = other.y + other.height + MAP_OBJECT_GAP;
         continue;
       }
 
@@ -2098,13 +2238,13 @@ export default function NewEventPage() {
       const smallestPush = Math.min(pushLeft, pushRight, pushUp, pushDown);
 
       if (smallestPush === pushLeft) {
-        nextRect.x = other.x - nextRect.width;
+        nextRect.x = other.x - nextRect.width - MAP_OBJECT_GAP;
       } else if (smallestPush === pushRight) {
-        nextRect.x = other.x + other.width;
+        nextRect.x = other.x + other.width + MAP_OBJECT_GAP;
       } else if (smallestPush === pushUp) {
-        nextRect.y = other.y - nextRect.height;
+        nextRect.y = other.y - nextRect.height - MAP_OBJECT_GAP;
       } else {
-        nextRect.y = other.y + other.height;
+        nextRect.y = other.y + other.height + MAP_OBJECT_GAP;
       }
     }
 
@@ -2212,7 +2352,9 @@ export default function NewEventPage() {
         }
 
         let proposedRect = clampMapRect({ x, y, width, height });
+        proposedRect = snapSizeToGrid(proposedRect, interaction.dir);
         proposedRect = snapToGrid(proposedRect);
+        proposedRect = snapToObjects(proposedRect, object.localId, current);
 
         if (hasCollision(proposedRect, object.localId, current)) {
           return object;
@@ -2499,9 +2641,9 @@ export default function NewEventPage() {
     setResolvingMapUrl(true);
 
     try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${API_BASE_URL}/maps/resolve?url=${encodeURIComponent(normalized)}`, {
-        headers: token && token !== "undefined" ? { Authorization: `Bearer ${token}` } : undefined,
+      const response = await fetch(`/api/maps/resolve?url=${encodeURIComponent(normalized)}`, {
+        method: "GET",
+        cache: "no-store",
       });
 
       const result = await response.json();
@@ -2530,7 +2672,7 @@ export default function NewEventPage() {
       alert(
         error instanceof Error
           ? error.message
-          : "Não foi possível resolver o link encurtado. Confira se o módulo /maps/resolve foi adicionado na API.",
+          : "Não foi possível resolver o link encurtado. Confira a rota /api/maps/resolve do Next.",
       );
     } finally {
       setResolvingMapUrl(false);
@@ -2563,9 +2705,9 @@ export default function NewEventPage() {
       status: "PUBLISHED",
       visibility: "PUBLIC",
       timezone: TIMEZONE,
-      eventDate: isoOrUndefined(startDate),
-      startDate: isoOrUndefined(startDate),
-      endDate: isoOrUndefined(endDate),
+      eventDate: isoEventStartOrUndefined(startDate),
+      startDate: isoEventStartOrUndefined(startDate),
+      endDate: isoEventEndOrUndefined(endDate),
       capacity: intOrUndefined(capacity),
       featured: false,
       allowSeatMap: preset.allowSeatMap,
@@ -2606,8 +2748,8 @@ export default function NewEventPage() {
         localId: session.localId,
         name: session.name || `Data ${index + 1}`,
         description: textOrUndefined(session.description),
-        startsAt: isoOrUndefined(session.startsAt),
-        endsAt: isoOrUndefined(session.endsAt),
+        startsAt: isoEventStartOrUndefined(session.startsAt),
+        endsAt: isoEventEndOrUndefined(session.endsAt),
         capacity: intOrUndefined(session.capacity),
         status: "ACTIVE",
         displayOrder: index,
@@ -2670,10 +2812,10 @@ export default function NewEventPage() {
           description: textOrUndefined(ticket.description),
           price: moneyApi(ticket.price),
           quantity: intOrUndefined(ticket.quantity),
-          salesStartAt: isoOrUndefined(ticket.salesStartAt),
-          salesEndAt: isoOrUndefined(ticket.salesEndAt),
+          salesStartAt: isoSalesStartOrUndefined(ticket.salesStartAt),
+          salesEndAt: isoSalesEndOrUndefined(ticket.salesEndAt),
           minPerOrder: 1,
-          maxPerOrder: intOrUndefined(ticket.maxPerOrder),
+          maxPerOrder: intOrUndefined(ticketMaxPerOrder),
           displayOrder: index,
           feeAmount: undefined,
           feeDescription: undefined,
@@ -2781,7 +2923,7 @@ export default function NewEventPage() {
           />
           <Field label="Nome do evento" value={eventName} onChange={setEventName} required error={submitAttempted && !eventName.trim()} />
           <Field label="Slug público" value={slug} onChange={setSlug} placeholder="meu-evento" />
-          <Field label="Capacidade geral" value={capacity} onChange={setCapacity} onlyNumbers required error={submitAttempted && generalCapacity <= 0} />
+          <Field label="Capacidade geral" value={capacity} onChange={setEventCapacity} onlyNumbers required error={submitAttempted && generalCapacity <= 0} helper="Capacidade total somada de todas as datas. A etapa Datas divide automaticamente esse total entre os dias." />
           <Select label="Status inicial" value="PUBLISHED" onChange={() => undefined} disabled options={[{ label: "Publicado", value: "PUBLISHED" }]} />
           <Select label="Visibilidade" value="PUBLIC" onChange={() => undefined} disabled options={[{ label: "Público", value: "PUBLIC" }]} />
           <Field label="Fuso horário" value="Brasil - Horário de Brasília" onChange={() => undefined} disabled helper={`Salvo como ${TIMEZONE}`} />
@@ -2801,8 +2943,8 @@ export default function NewEventPage() {
       <StepShell eyebrow="Etapa 3" title="Datas" description="Datas obrigatórias, com soma menor ou igual à capacidade geral.">
         <div className="grid gap-5">
           <div className="grid gap-5 md:grid-cols-2">
-            <Field label="Início geral" value={startDate} onChange={setGeneralStart} type="datetime-local" required error={requiredErrors.sessions && !startDate} />
-            <Field label="Fim geral" value={endDate} onChange={setGeneralEnd} type="datetime-local" required error={requiredErrors.sessions && !endDate} />
+            <Field label="Início geral" value={startDate} onChange={setGeneralStart} type="datetime-local" required error={requiredErrors.sessions && !startDate} helper="Data e horário do início geral do evento." />
+            <Field label="Fim geral" value={endDate} onChange={setGeneralEnd} type="datetime-local" required error={requiredErrors.sessions && !endDate} helper="Data e horário final geral do evento." />
           </div>
           <div className={`rounded-3xl border p-5 ${sessionError ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-slate-50"}`}>
             <div className="grid gap-4 md:grid-cols-3">
@@ -2823,9 +2965,9 @@ export default function NewEventPage() {
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <Field label="Nome da data" value={session.name} onChange={(value) => updateSession(session.localId, { name: value })} />
-                <Field label="Capacidade da data" value={session.capacity} onChange={(value) => updateSession(session.localId, { capacity: value })} onlyNumbers required />
-                <Field label="Início" value={session.startsAt} onChange={(value) => updateSession(session.localId, { startsAt: value })} type="datetime-local" required />
-                <Field label="Fim" value={session.endsAt} onChange={(value) => updateSession(session.localId, { endsAt: value })} type="datetime-local" required />
+                <Field label="Capacidade da data" value={session.capacity} onChange={(value) => updateSession(session.localId, { capacity: value })} onlyNumbers required helper="Calculada automaticamente pela capacidade geral ÷ número de datas. Pode editar, mas a soma das datas não pode ultrapassar o total." />
+                <Field label="Início da sessão" value={session.startsAt} onChange={(value) => updateSession(session.localId, { startsAt: value, endsAt: value })} type="datetime-local" required helper="Data e horário de abertura desta sessão." />
+                <Field label="Fim da sessão" value={session.endsAt} onChange={(value) => updateSession(session.localId, { endsAt: value })} type="datetime-local" required helper="Data e horário final desta sessão." />
                 <div className="md:col-span-2">
                   <TextArea label="Descrição" value={session.description} onChange={(value) => updateSession(session.localId, { description: value })} />
                 </div>
@@ -2871,24 +3013,62 @@ export default function NewEventPage() {
               </div>
             </div>
           </div>
-          <div className="rounded-[2rem] border border-slate-200 bg-white p-6">
-            <h3 className="text-2xl font-black">Políticas e regras</h3>
-            <div className="mt-6 grid gap-5 md:grid-cols-2">
-              <Field label="Classificação indicativa" value={ageRating} onChange={setAgeRating} />
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black">
-                <input type="checkbox" checked={refundEnabled} onChange={(event) => setRefundEnabled(event.target.checked)} />
-                Permitir reembolso neste evento
-              </label>
-              {refundEnabled ? <TextArea label="Política de reembolso" value={refundPolicy} onChange={setRefundPolicy} /> : null}
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm font-black">
-                <input type="checkbox" checked={transferEnabled} onChange={(event) => setTransferEnabled(event.target.checked)} />
-                Permitir transferência neste evento
-              </label>
-              {transferEnabled ? <TextArea label="Política de transferência" value={transferPolicy} onChange={setTransferPolicy} /> : null}
-              <TextArea label="Política de meia-entrada" value={halfEntryPolicy} onChange={setHalfEntryPolicy} />
-              <TextArea label="Regras de entrada" value={entryRules} onChange={setEntryRules} />
-              <TextArea label="Documentos obrigatórios" value={documentRules} onChange={setDocumentRules} />
-              <TextArea label="Termos e observações" value={termsNotes} onChange={setTermsNotes} />
+          <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+            <div className="bg-slate-950 p-6 text-white">
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-300">Políticas e regras</p>
+              <h3 className="mt-2 text-2xl font-black">Regras visíveis para o comprador</h3>
+              <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-slate-300">
+                Use esta área para explicar reembolso, transferência, meia-entrada, documentos e regras de entrada. O produtor pode deixar reembolso e transferência desligados quando não quiser oferecer essas opções no evento.
+              </p>
+            </div>
+
+            <div className="grid gap-5 p-6">
+              <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                  <Field label="Classificação indicativa" value={ageRating} onChange={setAgeRating} placeholder="Ex: Livre, 16 anos, 18 anos" />
+                  <div className="mt-5 grid gap-3">
+                    <label className={`flex items-start gap-3 rounded-2xl border p-4 text-sm font-black transition ${refundEnabled ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white text-slate-700"}`}>
+                      <input className="mt-1" type="checkbox" checked={refundEnabled} onChange={(event) => setRefundEnabled(event.target.checked)} />
+                      <span>
+                        Permitir reembolso neste evento
+                        <small className="mt-1 block text-xs font-semibold text-slate-500">A política precisa respeitar as regras gerais da plataforma.</small>
+                      </span>
+                    </label>
+                    <label className={`flex items-start gap-3 rounded-2xl border p-4 text-sm font-black transition ${transferEnabled ? "border-sky-200 bg-sky-50 text-sky-900" : "border-slate-200 bg-white text-slate-700"}`}>
+                      <input className="mt-1" type="checkbox" checked={transferEnabled} onChange={(event) => setTransferEnabled(event.target.checked)} />
+                      <span>
+                        Permitir transferência neste evento
+                        <small className="mt-1 block text-xs font-semibold text-slate-500">Quando ativo, o comprador poderá transferir o ingresso conforme as regras definidas.</small>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
+                  <p className="text-sm font-black text-amber-950">Resumo operacional</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <MiniStat label="Reembolso" value={refundEnabled ? "Ativo" : "Desligado"} />
+                    <MiniStat label="Transferência" value={transferEnabled ? "Ativa" : "Desligada"} />
+                  </div>
+                  <p className="mt-4 text-sm font-semibold leading-6 text-amber-900">
+                    Campos vazios não bloqueiam a criação, mas deixam a página pública menos clara. Recomendado preencher meia-entrada, entrada e documentos.
+                  </p>
+                </div>
+              </div>
+
+              {(refundEnabled || transferEnabled) ? (
+                <div className="grid gap-5 md:grid-cols-2">
+                  {refundEnabled ? <TextArea label="Política de reembolso" value={refundPolicy} onChange={setRefundPolicy} /> : null}
+                  {transferEnabled ? <TextArea label="Política de transferência" value={transferPolicy} onChange={setTransferPolicy} /> : null}
+                </div>
+              ) : null}
+
+              <div className="grid gap-5 md:grid-cols-2">
+                <TextArea label="Política de meia-entrada" value={halfEntryPolicy} onChange={setHalfEntryPolicy} />
+                <TextArea label="Documentos obrigatórios" value={documentRules} onChange={setDocumentRules} />
+                <TextArea label="Regras de entrada" value={entryRules} onChange={setEntryRules} />
+                <TextArea label="Termos e observações" value={termsNotes} onChange={setTermsNotes} />
+              </div>
             </div>
           </div>
         </div>
@@ -3693,6 +3873,43 @@ export default function NewEventPage() {
       return sessionSectorCapacity(sessionId, sectorId);
     }
 
+    function passportCreatedForSessionSector(sessionId: string, sectorId: string, exceptTicketId = "") {
+      return tickets
+        .filter((ticket) =>
+          ticket.localId !== exceptTicketId &&
+          ticket.eventSessionLocalId === "" &&
+          ticket.venueSectorLocalId === sectorId,
+        )
+        .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+    }
+
+    function kindCapacityForSessionSector(sessionId: string, sectorId: string, ticketKind: TicketKind, exceptTicketId = "") {
+      const baseAvailable = availableForSessionSector(sessionId, sectorId);
+      const sharedPassport = passportCreatedForSessionSector(sessionId, sectorId, exceptTicketId);
+      const sellableForDate = Math.max(baseAvailable - sharedPassport, 0);
+      const kindIndex = Math.max(0, TICKET_KIND_OPTIONS.findIndex((option) => option.value === ticketKind));
+
+      return splitCapacityByIndex(sellableForDate, TICKET_KIND_OPTIONS.length, kindIndex);
+    }
+
+    function createdForSessionSectorKind(sessionId: string, sectorId: string, ticketKind: TicketKind, exceptTicketId = "") {
+      return tickets
+        .filter((ticket) =>
+          ticket.localId !== exceptTicketId &&
+          ticket.eventSessionLocalId === sessionId &&
+          ticket.venueSectorLocalId === sectorId &&
+          ticket.ticketKind === ticketKind,
+        )
+        .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+    }
+
+    function remainingForSessionSectorKind(sessionId: string, sectorId: string, ticketKind: TicketKind, exceptTicketId = "") {
+      const capacityForKind = kindCapacityForSessionSector(sessionId, sectorId, ticketKind, exceptTicketId);
+      const createdForKind = createdForSessionSectorKind(sessionId, sectorId, ticketKind, exceptTicketId);
+
+      return Math.max(capacityForKind - createdForKind, 0);
+    }
+
     function createdForSessionSector(sessionId: string, sectorId: string, exceptTicketId = "") {
       if (!sessionId) {
         return tickets
@@ -3744,321 +3961,1310 @@ export default function NewEventPage() {
     function lotLimitDate(sessionId: string) {
       if (!sessionId) {
         return sessions
-          .map((item) => item.startsAt)
+          .map((item) => inputDateDay(item.startsAt))
           .filter(Boolean)
-          .sort()[0] || endDate;
+          .sort()[0] || inputDateDay(endDate);
       }
 
-      return sessions.find((item) => item.localId === sessionId)?.startsAt || endDate;
+      return inputDateDay(sessions.find((item) => item.localId === sessionId)?.startsAt || endDate);
     }
 
-    function addLotFor(sessionId: string, sectorId: string, ticketKind: TicketKind) {
+    function daysUntilInputDate(value: string) {
+      const day = inputDateDay(value);
+
+      if (!day) return 0;
+
+      const todayDate = new Date(`${inputDateToday()}T00:00:00`);
+      const targetDate = new Date(`${day}T00:00:00`);
+      const diff = Math.ceil((targetDate.getTime() - todayDate.getTime()) / 86400000);
+
+      return Math.max(diff, 0);
+    }
+
+    function recommendedLotInterval() {
+      const firstSessionStart = sessions
+        .map((session) => session.startsAt)
+        .filter(Boolean)
+        .sort()[0] || startDate;
+      const daysUntilFirstEvent = daysUntilInputDate(firstSessionStart);
+      const firstSessionId = sessions[0]?.localId || "";
+      const lotCounts = visibleSectors.flatMap((sector) =>
+        TICKET_KIND_OPTIONS.map((option) => {
+          const sectorId = sectorTicketId(sector);
+          const config = getAutomationConfig(firstSessionId, sectorId, option.value);
+          return positiveInt(config.lotCount, 3);
+        }),
+      );
+      const lotCountBase = Math.max(1, Math.max(...lotCounts, 3));
+      const recommended = Math.max(1, Math.floor(daysUntilFirstEvent / lotCountBase));
+
+      return {
+        daysUntilFirstEvent,
+        lotCountBase,
+        recommended,
+      };
+    }
+
+    function ticketKindBadge(kind: TicketKind) {
+      if (kind === "INTEIRA") return "Inteira";
+      if (kind === "MEIA") return "Meia";
+      return "Social";
+    }
+
+    function automationKey(sessionId: string, sectorId: string, ticketKind: TicketKind) {
+      return `${sessionId || "passport"}::${sectorId || "open"}::${ticketKind}`;
+    }
+
+    function defaultAutomationConfig(sessionId: string, sectorId: string, ticketKind: TicketKind): TicketAutomationConfig {
+      const existingGroup = tickets
+        .filter((ticket) =>
+          ticket.eventSessionLocalId === sessionId &&
+          ticket.venueSectorLocalId === sectorId &&
+          ticket.ticketKind === ticketKind,
+        )
+        .sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel));
+      const first = existingGroup[0];
+      const limit = lotLimitDate(sessionId);
+      const defaultStart = inputDateDay(first?.salesStartAt || inputDateToday());
+      const available = Math.max(kindCapacityForSessionSector(sessionId, sectorId, ticketKind), 1);
+
+      return {
+        lotCount: existingGroup.length > 0 ? String(existingGroup.length) : "3",
+        lotQuantity: String(Math.ceil(available / Math.max(3, 1))),
+        firstPrice: first?.price || (ticketKind === "INTEIRA" ? "100" : ticketKind === "MEIA" ? "50" : "70"),
+        priceStep: "200",
+        intervalDays: ticketLotIntervalDays || "20",
+        maxPerOrder: "",
+        salesStartAt: defaultStart && limit && defaultStart > limit ? inputDateToday() : defaultStart,
+      };
+    }
+
+    function getAutomationConfig(sessionId: string, sectorId: string, ticketKind: TicketKind) {
+      const key = automationKey(sessionId, sectorId, ticketKind);
+      const directConfig = ticketAutomationConfigs[key];
+
+      if (directConfig) return directConfig;
+
+      const firstSessionId = sessions[0]?.localId || "";
+
+      if (sessionId && firstSessionId && sessionId !== firstSessionId) {
+        const firstKey = automationKey(firstSessionId, sectorId, ticketKind);
+        const firstConfig = ticketAutomationConfigs[firstKey] || defaultAutomationConfig(firstSessionId, sectorId, ticketKind);
+
+        return {
+          ...firstConfig,
+          salesStartAt: inputDateDay(firstConfig.salesStartAt || inputDateToday()),
+        };
+      }
+
+      return defaultAutomationConfig(sessionId, sectorId, ticketKind);
+    }
+
+    function updateAutomationConfig(sessionId: string, sectorId: string, ticketKind: TicketKind, patch: Partial<TicketAutomationConfig>) {
+      const key = automationKey(sessionId, sectorId, ticketKind);
+      const current = getAutomationConfig(sessionId, sectorId, ticketKind);
+      const nextConfig = {
+        ...current,
+        ...patch,
+      };
+      const firstSessionId = sessions[0]?.localId || "";
+      const isFirstSession = Boolean(sessionId && firstSessionId && sessionId === firstSessionId);
+      const targetSessions = isFirstSession ? sessions.map((session) => session.localId) : [sessionId];
+      const shouldReplicateLotCount = patch.lotCount !== undefined;
+      const shouldReplicatePriceStep = patch.priceStep !== undefined;
+      const shouldReplicateFirstDateConfig = isFirstSession && (
+        patch.firstPrice !== undefined ||
+        patch.salesStartAt !== undefined ||
+        patch.lotCount !== undefined ||
+        patch.priceStep !== undefined
+      );
+
+      if (shouldReplicateLotCount || shouldReplicatePriceStep || shouldReplicateFirstDateConfig) {
+        setTicketAutomationConfigs((configs) => {
+          const nextConfigs = {
+            ...configs,
+            [key]: nextConfig,
+          };
+
+          targetSessions.forEach((targetSessionId) => {
+            if (shouldReplicateLotCount || shouldReplicatePriceStep) {
+              TICKET_KIND_OPTIONS.forEach((option) => {
+                const targetKey = automationKey(targetSessionId, sectorId, option.value);
+                const base =
+                  nextConfigs[targetKey] ||
+                  configs[targetKey] ||
+                  getAutomationConfig(targetSessionId, sectorId, option.value);
+
+                nextConfigs[targetKey] = {
+                  ...base,
+                  ...(shouldReplicateLotCount
+                    ? { lotCount: onlyDigits(patch.lotCount || "") || "1" }
+                    : {}),
+                  ...(shouldReplicatePriceStep
+                    ? { priceStep: onlyMoney(patch.priceStep || "") || "0" }
+                    : {}),
+                };
+              });
+            }
+
+            if (shouldReplicateFirstDateConfig) {
+              const targetKey = automationKey(targetSessionId, sectorId, ticketKind);
+              const base =
+                nextConfigs[targetKey] ||
+                configs[targetKey] ||
+                getAutomationConfig(targetSessionId, sectorId, ticketKind);
+
+              nextConfigs[targetKey] = {
+                ...base,
+                ...(patch.firstPrice !== undefined
+                  ? { firstPrice: onlyMoney(patch.firstPrice || "") }
+                  : {}),
+                ...(patch.salesStartAt !== undefined
+                  ? { salesStartAt: inputDateDay(patch.salesStartAt || inputDateToday()) }
+                  : {}),
+                ...(patch.lotCount !== undefined
+                  ? { lotCount: onlyDigits(patch.lotCount || "") || "1" }
+                  : {}),
+                ...(patch.priceStep !== undefined
+                  ? { priceStep: onlyMoney(patch.priceStep || "") || "0" }
+                  : {}),
+              };
+            }
+          });
+
+          return nextConfigs;
+        });
+
+        return;
+      }
+
+      setTicketAutomationConfigs((configs) => ({
+        ...configs,
+        [key]: nextConfig,
+      }));
+    }
+
+    function buildLotsFromConfig(
+      sessionId: string,
+      sectorId: string,
+      ticketKind: TicketKind,
+      config: TicketAutomationConfig,
+      showAlerts = true,
+    ) {
       const passport = !sessionId;
       const sector = isOpenOnly ? sectors[0] : sectors.find((item) => item.localId === sectorId);
       const session = sessions.find((item) => item.localId === sessionId);
 
       if (!sector && !isOpenOnly) {
-        alert("Escolha um setor para criar o lote.");
-        return;
+        if (showAlerts) alert("Escolha um setor para gerar os lotes.");
+        return null;
       }
 
       if (!passport && !session) {
-        alert("Escolha uma data para criar o lote.");
+        if (showAlerts) alert("Escolha uma data para gerar os lotes.");
+        return null;
+      }
+
+      const lotCount = Math.max(1, Math.min(20, positiveInt(config.lotCount, 1)));
+      const priceStep = Math.max(0, moneyNumber(config.priceStep));
+      const firstPrice = Math.max(0, moneyNumber(config.firstPrice));
+      const intervalDays = Math.max(1, positiveInt(ticketLotIntervalDays || config.intervalDays, 1));
+      const maxPerOrder = onlyDigits(ticketMaxPerOrder);
+      const limitAt = lotLimitDate(sessionId);
+      const firstStartAt = inputDateDay(config.salesStartAt || inputDateToday());
+      const available = passport
+        ? remainingForSessionSector(sessionId, sectorId) + tickets
+            .filter((ticket) =>
+              ticket.eventSessionLocalId === sessionId &&
+              ticket.venueSectorLocalId === sectorId &&
+              ticket.ticketKind === ticketKind,
+            )
+            .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0)
+        : kindCapacityForSessionSector(sessionId, sectorId, ticketKind) + tickets
+            .filter((ticket) =>
+              ticket.eventSessionLocalId === sessionId &&
+              ticket.venueSectorLocalId === sectorId &&
+              ticket.ticketKind === ticketKind,
+            )
+            .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+
+      if (available <= 0) {
+        if (showAlerts) alert("Não há disponibilidade para gerar lotes neste setor/data.");
+        return null;
+      }
+
+      if (limitAt && firstStartAt > limitAt) {
+        if (showAlerts) alert("O início das vendas precisa ser até o dia da sessão.");
+        return null;
+      }
+
+      const generated: TicketItem[] = [];
+      let remaining = available;
+      let startAt = firstStartAt;
+
+      for (let index = 0; index < lotCount; index += 1) {
+        if (remaining <= 0) break;
+        if (limitAt && startAt > limitAt) break;
+
+        const salesEndAt = suggestLotEnd(startAt, limitAt, intervalDays);
+
+        if (!salesEndAt || salesEndAt < startAt) break;
+
+        const remainingLots = lotCount - index;
+        const quantity = Math.ceil(remaining / remainingLots);
+        const lotLabel = `${index + 1}º Lote`;
+        const price = moneyInputFromNumber(firstPrice + priceStep * index) || config.firstPrice || "0";
+        const draft: TicketItem = {
+          ...newTicket(index, sessionId, sectorId, sector?.mode || preset.mode),
+          ticketKind,
+          lotLabel,
+          price,
+          quantity: String(quantity),
+          salesStartAt: startAt,
+          salesEndAt,
+          maxPerOrder,
+          isHidden: index > 0,
+        };
+
+        generated.push({
+          ...draft,
+          name: automaticTicketName(draft),
+        });
+
+        remaining -= quantity;
+        startAt = salesEndAt;
+      }
+
+      if (generated.length === 0) {
+        if (showAlerts) alert("Não foi possível gerar lotes com essas regras. Verifique a data inicial e o intervalo.");
+        return null;
+      }
+
+      return generated;
+    }
+
+    function createLotsFromConfig(sessionId: string, sectorId: string, ticketKind: TicketKind, config: TicketAutomationConfig) {
+      const firstSessionId = sessions[0]?.localId || "";
+      const shouldGenerateAllSessions = Boolean(sessionId && firstSessionId && sessionId === firstSessionId);
+
+      if (shouldGenerateAllSessions) {
+        const generatedByTarget: Array<{ sessionId: string; ticketKind: TicketKind; generated: TicketItem[] }> = [];
+
+        sessions.forEach((session) => {
+          TICKET_KIND_OPTIONS.forEach((option) => {
+            const key = automationKey(session.localId, sectorId, option.value);
+            const hasCustomConfig = session.localId !== firstSessionId && Boolean(ticketAutomationConfigs[key]);
+            const baseKindConfig = option.value === ticketKind
+              ? config
+              : getAutomationConfig(firstSessionId, sectorId, option.value);
+            const sessionConfig = hasCustomConfig
+              ? getAutomationConfig(session.localId, sectorId, option.value)
+              : {
+                  ...baseKindConfig,
+                  lotCount: config.lotCount,
+                  priceStep: config.priceStep,
+                  salesStartAt: inputDateDay(baseKindConfig.salesStartAt || config.salesStartAt || inputDateToday()),
+                };
+            const generated = buildLotsFromConfig(session.localId, sectorId, option.value, sessionConfig, session.localId === firstSessionId && option.value === ticketKind);
+
+            if (generated) {
+              generatedByTarget.push({ sessionId: session.localId, ticketKind: option.value, generated });
+            }
+          });
+        });
+
+        if (generatedByTarget.length === 0) return;
+
+        const generatedTickets = generatedByTarget.flatMap((item) => item.generated);
+        const targetKeys = new Set(generatedByTarget.map((item) => `${item.sessionId}::${sectorId}::${item.ticketKind}`));
+
+        setTickets((current) => [
+          ...current.filter((ticket) =>
+            !targetKeys.has(`${ticket.eventSessionLocalId}::${ticket.venueSectorLocalId}::${ticket.ticketKind}`),
+          ),
+          ...generatedTickets,
+        ]);
+        setTicketBuilderStep("REVIEW");
         return;
       }
 
-      setTickets((current) => {
-        const group = current
-          .filter((ticket) =>
-            ticket.eventSessionLocalId === sessionId &&
+      const generated = buildLotsFromConfig(sessionId, sectorId, ticketKind, config);
+
+      if (!generated) return;
+
+      setTickets((current) => [
+        ...current.filter((ticket) =>
+          !(ticket.eventSessionLocalId === sessionId &&
             ticket.venueSectorLocalId === sectorId &&
-            ticket.ticketKind === ticketKind,
-          )
-          .sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel));
+            ticket.ticketKind === ticketKind),
+        ),
+        ...generated,
+      ]);
+      setTicketBuilderStep("REVIEW");
+    }
 
-        const previous = group[group.length - 1];
-        const nextLotNumber = group.length + 1;
-        const nextLotLabel = `${nextLotNumber}º Lote`;
-        const firstLimit = group.find((ticket) => lotNumber(ticket.lotLabel) === 1)?.maxPerOrder || previous?.maxPerOrder || "";
-        const limitDate = lotLimitDate(sessionId);
-        const startSuggestion = previous?.salesEndAt || today;
-        const endSuggestion = suggestLotEnd(startSuggestion, limitDate);
-        const totalAvailable = remainingForSessionSector(sessionId, sectorId);
-        const suggestedQuantity = previous?.quantity || String(Math.min(100, totalAvailable));
-        const nextQuantity = String(Math.min(positiveInt(suggestedQuantity, 1), totalAvailable));
-        const suggestedPrice = previous?.price ? addMoneyValue(previous.price, 100) : "";
+    function applyFirstDateToAllDatesAndGenerate() {
+      const firstSessionId = sessions[0]?.localId || "";
 
-        if (totalAvailable <= 0) {
-          alert("Não há quantidade disponível para criar mais ingressos neste setor/data.");
-          return current;
-        }
+      if (!firstSessionId) {
+        alert("Cadastre pelo menos uma data antes de gerar os lotes.");
+        return;
+      }
 
-        const draft: TicketItem = {
-          ...newTicket(current.length, sessionId, sectorId, sector?.mode || preset.mode),
-          ticketKind,
-          lotLabel: nextLotLabel,
-          price: suggestedPrice,
-          quantity: nextQuantity,
-          salesStartAt: startSuggestion,
-          salesEndAt: endSuggestion,
-          maxPerOrder: firstLimit,
-          isHidden: nextLotNumber > 1 && group.some((ticket) => ticket.lotLabel === "1º Lote"),
-        };
+      const generatedTickets: TicketItem[] = [];
+      const nextConfigs: Record<string, TicketAutomationConfig> = {};
 
-        return [
-          ...current,
-          {
-            ...draft,
-            name: automaticTicketName(draft),
-          },
-        ];
+      visibleSectors.forEach((sector) => {
+        const sectorId = sectorTicketId(sector);
+
+        TICKET_KIND_OPTIONS.forEach((option) => {
+          const firstConfig = getAutomationConfig(firstSessionId, sectorId, option.value);
+
+          sessions.forEach((session) => {
+            const sessionConfig: TicketAutomationConfig = {
+              ...firstConfig,
+              salesStartAt: inputDateDay(firstConfig.salesStartAt || inputDateToday()),
+            };
+            const generated = buildLotsFromConfig(session.localId, sectorId, option.value, sessionConfig, false);
+            const targetKey = automationKey(session.localId, sectorId, option.value);
+
+            nextConfigs[targetKey] = sessionConfig;
+
+            if (generated) {
+              generatedTickets.push(...generated);
+            }
+          });
+        });
+      });
+
+      if (generatedTickets.length === 0) {
+        alert("Não foi possível gerar os lotes. Verifique data de início das vendas, virada de lote e disponibilidade dos setores.");
+        return;
+      }
+
+      setTicketAutomationConfigs((configs) => ({
+        ...configs,
+        ...nextConfigs,
+      }));
+      setTickets((current) => [
+        ...current.filter((ticket) => isPassportTicket(ticket)),
+        ...generatedTickets,
+      ]);
+      setTicketBuilderStep("REVIEW");
+    }
+
+    function addLotFor(sessionId: string, sectorId: string, ticketKind: TicketKind) {
+      const config = getAutomationConfig(sessionId, sectorId, ticketKind);
+      const existingGroup = tickets.filter((ticket) =>
+        ticket.eventSessionLocalId === sessionId &&
+        ticket.venueSectorLocalId === sectorId &&
+        ticket.ticketKind === ticketKind,
+      );
+      const nextLotCount = Math.min(20, Math.max(existingGroup.length + 1, positiveInt(config.lotCount, 1)));
+
+      createLotsFromConfig(sessionId, sectorId, ticketKind, {
+        ...config,
+        lotCount: String(nextLotCount),
       });
     }
 
-
     const groups = groupTickets(tickets);
-    const validTickets = tickets.filter((item) => item.name.trim() && item.price.trim());
+    const validTickets = tickets.filter((item) => item.name.trim() && item.price.trim() && toNumber(item.quantity) > 0);
     const visibleSectors = isOpenOnly ? [{ ...sectors[0], localId: "", name: "Área única", mode: preset.mode } as SectorItem] : sectors;
+    const passportTickets = tickets.filter(isPassportTicket);
+    const normalTickets = tickets.filter((ticket) => !isPassportTicket(ticket));
+    const totalDistributed = tickets.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+    const missingRequired: Array<{ session: SessionItem; sector: SectorItem; sectorId: string }> = [];
+
+    sessions.forEach((session) => {
+      visibleSectors.forEach((sector) => {
+        const sectorId = sectorTicketId(sector);
+        const hasLot = normalTickets.some((ticket) =>
+          ticket.eventSessionLocalId === session.localId &&
+          ticket.venueSectorLocalId === sectorId &&
+          ticket.name.trim() &&
+          ticket.price.trim() &&
+          toNumber(ticket.quantity) > 0,
+        );
+
+        if (!hasLot) {
+          missingRequired.push({ session, sector, sectorId });
+        }
+      });
+    });
+
+    const ticketWizardSteps: Array<{ id: "CREATE" | "PASSPORT" | "REVIEW"; title: string; description: string }> = [
+      { id: "CREATE", title: "Automatizar", description: "Regras por data/setor" },
+      { id: "PASSPORT", title: "Passaporte", description: "Opcional" },
+      { id: "REVIEW", title: "Verificação", description: "Resumo final" },
+    ];
+
+    function renderAutomationFields(sessionId: string, sectorId: string, ticketKind: TicketKind, passport = false) {
+      const config = getAutomationConfig(sessionId, sectorId, ticketKind);
+      const available = passport
+        ? remainingForSessionSector(sessionId, sectorId) + tickets
+            .filter((ticket) =>
+              ticket.eventSessionLocalId === sessionId &&
+              ticket.venueSectorLocalId === sectorId &&
+              ticket.ticketKind === ticketKind,
+            )
+            .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0)
+        : kindCapacityForSessionSector(sessionId, sectorId, ticketKind) + tickets
+            .filter((ticket) =>
+              ticket.eventSessionLocalId === sessionId &&
+              ticket.venueSectorLocalId === sectorId &&
+              ticket.ticketKind === ticketKind,
+            )
+            .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+      const lotCount = Math.max(1, Math.min(20, positiveInt(config.lotCount, 1)));
+      const plannedQuantity = available;
+      const baseLotQuantity = Math.ceil(available / lotCount);
+      const leftover = 0;
+      const lastPrice = moneyInputFromNumber(moneyNumber(config.firstPrice) + moneyNumber(config.priceStep) * Math.max(lotCount - 1, 0));
+
+      return (
+        <div className={`rounded-[2rem] border p-4 ${passport ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
+          <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-start">
+            <div>
+              <p className={`text-[10px] font-black uppercase tracking-[0.18em] ${passport ? "text-amber-600" : "text-sky-600"}`}>
+                {passport ? "Gerador de passaporte" : "Gerador automático"}
+              </p>
+              <h4 className="mt-1 text-lg font-black text-slate-950">{ticketKindBadge(ticketKind)}</h4>
+              <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+                Gera lotes sequenciais. O próximo lote fica oculto e só deve abrir quando o anterior esgotar ou chegar na data configurada.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <MiniStat label="Disponível" value={available} />
+              <MiniStat label="Planejado" value={plannedQuantity} />
+              <MiniStat label="Sobra" value={leftover} />
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+            <Field
+              label="Quantidade calculada"
+              value={String(baseLotQuantity)}
+              onChange={() => undefined}
+              disabled
+              helper="O sistema divide o disponível pelo número de lotes."
+            />
+            <Field
+              label="Número de lotes"
+              value={config.lotCount}
+              onChange={(value) => updateAutomationConfig(sessionId, sectorId, ticketKind, { lotCount: value })}
+              onlyNumbers
+              helper="Até 20"
+            />
+            <Field
+              label="Preço inicial"
+              value={config.firstPrice}
+              onChange={(value) => updateAutomationConfig(sessionId, sectorId, ticketKind, { firstPrice: value })}
+              money
+              helper="Ex: 250,00"
+            />
+            <Field
+              label="Aumentar por lote"
+              value={config.priceStep}
+              onChange={(value) => updateAutomationConfig(sessionId, sectorId, ticketKind, { priceStep: value })}
+              money
+              helper="Ex: 200,00"
+            />
+            <Field
+              label="Virada em dias"
+              value={ticketLotIntervalDays || "1"}
+              onChange={() => undefined}
+              disabled
+              helper="Padrão definido para o evento inteiro."
+            />
+            <Field
+              label="Máx. por pedido do evento"
+              value={ticketMaxPerOrder || ""}
+              onChange={() => undefined}
+              disabled
+              helper="Único para todos os ingressos."
+            />
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+            <Field
+              label="Dia de início das vendas"
+              value={inputDateDay(config.salesStartAt)}
+              onChange={(value) => updateAutomationConfig(sessionId, sectorId, ticketKind, { salesStartAt: value })}
+              type="date"
+              helper={passport ? "Até o dia da primeira sessão." : "Sem horário, limitado ao dia desta sessão."}
+            />
+            <button
+              type="button"
+              onClick={() => createLotsFromConfig(sessionId, sectorId, ticketKind, config)}
+              className={`h-[52px] rounded-2xl px-5 text-sm font-black text-white transition ${passport ? "bg-amber-600 hover:bg-amber-700" : "bg-slate-950 hover:bg-sky-700"}`}
+            >
+              {sessionId && sessions[0]?.localId === sessionId ? "Gerar/Regerar todos os dias" : "Gerar/Regerar esta data"}
+            </button>
+          </div>
+
+          <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+            <div className="grid grid-cols-4 bg-slate-950 px-4 py-2 text-[10px] font-black uppercase tracking-[0.16em] text-white">
+              <span>Lote</span>
+              <span>Quantidade</span>
+              <span>Preço</span>
+              <span>Virada</span>
+            </div>
+            {Array.from({ length: Math.min(lotCount, 20) }).map((_, index) => {
+              const previousQuantity = Array.from({ length: index }).reduce<number>((sum, _item, previousIndex) => {
+                const previousRemaining = Math.max(available - sum, 0);
+                const previousRemainingLots = Math.max(lotCount - previousIndex, 1);
+                return sum + Math.ceil(previousRemaining / previousRemainingLots);
+              }, 0);
+              const remainingBefore = Math.max(available - previousQuantity, 0);
+              const remainingLots = Math.max(lotCount - index, 1);
+              const qty = Math.min(remainingBefore, Math.ceil(remainingBefore / remainingLots));
+              const price = moneyInputFromNumber(moneyNumber(config.firstPrice) + moneyNumber(config.priceStep) * index) || "0";
+              return (
+                <div key={index} className="grid grid-cols-4 gap-2 border-t border-slate-200 px-4 py-2 text-xs font-bold text-slate-700">
+                  <span>{index + 1}º Lote</span>
+                  <span>{qty}</span>
+                  <span>{formatMoney(price)}</span>
+                  <span>{index === 0 ? `${ticketLotIntervalDays || 20} dias` : "+" + (ticketLotIntervalDays || 20) + " dias"}</span>
+                </div>
+              );
+            })}
+            {lastPrice ? (
+              <div className="border-t border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-500">
+                Último lote previsto: {formatMoney(lastPrice)}. Quantidade limitada automaticamente pela disponibilidade.
+              </div>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    function renderCreateStep() {
+      const requiredGroupCount = sessions.length * visibleSectors.length;
+      const completedRequiredGroups = Math.max(requiredGroupCount - missingRequired.length, 0);
+      const activeSessionId =
+        expandedTicketSessionId && sessions.some((session) => session.localId === expandedTicketSessionId)
+          ? expandedTicketSessionId
+          : sessions[0]?.localId || "";
+      const firstVisibleSectorId = sectorTicketId(visibleSectors[0]);
+      const recommendedInterval = recommendedLotInterval();
+
+      function sectorKey(sessionId: string, sectorId: string) {
+        return `${sessionId}::${sectorId || "open"}`;
+      }
+
+      function openSession(sessionId: string) {
+        const nextSessionId = activeSessionId === sessionId ? "" : sessionId;
+        setExpandedTicketSessionId(nextSessionId);
+
+        if (nextSessionId) {
+          setExpandedTicketSectorKey(sectorKey(nextSessionId, firstVisibleSectorId));
+        }
+      }
+
+      function toggleSector(sessionId: string, sectorId: string) {
+        const key = sectorKey(sessionId, sectorId);
+        setExpandedTicketSectorKey(expandedTicketSectorKey === key ? "" : key);
+      }
+
+      function hasKind(sessionId: string, sectorId: string, ticketKind: TicketKind) {
+        return normalTickets.some((ticket) =>
+          ticket.eventSessionLocalId === sessionId &&
+          ticket.venueSectorLocalId === sectorId &&
+          ticket.ticketKind === ticketKind &&
+          ticket.name.trim() &&
+          ticket.price.trim() &&
+          toNumber(ticket.quantity) > 0,
+        );
+      }
+
+      function sectorIsComplete(sessionId: string, sectorId: string) {
+        return normalTickets.some((ticket) =>
+          ticket.eventSessionLocalId === sessionId &&
+          ticket.venueSectorLocalId === sectorId &&
+          ticket.name.trim() &&
+          ticket.price.trim() &&
+          toNumber(ticket.quantity) > 0,
+        );
+      }
+
+      function sessionIsComplete(sessionId: string) {
+        return visibleSectors.every((sector) => sectorIsComplete(sessionId, sectorTicketId(sector)));
+      }
+
+      return (
+        <div className="grid gap-5">
+          <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+            <div className="grid gap-0 xl:grid-cols-[1.25fr_0.75fr]">
+              <div className="bg-slate-950 p-6 text-white">
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-sky-300">Ingressos automáticos</p>
+                <h3 className="mt-2 text-2xl font-black">Crie lotes por dia e setor, sem garimpo manual</h3>
+                <p className="mt-3 max-w-4xl text-sm font-semibold leading-6 text-slate-300">
+                  Abra uma data para ver os setores. Abra um setor para configurar Inteira, Meia e Social. O primeiro dia funciona como molde para os outros dias, e a quantidade de lotes e o aumento por lote do setor são compartilhados entre Inteira, Meia e Social.
+                </p>
+              </div>
+
+              <div className="grid gap-3 bg-slate-50 p-5 sm:grid-cols-2">
+                <MiniStat label="Datas x setores" value={requiredGroupCount} />
+                <MiniStat label="Concluídos" value={completedRequiredGroups} />
+                <MiniStat label="Faltando" value={missingRequired.length} />
+                <Field
+                  label="Máximo por pedido"
+                  value={ticketMaxPerOrder}
+                  onChange={setTicketMaxPerOrder}
+                  onlyNumbers
+                  helper="Único para todo o evento."
+                />
+                <Field
+                  label="Virada de lote"
+                  value={ticketLotIntervalDays}
+                  onChange={(value) => setTicketLotIntervalDays(onlyDigits(value) || "1")}
+                  onlyNumbers
+                  helper={`Recomendado: ${recommendedInterval.recommended} dia(s), considerando ${recommendedInterval.daysUntilFirstEvent} dia(s) até o evento e ${recommendedInterval.lotCountBase} lote(s).`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setTicketLotIntervalDays(String(recommendedInterval.recommended))}
+                  className="rounded-2xl border border-sky-200 bg-white px-4 py-3 text-sm font-black text-sky-700 transition hover:bg-sky-50"
+                >
+                  Usar virada recomendada
+                </button>
+                <button
+                  type="button"
+                  onClick={applyFirstDateToAllDatesAndGenerate}
+                  className="rounded-2xl bg-sky-600 px-4 py-3 text-sm font-black text-white transition hover:bg-sky-700"
+                >
+                  Aplicar 1ª data em todas
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-4 flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-600">Navegação rápida</p>
+                <h3 className="mt-1 text-xl font-black text-slate-950">Escolha a data</h3>
+              </div>
+              <p className="text-sm font-semibold leading-6 text-slate-500">
+                Fechado mostra só os dias. Aberto mostra apenas os setores. Os tipos de ingresso aparecem só dentro do setor escolhido.
+              </p>
+            </div>
+
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {sessions.map((session, index) => {
+                const complete = sessionIsComplete(session.localId);
+                const active = activeSessionId === session.localId;
+                const day = inputDateDay(session.startsAt).slice(8, 10) || String(index + 1).padStart(2, "0");
+                const month = session.startsAt
+                  ? new Date(session.startsAt).toLocaleDateString("pt-BR", { month: "short" }).replace(".", "")
+                  : "data";
+
+                return (
+                  <button
+                    key={session.localId}
+                    type="button"
+                    onClick={() => openSession(session.localId)}
+                    className={`min-w-[92px] rounded-[1.6rem] border px-4 py-3 text-center transition ${
+                      active
+                        ? "border-sky-500 bg-sky-50 shadow-sm ring-4 ring-sky-100"
+                        : complete
+                          ? "border-emerald-200 bg-emerald-50 hover:bg-emerald-100"
+                          : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="block text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Dia</span>
+                    <span className="mt-1 block text-2xl font-black text-slate-950">{day}</span>
+                    <span className="mt-0.5 block text-xs font-black uppercase text-slate-500">{month}</span>
+                    <span className="mt-1 block text-[10px] font-black text-sky-700">{daysUntilEventLabel(session.startsAt)}</span>
+                    <span className={`mt-2 inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${complete ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"}`}>
+                      {complete ? "ok" : "pendente"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid gap-4">
+            {sessions.map((session, sessionIndex) => {
+              const sessionOpen = activeSessionId === session.localId;
+              const complete = sessionIsComplete(session.localId);
+              const sessionSectorCount = visibleSectors.length;
+              const sessionCompletedSectors = visibleSectors.filter((sector) =>
+                sectorIsComplete(session.localId, sectorTicketId(sector)),
+              ).length;
+
+              return (
+                <div
+                  key={session.localId}
+                  className={`overflow-hidden rounded-[2rem] border bg-white shadow-sm ${
+                    sessionOpen ? "border-sky-200" : complete ? "border-emerald-200" : "border-slate-200"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => openSession(session.localId)}
+                    className={`flex w-full flex-col gap-4 p-5 text-left transition lg:flex-row lg:items-center lg:justify-between ${
+                      sessionOpen ? "bg-slate-950 text-white" : "bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <div>
+                      <p className={`text-xs font-black uppercase tracking-[0.2em] ${sessionOpen ? "text-sky-300" : "text-sky-600"}`}>
+                        Data {sessionIndex + 1}
+                      </p>
+                      <h3 className="mt-1 text-2xl font-black">{session.name || formatSessionName(session.startsAt)}</h3>
+                      <p className={`mt-1 text-sm font-semibold ${sessionOpen ? "text-slate-300" : "text-slate-500"}`}>
+                        {datePreview(session.startsAt)} • {daysUntilEventLabel(session.startsAt)} • Capacidade: {session.capacity || capacity}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 lg:justify-end">
+                      {visibleSectors.map((sector) => {
+                        const sectorId = sectorTicketId(sector);
+                        const done = sectorIsComplete(session.localId, sectorId);
+
+                        return (
+                          <span
+                            key={`${session.localId}-badge-${sectorId || "open"}`}
+                            className={`rounded-full px-3 py-2 text-xs font-black ${
+                              done
+                                ? "bg-emerald-500 text-white"
+                                : sessionOpen
+                                  ? "bg-white/10 text-white"
+                                  : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {sector.name || "Área única"}
+                          </span>
+                        );
+                      })}
+                      <span className={`rounded-full px-3 py-2 text-xs font-black ${sessionOpen ? "bg-sky-500 text-white" : "bg-slate-950 text-white"}`}>
+                        {sessionCompletedSectors}/{sessionSectorCount} setores
+                      </span>
+                    </div>
+                  </button>
+
+                  {sessionOpen ? (
+                    <div className="grid gap-4 bg-slate-50 p-5">
+                      <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                        <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Setores desta data</p>
+                        <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
+                          {visibleSectors.map((sector) => {
+                            const sectorId = sectorTicketId(sector);
+                            const key = sectorKey(session.localId, sectorId);
+                            const active = expandedTicketSectorKey === key;
+                            const done = sectorIsComplete(session.localId, sectorId);
+                            const available = availableForSessionSector(session.localId, sectorId);
+
+                            return (
+                              <button
+                                key={`${session.localId}-sector-tab-${sectorId || "open"}`}
+                                type="button"
+                                onClick={() => toggleSector(session.localId, sectorId)}
+                                className={`min-w-[170px] rounded-[1.6rem] border px-4 py-3 text-left transition ${
+                                  active
+                                    ? "border-sky-500 bg-sky-50 ring-4 ring-sky-100"
+                                    : done
+                                      ? "border-emerald-200 bg-emerald-50 hover:bg-emerald-100"
+                                      : "border-slate-200 bg-white hover:bg-slate-50"
+                                }`}
+                              >
+                                <span className="block text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Setor</span>
+                                <span className="mt-1 block truncate text-lg font-black text-slate-950">{sector.name || "Área única"}</span>
+                                <span className="mt-1 block text-xs font-semibold text-slate-500">{available} disponíveis</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {visibleSectors.map((sector) => {
+                        const sectorId = sectorTicketId(sector);
+                        const key = sectorKey(session.localId, sectorId);
+                        const sectorOpen = expandedTicketSectorKey === key;
+                        const available = availableForSessionSector(session.localId, sectorId);
+                        const distributed = createdForSessionSector(session.localId, sectorId);
+                        const free = remainingForSessionSector(session.localId, sectorId);
+                        const kindStatus = TICKET_KIND_OPTIONS.map((option) => ({
+                          ...option,
+                          done: hasKind(session.localId, sectorId, option.value),
+                        }));
+
+                        return (
+                          <div
+                            key={`${session.localId}-${sectorId || "open"}`}
+                            className={`overflow-hidden rounded-[2rem] border bg-white ${
+                              sectorOpen ? "border-sky-200 shadow-sm" : "border-slate-200"
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggleSector(session.localId, sectorId)}
+                              className="flex w-full flex-col justify-between gap-4 p-5 text-left hover:bg-slate-50 xl:flex-row xl:items-center"
+                            >
+                              <div>
+                                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Setor</p>
+                                <h4 className="mt-1 text-xl font-black text-slate-950">{sector.name || "Área única"}</h4>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {kindStatus.map((option) => (
+                                    <span
+                                      key={option.value}
+                                      className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${
+                                        option.done ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"
+                                      }`}
+                                    >
+                                      {option.label} {option.done ? "✓" : ""}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <MiniStat label="Disponível" value={available} />
+                                <MiniStat label="Distribuído" value={distributed} />
+                                <MiniStat label="Livre" value={free} />
+                              </div>
+                            </button>
+
+                            {sectorOpen ? (
+                              <div className="border-t border-slate-200 bg-slate-50 p-5">
+                                <div className="mb-4 rounded-3xl border border-sky-100 bg-sky-50 p-4">
+                                  <p className="text-sm font-black text-sky-950">Tipos de ingresso deste setor</p>
+                                  <p className="mt-1 text-sm font-semibold leading-6 text-sky-800">
+                                    Configure Inteira, Meia e Social somente aqui. Ao alterar número de lotes ou aumento por lote em um tipo, o mesmo setor replica essa regra para os outros tipos. Na primeira data, esses valores viram molde para as demais datas.
+                                  </p>
+                                </div>
+
+                                <div className="grid gap-4">
+                                  {TICKET_KIND_OPTIONS.map((option) => (
+                                    <div key={option.value}>{renderAutomationFields(session.localId, sectorId, option.value)}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    function renderLotsStep() {
+      const lotsGroups = groupTickets(tickets);
+
+      return (
+        <div className="grid gap-5">
+          <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5">
+            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
+              <div>
+                <h3 className="text-xl font-black text-slate-950">Visualização e ajustes dos lotes</h3>
+                <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-slate-500">
+                  Aqui você confere o que foi gerado e ainda pode editar manualmente. Lotes posteriores não podem ficar mais baratos que os anteriores, e o mínimo por pedido segue travado em 1.
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-4">
+                <MiniStat label="Grupos" value={lotsGroups.length} />
+                <MiniStat label="Lotes" value={tickets.length} />
+                <MiniStat label="Quantidade" value={totalDistributed} />
+                <MiniStat label="Passaportes" value={passportTickets.length} />
+              </div>
+            </div>
+          </div>
+
+          {lotsGroups.length === 0 ? (
+            <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white p-8 text-center">
+              <p className="text-lg font-black text-slate-950">Nenhum lote gerado ainda.</p>
+              <p className="mt-2 text-sm font-semibold text-slate-500">Volte para Automatizar e gere os lotes por data e setor.</p>
+            </div>
+          ) : (
+            lotsGroups.map((group) => {
+              const first = group[0];
+              const passport = isPassportTicket(first);
+              const available = availableForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
+              const distributed = createdForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
+              const free = remainingForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
+
+              return (
+                <div key={ticketGroupId(first)} className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+                  <div className={`p-5 ${passport ? "bg-amber-50" : "bg-white"}`}>
+                    <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-600">Grupo de venda</p>
+                        <h3 className="mt-1 text-xl font-black text-slate-950">
+                          {passport ? "Passaporte" : sessionLabel(first.eventSessionLocalId)} • {sectorLabel(first.venueSectorLocalId)} • {ticketKindBadge(first.ticketKind)}
+                        </h3>
+                        <p className="mt-1 text-sm font-semibold text-slate-500">Abre pelo tempo programado ou quando o lote anterior esgotar.</p>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-4">
+                        <MiniStat label="Disponível" value={available} />
+                        <MiniStat label="Distribuído" value={distributed} />
+                        <MiniStat label="Livre" value={free} />
+                        <Field label="Máx. pedido" value={groupLimit(first)} onChange={(value) => updateGroupMax(first, value)} onlyNumbers helper="Vale para o grupo" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[1040px]">
+                      <div className="grid grid-cols-[90px_1.5fr_110px_100px_170px_170px_110px] gap-0 bg-slate-950 px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] text-white">
+                        <span>Lote</span>
+                        <span>Nome</span>
+                        <span>Preço</span>
+                        <span>Qtd.</span>
+                        <span>Início</span>
+                        <span>Fim</span>
+                        <span>Status</span>
+                      </div>
+
+                      {group.map((ticket, index) => {
+                        const previous = group[index - 1];
+                        const minimumPrice = maxPreviousTicketPrice(tickets, ticket);
+                        const autoHidden = lotNumber(ticket.lotLabel) > 1 && group.some((item) => item.lotLabel === "1º Lote");
+                        const rowFree = remainingForSessionSector(ticket.eventSessionLocalId, ticket.venueSectorLocalId, ticket.localId);
+
+                        return (
+                          <div key={ticket.localId} className="border-t border-slate-200 bg-white px-4 py-4">
+                            <div className="grid grid-cols-[90px_1.5fr_110px_100px_170px_170px_110px] gap-2">
+                              <Select label="Lote" value={ticket.lotLabel} onChange={(value) => updateTicket(ticket.localId, { lotLabel: value })} options={LOTS.map((lot) => ({ label: lot, value: lot }))} />
+                              <Field label="Nome" value={ticket.name} onChange={(value) => updateTicket(ticket.localId, { name: value })} />
+                              <Field
+                                label="Preço"
+                                value={ticket.price}
+                                onChange={(value) => updateTicket(ticket.localId, { price: value })}
+                                money
+                                helper={minimumPrice > 0 ? `Mín: ${formatMoney(moneyInputFromNumber(minimumPrice))}` : formatMoney(ticket.price)}
+                              />
+                              <Field
+                                label="Qtd."
+                                value={ticket.quantity}
+                                onChange={(value) => {
+                                  const allowed = remainingForSessionSector(ticket.eventSessionLocalId, ticket.venueSectorLocalId, ticket.localId) + toNumber(ticket.quantity);
+                                  const clean = onlyDigits(value);
+                                  const limited = String(Math.min(positiveInt(clean, 1), Math.max(allowed, 1)));
+                                  updateTicket(ticket.localId, { quantity: limited });
+                                }}
+                                onlyNumbers
+                                helper={`Livre: ${rowFree}`}
+                              />
+                              <Field label="Início" value={inputDateDay(ticket.salesStartAt)} onChange={(value) => updateTicket(ticket.localId, { salesStartAt: value })} type="date" helper={previous ? "Após lote anterior" : "Editável"} />
+                              <Field label="Fim" value={inputDateDay(ticket.salesEndAt)} onChange={(value) => updateTicket(ticket.localId, { salesEndAt: value })} type="date" helper={passport ? "Até 1ª sessão" : "Até dia da sessão"} />
+                              <div className="grid gap-2">
+                                <label className="flex h-[52px] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={ticket.isHidden || autoHidden}
+                                    disabled={autoHidden}
+                                    onChange={(event) => updateTicket(ticket.localId, { isHidden: event.target.checked })}
+                                  />
+                                  Oculto
+                                </label>
+                                {tickets.length > 1 ? (
+                                  <button type="button" onClick={() => removeTicket(ticket.localId)} className="rounded-2xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50">
+                                    Remover
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+
+                            <div className="mt-4">
+                              <TextArea label="Descrição e benefícios" value={ticket.description} onChange={(value) => updateTicket(ticket.localId, { description: value })} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="p-5">
+                    <button
+                      type="button"
+                      onClick={() => addLotFor(first.eventSessionLocalId, first.venueSectorLocalId, first.ticketKind)}
+                      className="rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-3 text-sm font-black text-sky-700 hover:bg-sky-100"
+                    >
+                      + Gerar mais um lote seguindo a regra
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      );
+    }
+
+    function renderPassportStep() {
+      const activeSectorKey = expandedTicketSectorKey.startsWith("passport::")
+        ? expandedTicketSectorKey.replace("passport::", "")
+        : sectorTicketId(visibleSectors[0]);
+      const activeSector =
+        visibleSectors.find((sector) => sectorTicketId(sector) === activeSectorKey) ||
+        visibleSectors[0];
+      const activeSectorId = activeSector ? sectorTicketId(activeSector) : "";
+      const activePassportCount = tickets
+        .filter((ticket) =>
+          ticket.eventSessionLocalId === "" &&
+          ticket.venueSectorLocalId === activeSectorId,
+        )
+        .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+
+      return (
+        <div className="grid gap-5">
+          <div className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5">
+            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
+              <div>
+                <h3 className="text-xl font-black text-amber-950">
+                  Passaporte opcional automatizado
+                </h3>
+                <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-amber-900">
+                  O passaporte usa o mesmo fluxo da automação: escolha o setor,
+                  defina Inteira, Meia e Social, gere os lotes e depois confira
+                  tudo na verificação final. Ele consome disponibilidade do setor
+                  em todas as datas.
+                </p>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-3">
+                <MiniStat label="Passaportes" value={passportTickets.length} />
+                <MiniStat label="Setores" value={visibleSectors.length} />
+                <MiniStat label="Selecionado" value={activeSector?.name || "Setor"} />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-5">
+            <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">
+                  Setores do passaporte
+                </p>
+                <h4 className="mt-1 text-xl font-black text-slate-950">
+                  Escolha um setor para configurar
+                </h4>
+              </div>
+
+              <span className="rounded-full bg-amber-100 px-4 py-2 text-xs font-black text-amber-800">
+                Opcional
+              </span>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-4">
+              {visibleSectors.map((sector) => {
+                const sectorId = sectorTicketId(sector);
+                const active = sectorId === activeSectorId;
+                const generatedCount = tickets
+                  .filter((ticket) =>
+                    ticket.eventSessionLocalId === "" &&
+                    ticket.venueSectorLocalId === sectorId,
+                  )
+                  .reduce((sum, ticket) => sum + toNumber(ticket.quantity), 0);
+                const available = availableForSessionSector("", sectorId);
+                const remaining = remainingForSessionSector("", sectorId);
+
+                return (
+                  <button
+                    key={`passport-sector-${sectorId || "open"}`}
+                    type="button"
+                    onClick={() => setExpandedTicketSectorKey(`passport::${sectorId}`)}
+                    className={`rounded-3xl border p-4 text-left transition ${
+                      active
+                        ? "border-amber-400 bg-amber-50 shadow-sm"
+                        : generatedCount > 0
+                          ? "border-emerald-200 bg-emerald-50 hover:border-emerald-300"
+                          : "border-slate-200 bg-white hover:border-amber-300 hover:bg-amber-50"
+                    }`}
+                  >
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                      Setor
+                    </p>
+                    <p className="mt-1 text-lg font-black text-slate-950">
+                      {sector.name || "Área única"}
+                    </p>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-2xl bg-white/80 p-2">
+                        <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
+                          Disponível
+                        </p>
+                        <p className="text-sm font-black text-slate-950">{available}</p>
+                      </div>
+                      <div className="rounded-2xl bg-white/80 p-2">
+                        <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
+                          Gerado
+                        </p>
+                        <p className="text-sm font-black text-slate-950">{generatedCount}</p>
+                      </div>
+                      <div className="rounded-2xl bg-white/80 p-2">
+                        <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">
+                          Livre
+                        </p>
+                        <p className="text-sm font-black text-slate-950">{remaining}</p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {activeSector ? (
+            <div className="rounded-[2rem] border border-amber-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-600">
+                    Setor selecionado
+                  </p>
+                  <h4 className="mt-1 text-2xl font-black text-slate-950">
+                    {activeSector.name || "Área única"}
+                  </h4>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    Configure os tipos de passaporte abaixo. A disponibilidade é compartilhada com os ingressos das datas.
+                  </p>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <MiniStat label="Disponível" value={availableForSessionSector("", activeSectorId)} />
+                  <MiniStat label="Distribuído" value={activePassportCount} />
+                  <MiniStat label="Livre" value={remainingForSessionSector("", activeSectorId)} />
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-4">
+                {TICKET_KIND_OPTIONS.map((option) => (
+                  <div key={`passport-${activeSectorId}-${option.value}`}>
+                    {renderAutomationFields("", activeSectorId, option.value, true)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
+    function renderReviewTicketStep() {
+      const normalGroups = groups.filter((group) => !isPassportTicket(group[0]));
+      const passportGroups = groups.filter((group) => isPassportTicket(group[0]));
+
+      return (
+        <div className="grid gap-5">
+          <div className={`rounded-[2rem] border p-5 ${ticketError ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}>
+            <p className={`text-lg font-black ${ticketError ? "text-rose-800" : "text-emerald-900"}`}>
+              {ticketError ? "Ainda existem ajustes nos ingressos" : "Ingressos prontos"}
+            </p>
+            {ticketError ? <p className="mt-2 text-sm font-black text-rose-700">{ticketError}</p> : <p className="mt-2 text-sm font-semibold text-emerald-800">Todos os setores obrigatórios têm pelo menos um lote em cada data.</p>}
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-5">
+            <MiniStat label="Grupos obrigatórios" value={normalGroups.length} />
+            <MiniStat label="Passaportes" value={passportGroups.length} />
+            <MiniStat label="Lotes totais" value={tickets.length} />
+            <MiniStat label="Quantidade total" value={totalDistributed} />
+            <MiniStat label="Pendências" value={missingRequired.length} />
+          </div>
+
+          {missingRequired.length > 0 ? (
+            <div className="rounded-[2rem] border border-rose-200 bg-white p-5">
+              <h3 className="text-xl font-black text-slate-950">Pendências obrigatórias</h3>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {missingRequired.map((item) => (
+                  <div key={`${item.session.localId}-${item.sectorId || "open"}`} className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                    <p className="text-sm font-black text-rose-800">{item.session.name || formatSessionName(item.session.startsAt)} • {item.sector.name || "Área única"}</p>
+                    <p className="mt-1 text-xs font-semibold text-rose-700">Gere pelo menos um lote para este setor nesta data.</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="text-xl font-black text-slate-950">Resumo dos grupos</h3>
+            <div className="mt-4 grid gap-3">
+              {groups.length === 0 ? (
+                <p className="text-sm font-semibold text-slate-500">Nenhum grupo de venda criado.</p>
+              ) : (
+                groups.map((group) => {
+                  const first = group[0];
+                  const quantity = group.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+                  const prices = group.map((item) => moneyNumber(item.price)).filter((price) => price > 0);
+                  const minPrice = prices.length ? Math.min(...prices) : 0;
+                  const maxPrice = prices.length ? Math.max(...prices) : 0;
+
+                  return (
+                    <div key={ticketGroupId(first)} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+                        <div>
+                          <p className="text-sm font-black text-slate-950">
+                            {isPassportTicket(first) ? "Passaporte" : sessionLabel(first.eventSessionLocalId)} • {sectorLabel(first.venueSectorLocalId)} • {ticketKindBadge(first.ticketKind)}
+                          </p>
+                          <p className="mt-1 text-xs font-semibold text-slate-500">
+                            {group.length} lote(s) • {quantity} ingresso(s) • {formatMoney(moneyInputFromNumber(minPrice))} até {formatMoney(moneyInputFromNumber(maxPrice))}
+                          </p>
+                        </div>
+                        <span className={`rounded-full px-3 py-1 text-xs font-black ${isPassportTicket(first) ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                          {isPassportTicket(first) ? "Opcional" : "Obrigatório"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <StepShell
         eyebrow="Etapa 7"
         title="Ingressos e lotes"
-        description="Crie lotes por data, setor e tipo de ingresso. O próximo lote abre quando o anterior termina ou quando sua quantidade esgota."
+        description="Gerador automatizado para criar lotes por data, setor e tipo de ingresso, com passaporte opcional e verificação final."
       >
         <div className="grid gap-6">
-          <div className="rounded-[2rem] border border-sky-100 bg-sky-50 p-5">
-            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
-              <div>
-                <h3 className="text-xl font-black text-slate-950">Criador rápido por data e setor</h3>
-                <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-sky-900">
-                  Cada setor definido precisa ter pelo menos um lote em cada data. Use os botões para criar Inteira, Meia ou Social. Lotes posteriores ficam ocultos automaticamente até o lote anterior terminar ou esgotar.
-                </p>
-              </div>
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="grid gap-3 md:grid-cols-3">
+              {ticketWizardSteps.map((step, index) => {
+                const active = ticketBuilderStep === step.id;
+                const done =
+                  step.id === "CREATE"
+                    ? missingRequired.length === 0
+                    : step.id === "PASSPORT"
+                      ? passportTickets.length > 0
+                      : !ticketError;
 
-              <div className="grid gap-2 sm:grid-cols-3">
-                <MiniStat label="Lotes válidos" value={validTickets.length} />
-                <MiniStat label="Ingressos distribuídos" value={tickets.reduce((sum, item) => sum + toNumber(item.quantity), 0)} />
-                <MiniStat label="Grupos" value={groups.length} />
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-4 lg:grid-cols-2">
-              {sessions.map((session) => (
-                <div key={session.localId} className="rounded-3xl border border-sky-200 bg-white p-4">
-                  <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-600">{session.name || "Data"}</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">Vendas podem ir até: {datePreview(session.startsAt)}</p>
-
-                  <div className="mt-4 grid gap-3">
-                    {visibleSectors.map((sector) => {
-                      const sectorId = sectorTicketId(sector);
-                      return (
-                        <div key={`${session.localId}-${sectorId || "open"}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                            <div>
-                              <p className="text-sm font-black text-slate-950">{sector.name || "Área única"}</p>
-                              <p className="mt-1 text-xs font-semibold text-slate-500">
-                                Ainda livre nesta data/setor: {remainingForSessionSector(session.localId, sectorId)}
-                              </p>
-                            </div>
-
-                            <div className="flex flex-wrap gap-2">
-                              {TICKET_KIND_OPTIONS.map((option) => (
-                                <button
-                                  key={option.value}
-                                  type="button"
-                                  onClick={() => addLotFor(session.localId, sectorId, option.value)}
-                                  className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-sky-700"
-                                >
-                                  + {option.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-[2rem] border border-amber-200 bg-amber-50 p-5">
-            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-start">
-              <div>
-                <h3 className="text-xl font-black text-slate-950">Passaporte opcional</h3>
-                <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-amber-900">
-                  O passaporte dá acesso a todas as datas. Ele é opcional e precisa ser associado a um setor específico. A quantidade dele reduz a disponibilidade daquele setor em todas as datas.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {visibleSectors.map((sector) => {
-                const sectorId = sectorTicketId(sector);
                 return (
-                  <div key={`passport-${sectorId || "open"}`} className="rounded-3xl border border-amber-200 bg-white p-4">
-                    <p className="text-sm font-black text-slate-950">{sector.name || "Área única"}</p>
-                    <p className="mt-1 text-xs font-semibold text-slate-500">Disponível para passaporte: {remainingForSessionSector("", sectorId)}</p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {TICKET_KIND_OPTIONS.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => addLotFor("", sectorId, option.value)}
-                          className="rounded-2xl border border-amber-300 bg-amber-100 px-4 py-2 text-xs font-black text-amber-900 hover:bg-amber-200"
-                        >
-                          + Passaporte {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  <button
+                    key={step.id}
+                    type="button"
+                    onClick={() => setTicketBuilderStep(step.id)}
+                    className={`rounded-2xl border p-4 text-left transition ${
+                      active
+                        ? "border-sky-500 bg-sky-50"
+                        : done
+                          ? "border-emerald-200 bg-emerald-50"
+                          : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-black ${active ? "bg-sky-600 text-white" : done ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-700"}`}>
+                      {done ? "✓" : index + 1}
+                    </span>
+                    <p className="mt-3 text-sm font-black text-slate-950">{step.title}</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">{step.description}</p>
+                  </button>
                 );
               })}
             </div>
           </div>
 
-          {ticketError ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">
-              {ticketError}
-            </div>
-          ) : null}
-
-          {groups.length === 0 ? (
-            <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white p-8 text-center">
-              <p className="text-lg font-black text-slate-950">Nenhum lote criado ainda</p>
-              <p className="mt-2 text-sm font-semibold text-slate-500">Use o criador rápido acima para gerar os primeiros lotes obrigatórios. O passaporte é opcional.</p>
-            </div>
-          ) : (
-            <div className="grid gap-5">
-              {groups.map((group) => {
-                const first = group[0];
-                const passport = isPassportTicket(first);
-                const groupTitle = `${sessionLabel(first.eventSessionLocalId)} • ${sectorLabel(first.venueSectorLocalId)} • ${TICKET_KIND_OPTIONS.find((item) => item.value === first.ticketKind)?.label || "Inteira"}`;
-                const maxPerOrder = groupLimit(first);
-                const totalAvailable = availableForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
-                const totalDistributed = createdForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
-                const totalFree = remainingForSessionSector(first.eventSessionLocalId, first.venueSectorLocalId);
-
-                return (
-                  <div key={ticketGroupId(first)} className={`rounded-[2rem] border bg-white p-5 shadow-sm ${passport ? "border-amber-200" : "border-slate-200"}`}>
-                    <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-                      <div>
-                        <p className={`text-xs font-black uppercase tracking-[0.18em] ${passport ? "text-amber-600" : "text-sky-600"}`}>
-                          {passport ? "Grupo de venda passaporte" : "Grupo de venda"}
-                        </p>
-                        <h3 className="mt-1 text-xl font-black text-slate-950">{groupTitle}</h3>
-                        <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
-                          Mínimo por pedido travado em 1. O máximo definido aqui vale para todos os lotes deste grupo.
-                        </p>
-                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                          <MiniStat label="Total disponível" value={totalAvailable} />
-                          <MiniStat label="Já distribuído" value={totalDistributed} />
-                          <MiniStat label="Ainda livre" value={totalFree} />
-                        </div>
-                      </div>
-
-                      <Field
-                        label="Máximo por pedido do grupo"
-                        value={maxPerOrder}
-                        onChange={(value) => updateGroupMax(first, value)}
-                        onlyNumbers
-                        helper="Aplicado a todos os lotes deste setor/data/tipo."
-                      />
-                    </div>
-
-                    <div className="mt-5 overflow-x-auto rounded-3xl border border-slate-200">
-                      <div className="min-w-[1070px]">
-                        <div className="grid grid-cols-[110px_1fr_120px_120px_190px_190px_120px] gap-0 bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-white">
-                          <span>Lote</span>
-                          <span>Nome</span>
-                          <span>Preço</span>
-                          <span>Qtd.</span>
-                          <span>Início</span>
-                          <span>Fim</span>
-                          <span>Status</span>
-                        </div>
-
-                        <div className="divide-y divide-slate-200">
-                          {group.map((ticket) => {
-                            const autoHidden = lotNumber(ticket.lotLabel) > 1 && group.some((item) => item.lotLabel === "1º Lote");
-                            const previousEnd = previousLotEnd(ticket, ticket.lotLabel);
-                            const freeWithoutCurrent = remainingForSessionSector(ticket.eventSessionLocalId, ticket.venueSectorLocalId, ticket.localId);
-                            const remainingAfterCurrent = Math.max(freeWithoutCurrent - toNumber(ticket.quantity), 0);
-
-                            return (
-                              <div key={ticket.localId} className="grid grid-cols-[110px_1fr_120px_120px_190px_190px_120px] items-start gap-0 bg-white px-4 py-4 text-sm">
-                                <Select label="" value={ticket.lotLabel} onChange={(value) => updateTicket(ticket.localId, { lotLabel: value })} options={ticketLotOptions(ticket)} />
-                                <Field label="" value={ticket.name} onChange={(value) => updateTicket(ticket.localId, { name: value })} />
-                                <Field label="" value={ticket.price} onChange={(value) => updateTicket(ticket.localId, { price: value })} money placeholder="250,00" helper={formatMoney(ticket.price)} />
-                                <Field
-                                  label=""
-                                  value={ticket.quantity}
-                                  onChange={(value) => {
-                                    const clean = onlyDigits(value);
-                                    const maxAllowed = remainingForSessionSector(ticket.eventSessionLocalId, ticket.venueSectorLocalId, ticket.localId);
-                                    const nextQuantity = Math.min(toNumber(clean), maxAllowed);
-                                    updateTicket(ticket.localId, { quantity: String(nextQuantity) });
-                                  }}
-                                  onlyNumbers
-                                  helper={`Restante após este lote: ${remainingAfterCurrent}`}
-                                />
-                                <Field
-                                  label=""
-                                  value={ticket.salesStartAt || previousEnd}
-                                  onChange={(value) => updateTicket(ticket.localId, { salesStartAt: value })}
-                                  type="datetime-local"
-                                  helper={previousEnd ? "Sugerido pelo fim do lote anterior." : "Editável."}
-                                />
-                                <Field
-                                  label=""
-                                  value={ticket.salesEndAt}
-                                  onChange={(value) => updateTicket(ticket.localId, { salesEndAt: value })}
-                                  type="datetime-local"
-                                  helper={passport ? "Máximo: início da primeira data." : "Máximo: início da data do evento."}
-                                />
-                                <div className="grid gap-2">
-                                  <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-700">
-                                    <input
-                                      type="checkbox"
-                                      checked={ticket.isHidden || autoHidden}
-                                      disabled={autoHidden}
-                                      onChange={(event) => updateTicket(ticket.localId, { isHidden: event.target.checked })}
-                                    />
-                                    Oculto
-                                  </label>
-                                  {tickets.length > 1 ? (
-                                    <button type="button" onClick={() => removeTicket(ticket.localId)} className="rounded-2xl border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-600 hover:bg-rose-50">
-                                      Remover
-                                    </button>
-                                  ) : null}
-                                </div>
-
-                                <div className="col-span-7 mt-3">
-                                  <TextArea label="Descrição e benefícios" value={ticket.description} onChange={(value) => updateTicket(ticket.localId, { description: value })} />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => addLotFor(first.eventSessionLocalId, first.venueSectorLocalId, first.ticketKind)}
-                        className="rounded-2xl border border-dashed border-sky-300 bg-sky-50 px-5 py-3 text-sm font-black text-sky-700 hover:bg-sky-100"
-                      >
-                        + Adicionar próximo lote deste grupo
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {ticketBuilderStep === "CREATE" ? renderCreateStep() : null}
+          {ticketBuilderStep === "PASSPORT" ? renderPassportStep() : null}
+          {ticketBuilderStep === "REVIEW" ? renderReviewTicketStep() : null}
         </div>
       </StepShell>
     );
