@@ -386,9 +386,7 @@ function getStatusClasses(status?: string | null) {
 }
 
 function getPublicEventHref(event: EventItem) {
-  if (event.slug) return `/eventos/${event.slug}`;
-
-  return `/eventos/${event.id}`;
+  return `/events/${event.id}`;
 }
 
 function isSameDay(first: Date, second: Date) {

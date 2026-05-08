@@ -24,6 +24,19 @@ export class PaymentsService {
     return paidTotal;
   }
 
+  private async markOrderPlacesAsSold(
+    orderId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    await db.$executeRawUnsafe(
+      `UPDATE "PlaceReservation"
+          SET "status" = 'SOLD', "expiresAt" = NULL, "updatedAt" = NOW()
+        WHERE "orderId" = $1
+          AND "status" = 'HELD'`,
+      orderId,
+    );
+  }
+
   private async activateOrderTransferRequests(
     orderId: string,
     db: Prisma.TransactionClient | PrismaService = this.prisma,
@@ -128,6 +141,7 @@ export class PaymentsService {
       });
 
       if (orderWillBePaid) {
+        await this.markOrderPlacesAsSold(data.orderId, tx);
         await this.activateOrderTransferRequests(data.orderId, tx);
       }
 
@@ -198,6 +212,7 @@ export class PaymentsService {
         },
       });
 
+      await this.markOrderPlacesAsSold(order.id, tx);
       await this.activateOrderTransferRequests(order.id, tx);
 
       return createdPayment;

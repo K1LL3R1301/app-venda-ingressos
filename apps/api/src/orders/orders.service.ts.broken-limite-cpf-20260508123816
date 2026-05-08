@@ -1,0 +1,1548 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, User } from '@prisma/client';
+import * as crypto from 'crypto';
+import { PrismaService } from '../prisma/prisma.service';
+import { CancelOrderDto } from './dto/cancel-order.dto';
+import { CancelTicketDto } from './dto/cancel-ticket.dto';
+import { CreateOrderDto } from './dto/create-order.dto';
+
+type BuiltTicketCreate = {
+  code: string;
+  currentOwnerUserId: string | null;
+  holderName: string | null;
+  holderEmail: string | null;
+  holderCpf: string | null;
+  transferPlan?: {
+    requestedByUserId: string;
+    fromUserId: string;
+    toUserId: string;
+    requestedByName: string | null;
+    requestedByEmail: string | null;
+    requestedByCpf: string | null;
+    fromName: string | null;
+    fromEmail: string | null;
+    fromCpf: string | null;
+    toName: string | null;
+    toEmail: string | null;
+    toCpf: string | null;
+  };
+};
+
+@Injectable()
+export class OrdersService {
+  constructor(private readonly prisma: PrismaService) {}
+
+   private orderInclude = {
+    event: {
+      include: {
+       media: true,
+      },
+    },
+    items: {
+      include: {
+        ticketType: true,
+        tickets: true,
+      },
+    },
+    payments: true,
+    cancellations: true,
+   transferRequests: true,
+  } as const;
+
+  private normalizeCpf(value?: string | null) {
+    return String(value || '').replace(/\D/g, '');
+  }
+
+  private normalizeEmail(value?: string | null) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized || null;
+  }
+
+  private getPendingOrderExpiresAt() {
+    return new Date(Date.now() + 10 * 60 * 1000);
+  }
+
+  private getTransferAcceptanceExpiresAt() {
+    return new Date(Date.now() + 24 * 60 * 60 * 1000);
+  }
+
+  private countRequestedTickets(data: CreateOrderDto) {
+    return data.items.reduce((sum, item) => sum + item.quantity, 0);
+  }
+
+  private getTicketLimitFromValues(values: Array<number | null | undefined>) {
+    const limits = values
+      .map((value) => Number(value || 0))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    if (limits.length === 0) {
+      return 4;
+    }
+
+    return Math.max(1, Math.min(...limits));
+  }
+
+  private async getEventCpfTicketLimit(
+    eventId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    const ticketTypes = await db.ticketType.findMany({
+      where: { eventId },
+      select: {
+        maxPerOrder: true,
+      },
+    });
+
+    return this.getTicketLimitFromValues(
+      ticketTypes.map((ticketType) => ticketType.maxPerOrder),
+    );
+  }
+
+  private async countCpfTicketsInEvent(params: {
+    eventId: string;
+    cpf: string;
+    ignoredTicketIds?: string[];
+    db: Prisma.TransactionClient | PrismaService;
+  }) {
+    const ignoredTicketIds = params.ignoredTicketIds || [];
+
+    return params.db.ticket.count({
+      where: {
+        holderCpf: params.cpf,
+        id:
+          ignoredTicketIds.length > 0
+            ? {
+                notIn: ignoredTicketIds,
+              }
+            : undefined,
+        status: {
+          not: 'CANCELED',
+        },
+        orderItem: {
+          order: {
+            eventId: params.eventId,
+            status: {
+              not: 'CANCELED',
+            },
+          },
+        },
+      },
+    });
+  }
+
+  private async ensureCpfEventTicketLimit(params: {
+    eventId: string;
+    holderCpfs: Array<string | null | undefined>;
+    ignoredTicketIds?: string[];
+    db: Prisma.TransactionClient | PrismaService;
+  }) {
+    const limit = await this.getEventCpfTicketLimit(params.eventId, params.db);
+    const requestedByCpf = new Map<string, number>();
+
+    for (const rawCpf of params.holderCpfs) {
+      const cpf = this.normalizeCpf(rawCpf);
+
+      if (!cpf) {
+        throw new BadRequestException(
+          'Todos os ingressos precisam ter CPF do titular informado',
+        );
+      }
+
+      if (cpf.length !== 11) {
+        throw new BadRequestException(
+          'Todos os ingressos precisam ter CPF válido do titular',
+        );
+      }
+
+      requestedByCpf.set(cpf, (requestedByCpf.get(cpf) || 0) + 1);
+    }
+
+    for (const [cpf, requestedCount] of requestedByCpf.entries()) {
+      const currentCount = await this.countCpfTicketsInEvent({
+        eventId: params.eventId,
+        cpf,
+        ignoredTicketIds: params.ignoredTicketIds,
+        db: params.db,
+      });
+
+      if (currentCount + requestedCount > limit) {
+        throw new BadRequestException(
+          `O CPF ${cpf} excede o limite de ${limit} ingresso(s) neste evento. Esse CPF já possui ${currentCount} ingresso(s) e esta operação tentaria adicionar mais ${requestedCount}.`,
+        );
+      }
+    }
+  }) {
+    const { totalRequestedTickets, buyerTicketsCount, otherTicketsCount } =
+      params;
+
+    if (totalRequestedTickets > 4) {
+      throw new BadRequestException(
+        'Cada compra pode ter no máximo 4 ingressos',
+      );
+    }
+
+    if (buyerTicketsCount > 2) {
+      throw new BadRequestException(
+        'No máximo 2 ingressos podem ficar no CPF do comprador',
+      );
+    }
+
+    if (otherTicketsCount > 2) {
+      throw new BadRequestException(
+        'No máximo 2 ingressos podem ser destinados a outros CPFs',
+      );
+    }
+
+    if (totalRequestedTickets > 0 && buyerTicketsCount === 0) {
+      throw new BadRequestException(
+        'Pelo menos 1 ingresso deve permanecer no CPF do comprador',
+      );
+    }
+  }
+
+  private getCancellationConfig(mode?: string) {
+    const normalizedMode = mode === 'WALLET_80' ? 'WALLET_80' : 'REFUND_70';
+
+    return {
+      mode: normalizedMode,
+      percent:
+        normalizedMode === 'WALLET_80'
+          ? new Prisma.Decimal('0.80')
+          : new Prisma.Decimal('0.70'),
+      createWalletCredit: normalizedMode === 'WALLET_80',
+      cancellationStatus:
+        normalizedMode === 'WALLET_80' ? 'CREDITED' : 'REFUND_REQUESTED',
+    };
+  }
+
+  private isOrderExpired(order: {
+    status?: string | null;
+    expiresAt?: Date | string | null;
+  }) {
+    const status = String(order.status || '').toUpperCase();
+
+    if (status !== 'PENDING' && status !== 'PENDING_PAYMENT') {
+      return false;
+    }
+
+    if (!order.expiresAt) {
+      return false;
+    }
+
+    const expiresAt = new Date(order.expiresAt).getTime();
+
+    if (Number.isNaN(expiresAt)) {
+      return false;
+    }
+
+    return expiresAt < Date.now();
+  }
+
+  private async findUserByCpfOrEmail(
+    params: {
+      cpf?: string | null;
+      email?: string | null;
+    },
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<User | null> {
+    const normalizedCpf = this.normalizeCpf(params.cpf);
+    const normalizedEmail = this.normalizeEmail(params.email);
+
+    if (normalizedCpf) {
+      const userByCpf = await db.user.findUnique({
+        where: { cpfNormalized: normalizedCpf },
+      });
+
+      if (userByCpf) {
+        return userByCpf;
+      }
+    }
+
+    if (normalizedEmail) {
+      const userByEmail = await db.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+
+      if (userByEmail) {
+        return userByEmail;
+      }
+    }
+
+    return null;
+  }
+
+  private async resolveOrderOwnerUserId(
+    params: {
+      customerUserId?: string | null;
+      customerEmail?: string | null;
+      customerCpf?: string | null;
+    },
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    if (params.customerUserId) {
+      return params.customerUserId;
+    }
+
+    const user = await this.findUserByCpfOrEmail(
+      {
+        cpf: params.customerCpf,
+        email: params.customerEmail,
+      },
+      db,
+    );
+
+    if (!user) {
+      throw new BadRequestException(
+        'Não foi possível identificar o usuário responsável por este pedido',
+      );
+    }
+
+    return user.id;
+  }
+
+  private async prepareOrderItems(data: CreateOrderDto) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: data.eventId },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Evento não encontrado');
+    }
+
+    let totalAmount = new Prisma.Decimal(0);
+
+    const itemsData: {
+      ticketTypeId: string;
+      quantity: number;
+      unitPrice: Prisma.Decimal;
+      totalPrice: Prisma.Decimal;
+    }[] = [];
+
+    for (const item of data.items) {
+      const ticketType = await this.prisma.ticketType.findUnique({
+        where: { id: item.ticketTypeId },
+      });
+
+      if (!ticketType) {
+        throw new NotFoundException(
+          `Tipo de ingresso não encontrado: ${item.ticketTypeId}`,
+        );
+      }
+
+      if (ticketType.eventId !== data.eventId) {
+        throw new BadRequestException(
+          `O ingresso ${ticketType.name} não pertence ao evento selecionado`,
+        );
+      }
+
+      if (ticketType.status !== 'ACTIVE') {
+        throw new BadRequestException(
+          `Tipo de ingresso inativo: ${ticketType.name}`,
+        );
+      }
+
+      if (item.quantity > ticketType.quantity) {
+        throw new BadRequestException(
+          `Quantidade indisponível para ${ticketType.name}. Disponível: ${ticketType.quantity}`,
+        );
+      }
+
+      if (item.holders?.length && item.holders.length !== item.quantity) {
+        throw new BadRequestException(
+          `O item ${ticketType.name} precisa ter exatamente ${item.quantity} titular(es) informado(s)`,
+        );
+      }
+
+      const unitPrice = new Prisma.Decimal(ticketType.price);
+      const totalPrice = unitPrice.mul(item.quantity);
+
+      totalAmount = totalAmount.add(totalPrice);
+
+      itemsData.push({
+        ticketTypeId: item.ticketTypeId,
+        quantity: item.quantity,
+        unitPrice,
+        totalPrice,
+      });
+    }
+
+    return {
+      event,
+      itemsData,
+      totalAmount,
+    };
+  }
+
+  private async getWalletBalance(
+    userId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    const transactions = await db.walletTransaction.findMany({
+      where: { userId },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    let balance = new Prisma.Decimal(0);
+
+    for (const transaction of transactions) {
+      if (transaction.type === 'DEBIT') {
+        balance = balance.sub(transaction.amount);
+      } else {
+        balance = balance.add(transaction.amount);
+      }
+    }
+
+    if (balance.lt(0)) {
+      return new Prisma.Decimal(0);
+    }
+
+    return balance;
+  }
+
+  private async buildTicketCreates(
+    data: CreateOrderDto,
+    db: Prisma.TransactionClient | PrismaService,
+    purchaserUserId?: string | null,
+  ) {
+    let purchaserUser: User | null = null;
+
+    if (purchaserUserId) {
+      purchaserUser = await db.user.findUnique({
+        where: { id: purchaserUserId },
+      });
+    }
+
+    if (!purchaserUser) {
+      purchaserUser = await this.findUserByCpfOrEmail(
+        {
+          cpf: data.customerCpf,
+          email: data.customerEmail,
+        },
+        db,
+      );
+    }
+
+    const defaultHolderName = purchaserUser?.name || data.customerName;
+    const defaultHolderEmail =
+      purchaserUser?.email || this.normalizeEmail(data.customerEmail);
+    const defaultHolderCpf =
+      purchaserUser?.cpfNormalized || this.normalizeCpf(data.customerCpf);
+    const defaultOwnerUserId = purchaserUser?.id || null;
+
+    const ticketsByItem: BuiltTicketCreate[][] = [];
+
+    for (const item of data.items) {
+      const itemTickets: BuiltTicketCreate[] = [];
+
+      for (let index = 0; index < item.quantity; index += 1) {
+        const holder = item.holders?.[index];
+        const holderName = String(holder?.name || '').trim() || null;
+        const holderEmail = this.normalizeEmail(holder?.email);
+        const holderCpf = this.normalizeCpf(holder?.cpf);
+
+        let targetUser: User | null = null;
+
+        if (holderCpf || holderEmail) {
+          targetUser = await this.findUserByCpfOrEmail(
+            {
+              cpf: holderCpf,
+              email: holderEmail,
+            },
+            db,
+          );
+        }
+
+        if (holderCpf && !targetUser && holderCpf !== defaultHolderCpf) {
+          throw new BadRequestException(
+            `O titular com CPF ${holderCpf} precisa possuir conta cadastrada para receber o ingresso`,
+          );
+        }
+
+        const isTransferToAnotherUser =
+          !!targetUser &&
+          !!defaultOwnerUserId &&
+          targetUser.id !== defaultOwnerUserId;
+const ticketCode = crypto.randomUUID();
+
+        if (isTransferToAnotherUser && !purchaserUser) {
+          throw new BadRequestException(
+            'O comprador precisa possuir conta cadastrada para enviar ingresso para outra pessoa',
+          );
+        }
+
+        itemTickets.push({
+          code: ticketCode,
+          currentOwnerUserId: defaultOwnerUserId,
+          holderName:
+            targetUser?.name || holderName || defaultHolderName || null,
+          holderEmail:
+            targetUser?.email || holderEmail || defaultHolderEmail || null,
+          holderCpf:
+            targetUser?.cpfNormalized ||
+            holderCpf ||
+            defaultHolderCpf ||
+            null,
+          transferPlan:
+            isTransferToAnotherUser && purchaserUser && targetUser
+              ? {
+                  requestedByUserId: purchaserUser.id,
+                  fromUserId: purchaserUser.id,
+                  toUserId: targetUser.id,
+                  requestedByName: purchaserUser.name || null,
+                  requestedByEmail: purchaserUser.email || null,
+                  requestedByCpf: purchaserUser.cpfNormalized || null,
+                  fromName: purchaserUser.name || null,
+                  fromEmail: purchaserUser.email || null,
+                  fromCpf: purchaserUser.cpfNormalized || null,
+                  toName: targetUser.name || null,
+                  toEmail: targetUser.email || null,
+                  toCpf: targetUser.cpfNormalized || null,
+                }
+              : undefined,
+        });
+      }
+
+      ticketsByItem.push(itemTickets);
+    }
+    await this.ensureCpfEventTicketLimit({
+      eventId: data.eventId,
+      holderCpfs: ticketsByItem.flat().map((ticket) => ticket.holderCpf),
+      db,
+    });
+return {
+      purchaserUser,
+      ticketsByItem,
+    };
+  }
+
+  private async createTransferRequestsForOrder(
+    orderId: string,
+    ticketPlans: BuiltTicketCreate[][],
+    db: Prisma.TransactionClient,
+    pendingPaymentExpiresAt?: Date | null,
+  ) {
+    const tickets = ticketPlans.flat();
+    const transferPlansByCode = new Map(
+      tickets
+        .filter((ticket) => ticket.transferPlan)
+        .map((ticket) => [ticket.code, ticket.transferPlan!]),
+    );
+
+    if (transferPlansByCode.size === 0) {
+      return;
+    }
+
+    const createdOrder = await db.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: {
+          include: {
+            tickets: true,
+          },
+        },
+      },
+    });
+
+    if (!createdOrder) {
+      throw new NotFoundException('Pedido não encontrado após criação');
+    }
+
+    for (const item of createdOrder.items) {
+      for (const ticket of item.tickets) {
+        const transferPlan = transferPlansByCode.get(ticket.code);
+
+        if (!transferPlan) {
+          continue;
+        }
+
+        await db.ticketTransferRequest.create({
+          data: {
+            ticketId: ticket.id,
+            orderId: createdOrder.id,
+            requestedByUserId: transferPlan.requestedByUserId,
+            fromUserId: transferPlan.fromUserId,
+            toUserId: transferPlan.toUserId,
+            requestedByName: transferPlan.requestedByName,
+            requestedByEmail: transferPlan.requestedByEmail,
+            requestedByCpf: transferPlan.requestedByCpf,
+            fromName: transferPlan.fromName,
+            fromEmail: transferPlan.fromEmail,
+            fromCpf: transferPlan.fromCpf,
+            toName: transferPlan.toName,
+            toEmail: transferPlan.toEmail,
+            toCpf: transferPlan.toCpf,
+            status: 'PENDING_PAYMENT',
+            expiresAt: pendingPaymentExpiresAt || null,
+          },
+        });
+      }
+    }
+  }
+
+  private async activateOrderTransferRequests(
+    orderId: string,
+    db: Prisma.TransactionClient,
+  ) {
+    const pendingTransfers = await db.ticketTransferRequest.findMany({
+      where: {
+        orderId,
+        status: 'PENDING_PAYMENT',
+      },
+      select: {
+        id: true,
+        ticketId: true,
+      },
+    });
+
+    if (pendingTransfers.length === 0) {
+      return;
+    }
+
+    const acceptanceExpiresAt = this.getTransferAcceptanceExpiresAt();
+
+    await db.ticketTransferRequest.updateMany({
+      where: {
+        id: {
+          in: pendingTransfers.map((item) => item.id),
+        },
+      },
+      data: {
+        status: 'PENDING_ACCEPTANCE',
+        expiresAt: acceptanceExpiresAt,
+      },
+    });
+
+    await db.ticket.updateMany({
+      where: {
+        id: {
+          in: pendingTransfers.map((item) => item.ticketId),
+        },
+      },
+      data: {
+        status: 'TRANSFER_PENDING',
+      },
+    });
+  }
+
+  private async expireOrderNow(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: {
+          include: {
+            tickets: true,
+          },
+        },
+        payments: true,
+      },
+    });
+
+    if (!order || !this.isOrderExpired(order)) {
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const freshOrder = await tx.order.findUnique({
+        where: { id: orderId },
+        include: {
+          items: {
+            include: {
+              tickets: true,
+            },
+          },
+          payments: true,
+        },
+      });
+
+      if (!freshOrder || !this.isOrderExpired(freshOrder)) {
+        return;
+      }
+
+      for (const item of freshOrder.items) {
+        const restockableTickets = item.tickets.filter(
+          (ticket) => ticket.status !== 'CANCELED',
+        );
+
+        if (restockableTickets.length > 0) {
+          await tx.ticket.updateMany({
+            where: {
+              id: {
+                in: restockableTickets.map((ticket) => ticket.id),
+              },
+            },
+            data: {
+              status: 'CANCELED',
+            },
+          });
+
+          await tx.ticketType.update({
+            where: { id: item.ticketTypeId },
+            data: {
+              quantity: {
+                increment: restockableTickets.length,
+              },
+            },
+          });
+        }
+      }
+
+      await tx.ticketTransferRequest.updateMany({
+        where: {
+          orderId: freshOrder.id,
+          status: {
+            in: ['PENDING_PAYMENT', 'PENDING_ACCEPTANCE'],
+          },
+        },
+        data: {
+          status: 'CANCELED',
+          respondedAt: new Date(),
+          responseReason: 'Pedido expirado automaticamente',
+        },
+      });
+
+      if (freshOrder.customerUserId) {
+        const walletDebits = await tx.walletTransaction.findMany({
+          where: {
+            userId: freshOrder.customerUserId,
+            type: 'DEBIT',
+            source: 'ORDER_PAYMENT',
+            sourceId: freshOrder.id,
+          },
+        });
+
+        const refundedAmount = walletDebits.reduce(
+          (sum, transaction) => sum.add(transaction.amount),
+          new Prisma.Decimal(0),
+        );
+
+        if (refundedAmount.gt(0)) {
+          await tx.walletTransaction.create({
+            data: {
+              userId: freshOrder.customerUserId,
+              type: 'CREDIT',
+              source: 'ORDER_EXPIRATION',
+              sourceId: freshOrder.id,
+              amount: refundedAmount,
+              description: `Crédito automático por expiração do pedido ${freshOrder.id}`,
+            },
+          });
+        }
+      }
+
+      await tx.order.update({
+        where: { id: freshOrder.id },
+        data: {
+          status: 'CANCELED',
+          totalAmount: new Prisma.Decimal(0),
+          expiresAt: null,
+        },
+      });
+    });
+  }
+
+  private async expirePendingOrders(where?: Prisma.OrderWhereInput) {
+    const expiredOrders = await this.prisma.order.findMany({
+      where: {
+        status: {
+          in: ['PENDING', 'PENDING_PAYMENT'],
+        },
+        expiresAt: {
+          lt: new Date(),
+        },
+        ...(where || {}),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    for (const order of expiredOrders) {
+      await this.expireOrderNow(order.id);
+    }
+  }
+
+  async create(data: CreateOrderDto) {
+    const normalizedCustomerEmail = this.normalizeEmail(data.customerEmail);
+
+    if (!normalizedCustomerEmail) {
+      throw new BadRequestException('Email do comprador é obrigatório');
+    }
+
+    const normalizedCustomerCpf = this.normalizeCpf(data.customerCpf);
+
+    const mergedData: CreateOrderDto = {
+      ...data,
+      customerEmail: normalizedCustomerEmail,
+      customerCpf: normalizedCustomerCpf || undefined,
+    };
+
+    const { itemsData, totalAmount } = await this.prepareOrderItems(mergedData);
+    const pendingExpiresAt = this.getPendingOrderExpiresAt();
+
+    return this.prisma.$transaction(async (tx) => {
+      const { purchaserUser, ticketsByItem } = await this.buildTicketCreates(
+        mergedData,
+        tx,
+        null,
+      );
+
+      const order = await tx.order.create({
+        data: {
+          eventId: mergedData.eventId,
+          customerUserId: purchaserUser?.id || null,
+          customerName: mergedData.customerName,
+          customerEmail: normalizedCustomerEmail,
+          customerCpf:
+            purchaserUser?.cpfNormalized || normalizedCustomerCpf || null,
+          totalAmount,
+          status: 'PENDING',
+          expiresAt: pendingExpiresAt,
+          items: {
+            create: itemsData.map((item, index) => ({
+              ticketTypeId: item.ticketTypeId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              totalPrice: item.totalPrice,
+              tickets: {
+                create: ticketsByItem[index].map((ticket) => ({
+                  code: ticket.code,
+                  currentOwnerUserId: ticket.currentOwnerUserId,
+                  holderName: ticket.holderName,
+                  holderEmail: ticket.holderEmail,
+                  holderCpf: ticket.holderCpf,
+                  status: 'AVAILABLE',
+                })),
+              },
+            })),
+          },
+        },
+        include: this.orderInclude,
+      });
+
+      for (const item of itemsData) {
+        await tx.ticketType.update({
+          where: { id: item.ticketTypeId },
+          data: {
+            quantity: {
+              decrement: item.quantity,
+            },
+          },
+        });
+      }
+
+      await this.createTransferRequestsForOrder(
+        order.id,
+        ticketsByItem,
+        tx,
+        pendingExpiresAt,
+      );
+
+      return tx.order.findUnique({
+        where: { id: order.id },
+        include: this.orderInclude,
+      });
+    });
+  }
+
+  async createCustomerOrder(
+    userId: string,
+    customerEmail: string,
+    data: CreateOrderDto,
+  ) {
+    const normalizedCustomerEmail = this.normalizeEmail(customerEmail);
+
+    if (!normalizedCustomerEmail) {
+      throw new BadRequestException('Email do comprador é obrigatório');
+    }
+
+    const purchaserUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!purchaserUser) {
+      throw new NotFoundException('Usuário comprador não encontrado');
+    }
+
+    const mergedData: CreateOrderDto = {
+      ...data,
+      customerEmail: normalizedCustomerEmail,
+      customerCpf: purchaserUser.cpfNormalized || undefined,
+    };
+
+    const { itemsData, totalAmount } = await this.prepareOrderItems(mergedData);
+
+    const walletBalance = mergedData.useWalletBalance
+      ? await this.getWalletBalance(userId)
+      : new Prisma.Decimal(0);
+
+    const walletAppliedAmount = totalAmount.gt(walletBalance)
+      ? walletBalance
+      : totalAmount;
+
+    const remainingAmount = totalAmount.sub(walletAppliedAmount);
+    const orderStatus = remainingAmount.lte(0) ? 'PAID' : 'PENDING';
+    const pendingExpiresAt =
+      orderStatus === 'PAID' ? null : this.getPendingOrderExpiresAt();
+
+    return this.prisma.$transaction(async (tx) => {
+      const { ticketsByItem } = await this.buildTicketCreates(
+        mergedData,
+        tx,
+        userId,
+      );
+
+      const order = await tx.order.create({
+        data: {
+          eventId: mergedData.eventId,
+          customerUserId: purchaserUser.id,
+          customerName: mergedData.customerName,
+          customerEmail: normalizedCustomerEmail,
+          customerCpf: purchaserUser.cpfNormalized || null,
+          totalAmount,
+          status: orderStatus,
+          expiresAt: pendingExpiresAt,
+          items: {
+            create: itemsData.map((item, index) => ({
+              ticketTypeId: item.ticketTypeId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              totalPrice: item.totalPrice,
+              tickets: {
+                create: ticketsByItem[index].map((ticket) => ({
+                  code: ticket.code,
+                  currentOwnerUserId: ticket.currentOwnerUserId,
+                  holderName: ticket.holderName,
+                  holderEmail: ticket.holderEmail,
+                  holderCpf: ticket.holderCpf,
+                  status: 'AVAILABLE',
+                })),
+              },
+            })),
+          },
+        },
+        include: this.orderInclude,
+      });
+
+      for (const item of itemsData) {
+        await tx.ticketType.update({
+          where: { id: item.ticketTypeId },
+          data: {
+            quantity: {
+              decrement: item.quantity,
+            },
+          },
+        });
+      }
+
+      await this.createTransferRequestsForOrder(
+        order.id,
+        ticketsByItem,
+        tx,
+        pendingExpiresAt,
+      );
+
+      if (walletAppliedAmount.gt(0)) {
+        await tx.walletTransaction.create({
+          data: {
+            userId,
+            type: 'DEBIT',
+            source: 'ORDER_PAYMENT',
+            sourceId: order.id,
+            amount: walletAppliedAmount,
+            description: `Uso de wallet no pedido ${order.id}`,
+          },
+        });
+
+        await tx.payment.create({
+          data: {
+            orderId: order.id,
+            amount: walletAppliedAmount,
+            method: 'WALLET',
+            status: 'PAID',
+            paidAt: new Date(),
+          },
+        });
+      }
+
+      if (orderStatus === 'PAID') {
+        await this.activateOrderTransferRequests(order.id, tx);
+      }
+
+      const updatedOrder = await tx.order.findUnique({
+        where: { id: order.id },
+        include: this.orderInclude,
+      });
+
+      return {
+        order: updatedOrder,
+        walletAppliedAmount,
+        remainingAmount,
+      };
+    });
+  }
+
+  async findAll() {
+    await this.expirePendingOrders();
+
+    return this.prisma.order.findMany({
+      include: this.orderInclude,
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async findById(id: string) {
+    await this.expireOrderNow(id);
+
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: this.orderInclude,
+    });
+
+    if (!order) {
+      throw new NotFoundException('Pedido não encontrado');
+    }
+
+    return order;
+  }
+
+  async findByEvent(eventId: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
+
+    if (!event) {
+      throw new NotFoundException('Evento não encontrado');
+    }
+
+    await this.expirePendingOrders({ eventId });
+
+    return this.prisma.order.findMany({
+      where: { eventId },
+      include: this.orderInclude,
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async findCustomerOrders(customerEmail: string) {
+    await this.expirePendingOrders({ customerEmail });
+
+    return this.prisma.order.findMany({
+      where: {
+        customerEmail,
+      },
+      include: this.orderInclude,
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async findCustomerOrderById(orderId: string, customerEmail: string) {
+    await this.expireOrderNow(orderId);
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: this.orderInclude,
+    });
+
+    if (!order) {
+      throw new NotFoundException('Pedido não encontrado');
+    }
+
+    if (order.customerEmail !== customerEmail) {
+      throw new ForbiddenException(
+        'Você não tem permissão para visualizar este pedido',
+      );
+    }
+
+    return order;
+  }
+
+  async cancelCustomerTicket(
+    ticketId: string,
+    userId: string,
+    customerEmail: string,
+    body?: CancelTicketDto,
+  ) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        orderItem: {
+          include: {
+            order: true,
+            ticketType: true,
+          },
+        },
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundException('Ingresso não encontrado');
+    }
+
+    const order = ticket.orderItem.order;
+
+    if (order.customerEmail !== customerEmail && order.customerUserId !== userId) {
+      throw new ForbiddenException(
+        'Você não tem permissão para cancelar este ingresso',
+      );
+    }
+
+    if (ticket.status === 'USED') {
+      throw new BadRequestException(
+        'Não é possível cancelar um ingresso já utilizado',
+      );
+    }
+
+    if (ticket.status === 'CANCELED') {
+      throw new BadRequestException('Este ingresso já está cancelado');
+    }
+
+    if (order.status === 'CANCELED') {
+      throw new BadRequestException('O pedido já está cancelado');
+    }
+
+    const originalAmount = new Prisma.Decimal(ticket.orderItem.unitPrice);
+
+    if (order.status !== 'PAID') {
+      return this.prisma.$transaction(async (tx) => {
+        const cancellation = await tx.ticketCancellation.create({
+          data: {
+            ticketId: ticket.id,
+            orderId: order.id,
+            userId,
+            mode: 'NO_REFUND_PENDING',
+            originalAmount,
+            returnedAmount: new Prisma.Decimal(0),
+            status: 'NO_REFUND',
+          },
+        });
+
+        await tx.ticket.update({
+          where: { id: ticket.id },
+          data: {
+            status: 'CANCELED',
+          },
+        });
+
+        await tx.ticketTransferRequest.updateMany({
+          where: {
+            ticketId: ticket.id,
+            status: {
+              in: ['PENDING_PAYMENT', 'PENDING_ACCEPTANCE'],
+            },
+          },
+          data: {
+            status: 'CANCELED',
+            respondedAt: new Date(),
+            responseReason: 'Ticket cancelado pelo cliente',
+          },
+        });
+
+        await tx.ticketType.update({
+          where: { id: ticket.orderItem.ticketTypeId },
+          data: {
+            quantity: {
+              increment: 1,
+            },
+          },
+        });
+
+        const updatedTotalAmount = new Prisma.Decimal(order.totalAmount).sub(
+          originalAmount,
+        );
+
+        const safeTotalAmount = updatedTotalAmount.lt(0)
+          ? new Prisma.Decimal(0)
+          : updatedTotalAmount;
+
+        const remainingTickets = await tx.ticket.count({
+          where: {
+            orderItem: {
+              orderId: order.id,
+            },
+            status: {
+              not: 'CANCELED',
+            },
+          },
+        });
+
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            totalAmount: safeTotalAmount,
+            status: remainingTickets === 0 ? 'CANCELED' : 'PENDING',
+            expiresAt: remainingTickets === 0 ? null : order.expiresAt,
+          },
+        });
+
+        const updatedOrder = await tx.order.findUnique({
+          where: { id: order.id },
+          include: this.orderInclude,
+        });
+
+        return {
+          message: 'Ingresso pendente cancelado sem crédito e sem estorno',
+          cancellation,
+          order: updatedOrder,
+        };
+      });
+    }
+
+    const config = this.getCancellationConfig(body?.mode);
+    const returnedAmount = originalAmount.mul(config.percent);
+
+    return this.prisma.$transaction(async (tx) => {
+      const cancellation = await tx.ticketCancellation.create({
+        data: {
+          ticketId: ticket.id,
+          orderId: order.id,
+          userId,
+          mode: config.mode,
+          originalAmount,
+          returnedAmount,
+          status: config.cancellationStatus,
+        },
+      });
+
+      await tx.ticket.update({
+        where: { id: ticket.id },
+        data: {
+          status: 'CANCELED',
+        },
+      });
+
+      await tx.ticketTransferRequest.updateMany({
+        where: {
+          ticketId: ticket.id,
+          status: {
+            in: ['PENDING_PAYMENT', 'PENDING_ACCEPTANCE'],
+          },
+        },
+        data: {
+          status: 'CANCELED',
+          respondedAt: new Date(),
+          responseReason: 'Ticket cancelado pelo cliente',
+        },
+      });
+
+      await tx.ticketType.update({
+        where: { id: ticket.orderItem.ticketTypeId },
+        data: {
+          quantity: {
+            increment: 1,
+          },
+        },
+      });
+
+      if (config.createWalletCredit) {
+        await tx.walletTransaction.create({
+          data: {
+            userId,
+            type: 'CREDIT',
+            source: 'TICKET_CANCELLATION',
+            sourceId: cancellation.id,
+            amount: returnedAmount,
+            description: `Crédito de 80% pelo cancelamento do ingresso ${ticket.code}`,
+          },
+        });
+      }
+
+      const remainingTickets = await tx.ticket.count({
+        where: {
+          orderItem: {
+            orderId: order.id,
+          },
+          status: {
+            not: 'CANCELED',
+          },
+        },
+      });
+
+      if (remainingTickets === 0) {
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'CANCELED',
+            expiresAt: null,
+          },
+        });
+      }
+
+      const updatedOrder = await tx.order.findUnique({
+        where: { id: order.id },
+        include: this.orderInclude,
+      });
+
+      return {
+        message:
+          config.mode === 'WALLET_80'
+            ? 'Ingresso pago cancelado com 80% de crédito na wallet'
+            : 'Ingresso pago cancelado com solicitação de estorno de 70%',
+        cancellation,
+        order: updatedOrder,
+      };
+    });
+  }
+
+  async cancelCustomerOrder(
+    orderId: string,
+    userId: string,
+    customerEmail: string,
+    body?: CancelOrderDto,
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: this.orderInclude,
+    });
+
+    if (!order) {
+      throw new NotFoundException('Pedido não encontrado');
+    }
+
+    if (order.customerEmail !== customerEmail && order.customerUserId !== userId) {
+      throw new ForbiddenException(
+        'Você não tem permissão para cancelar este pedido',
+      );
+    }
+
+    if (order.status === 'CANCELED') {
+      throw new BadRequestException('Pedido já está cancelado');
+    }
+
+    const usedTicket = order.items.some((item) =>
+      item.tickets.some((ticket) => ticket.status === 'USED'),
+    );
+
+    if (usedTicket) {
+      throw new BadRequestException(
+        'Não é possível cancelar um pedido com ingresso já utilizado',
+      );
+    }
+
+    const cancelablePairs = order.items.flatMap((item) =>
+      item.tickets
+        .filter((ticket) => ticket.status !== 'CANCELED')
+        .map((ticket) => ({
+          item,
+          ticket,
+        })),
+    );
+
+    if (!cancelablePairs.length) {
+      throw new BadRequestException(
+        'Todos os ingressos elegíveis deste pedido já foram cancelados',
+      );
+    }
+
+    if (order.status !== 'PAID') {
+      return this.prisma.$transaction(async (tx) => {
+        for (const pair of cancelablePairs) {
+          const originalAmount = new Prisma.Decimal(pair.item.unitPrice);
+
+          await tx.ticketCancellation.create({
+            data: {
+              ticketId: pair.ticket.id,
+              orderId: order.id,
+              userId,
+              mode: 'NO_REFUND_PENDING',
+              originalAmount,
+              returnedAmount: new Prisma.Decimal(0),
+              status: 'NO_REFUND',
+            },
+          });
+
+          await tx.ticket.update({
+            where: { id: pair.ticket.id },
+            data: {
+              status: 'CANCELED',
+            },
+          });
+
+          await tx.ticketTransferRequest.updateMany({
+            where: {
+              ticketId: pair.ticket.id,
+              status: {
+                in: ['PENDING_PAYMENT', 'PENDING_ACCEPTANCE'],
+              },
+            },
+            data: {
+              status: 'CANCELED',
+              respondedAt: new Date(),
+              responseReason: 'Pedido cancelado pelo cliente',
+            },
+          });
+
+          await tx.ticketType.update({
+            where: { id: pair.item.ticketTypeId },
+            data: {
+              quantity: {
+                increment: 1,
+              },
+            },
+          });
+        }
+
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            status: 'CANCELED',
+            totalAmount: new Prisma.Decimal(0),
+            expiresAt: null,
+          },
+        });
+
+        const updatedOrder = await tx.order.findUnique({
+          where: { id: order.id },
+          include: this.orderInclude,
+        });
+
+        return {
+          message: 'Pedido pendente cancelado sem crédito e sem estorno',
+          summary: {
+            canceledTickets: cancelablePairs.length,
+            originalAmount: order.totalAmount,
+            returnedAmount: new Prisma.Decimal(0),
+            mode: 'NO_REFUND_PENDING',
+          },
+          order: updatedOrder,
+        };
+      });
+    }
+
+    const config = this.getCancellationConfig(body?.mode);
+
+    return this.prisma.$transaction(async (tx) => {
+      let totalOriginalAmount = new Prisma.Decimal(0);
+      let totalReturnedAmount = new Prisma.Decimal(0);
+
+      for (const pair of cancelablePairs) {
+        const originalAmount = new Prisma.Decimal(pair.item.unitPrice);
+        const returnedAmount = originalAmount.mul(config.percent);
+
+        totalOriginalAmount = totalOriginalAmount.add(originalAmount);
+        totalReturnedAmount = totalReturnedAmount.add(returnedAmount);
+
+        await tx.ticketCancellation.create({
+          data: {
+            ticketId: pair.ticket.id,
+            orderId: order.id,
+            userId,
+            mode: config.mode,
+            originalAmount,
+            returnedAmount,
+            status: config.cancellationStatus,
+          },
+        });
+
+        await tx.ticket.update({
+          where: { id: pair.ticket.id },
+          data: {
+            status: 'CANCELED',
+          },
+        });
+
+        await tx.ticketTransferRequest.updateMany({
+          where: {
+            ticketId: pair.ticket.id,
+            status: {
+              in: ['PENDING_PAYMENT', 'PENDING_ACCEPTANCE'],
+            },
+          },
+          data: {
+            status: 'CANCELED',
+            respondedAt: new Date(),
+            responseReason: 'Pedido cancelado pelo cliente',
+          },
+        });
+
+        await tx.ticketType.update({
+          where: { id: pair.item.ticketTypeId },
+          data: {
+            quantity: {
+              increment: 1,
+            },
+          },
+        });
+      }
+
+      if (config.createWalletCredit && totalReturnedAmount.gt(0)) {
+        await tx.walletTransaction.create({
+          data: {
+            userId,
+            type: 'CREDIT',
+            source: 'ORDER_CANCELLATION',
+            sourceId: order.id,
+            amount: totalReturnedAmount,
+            description: `Crédito de 80% pelo cancelamento do pedido ${order.id}`,
+          },
+        });
+      }
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'CANCELED',
+          totalAmount: new Prisma.Decimal(0),
+          expiresAt: null,
+        },
+      });
+
+      const updatedOrder = await tx.order.findUnique({
+        where: { id: order.id },
+        include: this.orderInclude,
+      });
+
+      return {
+        message:
+          config.mode === 'WALLET_80'
+            ? 'Pedido pago cancelado com 80% de crédito na wallet'
+            : 'Pedido pago cancelado com solicitação de estorno de 70%',
+        summary: {
+          canceledTickets: cancelablePairs.length,
+          originalAmount: totalOriginalAmount,
+          returnedAmount: totalReturnedAmount,
+          mode: config.mode,
+        },
+        order: updatedOrder,
+      };
+    });
+  }
+
+  async cancel(id: string, body?: CancelOrderDto) {
+    await this.expireOrderNow(id);
+
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: this.orderInclude,
+    });
+
+    if (!order) {
+      throw new NotFoundException('Pedido não encontrado');
+    }
+
+    const actingUserId = await this.resolveOrderOwnerUserId({
+      customerUserId: order.customerUserId,
+      customerEmail: order.customerEmail,
+      customerCpf: order.customerCpf,
+    });
+
+    return this.cancelCustomerOrder(
+      order.id,
+      actingUserId,
+      order.customerEmail,
+      body,
+    );
+  }
+}

@@ -4,7 +4,9 @@ import {
   IsArray,
   IsBoolean,
   IsEmail,
+  IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Length,
@@ -45,6 +47,72 @@ class CreateOrderItemDto {
   holders?: CreateOrderTicketHolderDto[];
 }
 
+export class CreateOrderPlaceSubTicketDto {
+  @IsString()
+  ticketTypeId: string;
+
+  @IsString()
+  @IsIn(['INTEIRA', 'MEIA', 'SOCIAL'])
+  kind: string;
+
+  @IsString()
+  label: string;
+
+  @IsInt()
+  @Min(1)
+  quantity: number;
+
+  @IsNumber()
+  @Min(0)
+  unitAmount: number;
+}
+
+export class CreateOrderPlaceSelectionDto {
+  @IsString()
+  id: string;
+
+  @IsString()
+  ticketTypeId: string;
+
+  @IsString()
+  sessionId: string;
+
+  @IsString()
+  sectorId: string;
+
+  @IsString()
+  objectId: string;
+
+  @IsString()
+  @IsIn(['SEAT', 'TABLE_CHAIR', 'TABLE_FULL'])
+  kind: string;
+
+  @IsString()
+  label: string;
+
+  @IsInt()
+  @Min(1)
+  quantity: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  amount?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  chairCount?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => CreateOrderPlaceSubTicketDto)
+  subTickets?: CreateOrderPlaceSubTicketDto[];
+}
+
 export class CreateOrderDto {
   @IsString()
   eventId: string;
@@ -66,6 +134,13 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items: CreateOrderItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(300)
+  @ValidateNested({ each: true })
+  @Type(() => CreateOrderPlaceSelectionDto)
+  placeSelections?: CreateOrderPlaceSelectionDto[];
 
   @IsOptional()
   @IsBoolean()
