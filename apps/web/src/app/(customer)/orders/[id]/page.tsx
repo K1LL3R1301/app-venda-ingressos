@@ -1,12 +1,6 @@
 ﻿"use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -63,6 +57,21 @@ type TicketTransferRequest = {
   toUser?: TicketTransferUser | null;
 };
 
+type TicketAccessMetadata = {
+  placeId?: string;
+  physicalKey?: string;
+  placeKind?: string;
+  label?: string;
+  chairCount?: number;
+  chairIndex?: number;
+  chairLabel?: string;
+  ticketKind?: string;
+  ticketKindLabel?: string;
+  ticketTypeId?: string;
+  unitAmount?: number | string;
+  commercialQuantity?: number;
+};
+
 type TicketItem = {
   id: string;
   code?: string;
@@ -74,6 +83,12 @@ type TicketItem = {
   receivedViaTransferRequestId?: string | null;
   receivedViaTransferLocked?: boolean | null;
   createdAt?: string;
+  eventSessionId?: string | null;
+  venueSectorId?: string | null;
+  seatMapObjectId?: string | null;
+  accessKind?: string | null;
+  accessLabel?: string | null;
+  accessMetadata?: TicketAccessMetadata | string | null;
   transferRequests?: TicketTransferRequest[];
 };
 
@@ -96,6 +111,7 @@ type PaymentItem = {
   amount?: string | number;
   status?: string;
   createdAt?: string;
+  paidAt?: string;
 };
 
 type CancellationItem = {
@@ -114,6 +130,7 @@ type OrderDetail = {
   customerUserId?: string | null;
   customerName?: string;
   customerEmail?: string;
+  customerCpf?: string;
   totalAmount?: string | number;
   status?: string;
   createdAt?: string;
@@ -171,16 +188,7 @@ type TransferDetail = {
       media?: EventMedia | null;
     };
   };
-  ticket?: {
-    id: string;
-    code?: string;
-    status?: string;
-    holderName?: string | null;
-    holderEmail?: string | null;
-    holderCpf?: string | null;
-    currentOwnerUserId?: string | null;
-    receivedViaTransferRequestId?: string | null;
-    receivedViaTransferLocked?: boolean | null;
+  ticket?: TicketItem & {
     orderItem?: {
       id?: string;
       ticketType?: {
@@ -189,11 +197,6 @@ type TransferDetail = {
       };
     };
   };
-};
-
-type SupportThreadResponse = {
-  id: string;
-  message?: string;
 };
 
 type TicketQrTokenResponse = {
@@ -205,7 +208,33 @@ type TicketQrTokenResponse = {
   message?: string;
 };
 
-function toNumber(value?: string | number) {
+type TicketViewGroup = {
+  id: string;
+  kind: "TABLE_FULL" | "TABLE_CHAIR" | "NORMAL";
+  title: string;
+  subtitle: string;
+  status?: string;
+  commercialQuantity: number;
+  qrCount: number;
+  totalAmount: number;
+  chairCount?: number;
+  tickets: Array<{
+    ticket: TicketItem;
+    item: OrderItemEntry | null;
+    metadata: TicketAccessMetadata;
+    title: string;
+    subtitle: string;
+    amount: number;
+  }>;
+};
+
+const API_BASE_URL = "http://localhost:3001/v1";
+
+function onlyDigits(value?: string | null) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function toNumber(value?: string | number | null) {
   if (value === undefined || value === null) return 0;
 
   const numeric =
@@ -214,7 +243,7 @@ function toNumber(value?: string | number) {
   return Number.isNaN(numeric) ? 0 : numeric;
 }
 
-function formatMoney(value?: string | number) {
+function formatMoney(value?: string | number | null) {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
@@ -237,25 +266,17 @@ function formatDate(value?: string | null) {
   });
 }
 
-function onlyDigits(value?: string | null) {
-  return String(value || "").replace(/\D/g, "");
-}
-
 function formatCpf(value?: string | null) {
   const digits = onlyDigits(value);
 
   if (!digits) return "-";
   if (digits.length <= 3) return digits;
   if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
-
   if (digits.length <= 9) {
     return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
   }
 
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(
-    6,
-    9,
-  )}-${digits.slice(9, 11)}`;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
 }
 
 function formatCountdown(ms?: number | null) {
@@ -266,17 +287,7 @@ function formatCountdown(ms?: number | null) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
 
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(
-    2,
-    "0",
-  )}`;
-}
-
-function getCountdownNumberClass(ms?: number | null) {
-  if (ms === null || ms === undefined) return "text-slate-700";
-  if (ms <= 5 * 60 * 1000) return "text-rose-600";
-
-  return "text-emerald-600";
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function getStatusLabel(status?: string) {
@@ -306,45 +317,24 @@ function getStatusLabel(status?: string) {
 function getStatusClasses(status?: string) {
   const normalized = String(status || "").toUpperCase();
 
-  if (
-    normalized === "PAID" ||
-    normalized === "AVAILABLE" ||
-    normalized === "ACTIVE" ||
-    normalized === "ACCEPTED"
-  ) {
+  if (["PAID", "AVAILABLE", "ACTIVE", "ACCEPTED"].includes(normalized)) {
     return "border-emerald-200 bg-emerald-50 text-emerald-700";
   }
 
-  if (
-    normalized === "PENDING" ||
-    normalized === "PENDING_ACCEPTANCE" ||
-    normalized === "TRANSFER_PENDING"
-  ) {
+  if (["PENDING", "PENDING_ACCEPTANCE", "TRANSFER_PENDING", "PENDING_PAYMENT"].includes(normalized)) {
     return "border-amber-200 bg-amber-50 text-amber-700";
   }
 
-  if (normalized === "PENDING_PAYMENT") {
-    return "border-sky-200 bg-sky-50 text-sky-700";
-  }
-
-  if (normalized === "RETURNED" || normalized === "TRANSFERRED") {
+  if (["RETURNED", "TRANSFERRED"].includes(normalized)) {
     return "border-violet-200 bg-violet-50 text-violet-700";
   }
 
-  if (normalized === "UNAVAILABLE" || normalized === "USED") {
+  if (["UNAVAILABLE", "USED"].includes(normalized)) {
     return "border-slate-200 bg-slate-100 text-slate-700";
   }
 
-  if (normalized === "CANCELED" || normalized === "REJECTED") {
+  if (["CANCELED", "REJECTED"].includes(normalized)) {
     return "border-rose-200 bg-rose-50 text-rose-700";
-  }
-
-  if (normalized === "CREDITED") {
-    return "border-violet-200 bg-violet-50 text-violet-700";
-  }
-
-  if (normalized === "REFUND_REQUESTED") {
-    return "border-orange-200 bg-orange-50 text-orange-700";
   }
 
   return "border-gray-200 bg-gray-50 text-gray-700";
@@ -354,44 +344,318 @@ function cardClass() {
   return "rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm";
 }
 
-function normalizeCancelMode(mode: "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80") {
-  if (mode === "PENDING_SIMPLE") {
-    return {
-      title: "Cancelar pedido pendente",
-      confirm: "Deseja cancelar este pedido pendente?",
-      description: "O pedido será cancelado sem estorno, pois ainda não foi pago.",
-    };
-  }
-
-  if (mode === "REFUND_70") {
-    return {
-      title: "Solicitar reembolso",
-      confirm: "Deseja solicitar reembolso de 70%?",
-      description: "O pedido será marcado com solicitação de reembolso.",
-    };
-  }
-
-  return {
-    title: "Receber crédito na wallet",
-    confirm: "Deseja receber 80% em crédito na wallet?",
-    description: "O valor aprovado será convertido em crédito na wallet.",
-  };
+function smallLabelClass() {
+  return "text-[11px] font-black uppercase tracking-[0.18em] text-slate-400";
 }
 
-function SmallInfoCard({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-}) {
+function getEventImageFromMedia(media?: EventMedia | null) {
+  return (
+    media?.bannerImageUrl ||
+    media?.coverImageUrl ||
+    media?.mobileBannerUrl ||
+    media?.thumbnailUrl ||
+    media?.gallery?.[0] ||
+    ""
+  );
+}
+
+function parseAccessMetadata(ticket?: TicketItem | null): TicketAccessMetadata {
+  const raw = ticket?.accessMetadata;
+
+  if (!raw) return {};
+
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as TicketAccessMetadata;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  if (typeof raw === "object") {
+    return raw as TicketAccessMetadata;
+  }
+
+  return {};
+}
+
+function getTicketKindLabel(ticket: TicketItem) {
+  const metadata = parseAccessMetadata(ticket);
+
+  return (
+    metadata.ticketKindLabel ||
+    metadata.ticketKind ||
+    ticket.accessLabel?.split(" - ").pop() ||
+    "Ingresso"
+  );
+}
+
+function getTicketAmount(ticket: TicketItem, item?: OrderItemEntry | null) {
+  const metadata = parseAccessMetadata(ticket);
+  const metadataAmount = toNumber(metadata.unitAmount);
+
+  if (metadataAmount > 0) return metadataAmount;
+
+  return toNumber(item?.unitPrice || item?.ticketType?.price);
+}
+
+function getPhysicalGroupKey(ticket: TicketItem, fallback: string) {
+  const metadata = parseAccessMetadata(ticket);
+  const rawAccessLabel = String(ticket.accessLabel || "").trim();
+  const accessLabelWithoutChair = rawAccessLabel
+    .replace(/\s*-\s*C\d+\s*-\s*.*$/i, "")
+    .replace(/\s*-\s*QR\s*\d+\s*-\s*.*$/i, "")
+    .trim();
+
+  return (
+    metadata.physicalKey ||
+    metadata.placeId ||
+    [
+      ticket.eventSessionId,
+      ticket.venueSectorId,
+      ticket.seatMapObjectId,
+      metadata.label || accessLabelWithoutChair,
+    ]
+      .filter(Boolean)
+      .join(":") ||
+    accessLabelWithoutChair ||
+    fallback
+  );
+}
+
+function getAccessLabel(ticket: TicketItem, item?: OrderItemEntry | null) {
+  const metadata = parseAccessMetadata(ticket);
+
+  return (
+    metadata.label ||
+    ticket.accessLabel?.split(" - ")[0] ||
+    item?.ticketType?.name ||
+    "Ingresso"
+  );
+}
+
+
+
+
+function extractOrderSectorLabelFromTicketName(value?: string | null) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const candidates = raw
+    .split(/[•|]/g)
+    .flatMap((part) => {
+      const trimmed = part.trim();
+      const hyphenParts = trimmed
+        .split(/\s+-\s+/g)
+        .map((piece) => piece.trim())
+        .filter(Boolean);
+      return [trimmed, ...hyphenParts];
+    })
+    .filter(Boolean);
+
+  const sectorPart =
+    candidates.find((part) => {
+      const normalized = normalizeOrderTicketText(part);
+      return (
+        normalized.includes("mesa") ||
+        normalized.includes("camarote") ||
+        normalized.includes("pista") ||
+        normalized.includes("plateia") ||
+        normalized.includes("arena") ||
+        normalized.includes("setor")
+      );
+    }) || "";
+
+  if (sectorPart) return sectorPart;
+
+  return raw
+    .replace(/^\s*(inteira|meia|social)\s*-\s*[^•|]+[•|]?\s*/i, "")
+    .replace(/[•|]?\s*(inteira|meia|social)\s*-\s*[^•|]+\s*$/i, "")
+    .trim();
+}
+
+function buildTableGroupTitle(tableLabel?: string | null, ticketName?: string | null) {
+  const cleanTable = String(tableLabel || "Mesa").trim() || "Mesa";
+  const sectorLabel = extractOrderSectorLabelFromTicketName(ticketName);
+
+  if (!sectorLabel) return cleanTable;
+  if (normalizeOrderTicketText(cleanTable).includes(normalizeOrderTicketText(sectorLabel))) {
+    return cleanTable;
+  }
+
+  return `${sectorLabel} - ${cleanTable}`;
+}
+
+function normalizeOrderTicketText(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isLikelyTableTicketName(value?: string | null) {
+  const normalized = normalizeOrderTicketText(value || "");
+  return normalized.includes("mesa") || normalized.includes("table");
+}
+
+function summarizeTicketBreakdown(group: TicketViewGroup) {
+  const byKind = new Map<string, { label: string; quantity: number; amount: number }>();
+
+  for (const entry of group.tickets) {
+    const key = normalizeOrderTicketText(entry.metadata.ticketKind || entry.metadata.ticketKindLabel || getTicketKindLabel(entry.ticket));
+    const label = entry.metadata.ticketKindLabel || entry.metadata.ticketKind || getTicketKindLabel(entry.ticket);
+    const current = byKind.get(key) || { label, quantity: 0, amount: 0 };
+    current.quantity += 1;
+    current.amount += entry.amount;
+    byKind.set(key, current);
+  }
+
+  return Array.from(byKind.values())
+    .map((item) => `${item.quantity} ${item.label.toLowerCase()} (${formatMoney(item.amount)})`)
+    .join(" • ");
+}
+
+function buildTicketViewGroups(orderItems: OrderItemEntry[]) {
+  const grouped = new Map<string, TicketViewGroup>();
+  const normalGroups: TicketViewGroup[] = [];
+
+  for (const item of orderItems) {
+    const tickets = item.tickets || [];
+    const hasAccessMetadata = tickets.some((ticket) => String(ticket.accessKind || "").trim() || ticket.accessMetadata || ticket.accessLabel);
+    const itemName = item.ticketType?.name || "Ingresso";
+    const shouldFallbackGroupAsTable =
+      tickets.length > 1 &&
+      Number(item.quantity || 0) === 1 &&
+      !hasAccessMetadata &&
+      isLikelyTableTicketName(itemName);
+
+    if (shouldFallbackGroupAsTable) {
+      const groupKey = `TABLE_FULL_FALLBACK:${item.id}`;
+      const totalPrice = toNumber(item.totalPrice || item.unitPrice || item.ticketType?.price);
+      const unitFallbackAmount = tickets.length > 0 ? totalPrice / tickets.length : totalPrice;
+
+      grouped.set(groupKey, {
+        id: groupKey,
+        kind: "TABLE_FULL",
+        title: buildTableGroupTitle("Mesa", itemName),
+        subtitle:
+          "Mesa completa agrupada. Atualize a API para mostrar cadeira, tipo e valor individual corretos.",
+        status: tickets[0]?.status,
+        commercialQuantity: 1,
+        qrCount: tickets.length,
+        totalAmount: totalPrice,
+        chairCount: tickets.length,
+        tickets: tickets.map((ticket, index) => ({
+          ticket,
+          item,
+          metadata: {
+            chairIndex: index + 1,
+            chairLabel: `C${index + 1}`,
+            ticketKind: "INGRESSO",
+            ticketKindLabel: "Ingresso",
+            unitAmount: unitFallbackAmount,
+            commercialQuantity: index === 0 ? 1 : 0,
+          },
+          title: `C${index + 1} - Ingresso`,
+          subtitle: itemName,
+          amount: unitFallbackAmount,
+        })),
+      });
+
+      continue;
+    }
+
+    for (const ticket of tickets) {
+      const accessKind = String(ticket.accessKind || "").toUpperCase();
+      const metadata = parseAccessMetadata(ticket);
+      const isTableFull = accessKind === "TABLE_FULL_ACCESS";
+      const isTableChair = accessKind === "TABLE_CHAIR_ACCESS";
+      const baseLabel = getAccessLabel(ticket, item);
+      const chairLabel = metadata.chairLabel || `QR ${metadata.chairIndex || ""}`.trim();
+      const ticketKindLabel = getTicketKindLabel(ticket);
+      const amount = getTicketAmount(ticket, item);
+
+      if (isTableFull || isTableChair) {
+        const groupKind: TicketViewGroup["kind"] = isTableFull ? "TABLE_FULL" : "TABLE_CHAIR";
+        const groupKey = `${groupKind}:${getPhysicalGroupKey(ticket, ticket.id)}`;
+        const current = grouped.get(groupKey);
+
+        if (!current) {
+          grouped.set(groupKey, {
+            id: groupKey,
+            kind: groupKind,
+            title: buildTableGroupTitle(metadata.label || baseLabel, itemName),
+            subtitle: isTableFull
+              ? "Mesa completa agrupada: 1 ingresso principal no limite, com QR Codes internos por cadeira."
+              : "Cadeiras avulsas selecionadas nesta mesa.",
+            status: ticket.status,
+            commercialQuantity: isTableFull ? 1 : 0,
+            qrCount: 0,
+            totalAmount: 0,
+            chairCount: Number(metadata.chairCount || 0) || undefined,
+            tickets: [],
+          });
+        }
+
+        const group = grouped.get(groupKey)!;
+        group.qrCount += 1;
+        group.totalAmount += amount;
+
+        if (!isTableFull) {
+          group.commercialQuantity += 1;
+        }
+
+        group.tickets.push({
+          ticket,
+          item,
+          metadata,
+          title: `${chairLabel || "Cadeira"} - ${ticketKindLabel}`,
+          subtitle: ticket.accessLabel || `${baseLabel} - ${chairLabel}`,
+          amount,
+        });
+
+        continue;
+      }
+
+      normalGroups.push({
+        id: `NORMAL:${ticket.id}`,
+        kind: "NORMAL",
+        title: item.ticketType?.name || "Ingresso",
+        subtitle: ticket.holderName || "Titular a confirmar",
+        status: ticket.status,
+        commercialQuantity: 1,
+        qrCount: 1,
+        totalAmount: amount,
+        tickets: [
+          {
+            ticket,
+            item,
+            metadata,
+            title: item.ticketType?.name || "Ingresso",
+            subtitle: ticket.holderName || "Titular a confirmar",
+            amount,
+          },
+        ],
+      });
+    }
+  }
+
+  return [...Array.from(grouped.values()), ...normalGroups].sort((a, b) => {
+    if (a.kind === b.kind) return a.title.localeCompare(b.title, "pt-BR");
+    if (a.kind === "TABLE_FULL") return -1;
+    if (b.kind === "TABLE_FULL") return 1;
+    if (a.kind === "TABLE_CHAIR") return -1;
+    if (b.kind === "TABLE_CHAIR") return 1;
+    return 0;
+  });
+}
+
+function SmallInfoCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <div className="rounded-[20px] border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-        {label}
-      </p>
+      <p className={smallLabelClass()}>{label}</p>
       <p className="mt-2 text-xl font-black text-slate-950">{value}</p>
       {detail ? <p className="mt-1 text-xs text-slate-500">{detail}</p> : null}
     </div>
@@ -401,50 +665,33 @@ function SmallInfoCard({
 export default function CustomerOrderDetailPage() {
   const params = useParams<{ id: string }>();
   const rawRouteId = typeof params?.id === "string" ? params.id : "";
+  const isTransferPage = rawRouteId.startsWith("transfer_");
+  const entityId = isTransferPage ? rawRouteId.replace("transfer_", "") : rawRouteId;
 
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [transfer, setTransfer] = useState<TransferDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [paying, setPaying] = useState(false);
+  const [cancelingRefund, setCancelingRefund] = useState(false);
+  const [cancelingTicketRefundId, setCancelingTicketRefundId] = useState<string | null>(null);
+  const [timeLeftMs, setTimeLeftMs] = useState<number | null>(null);
+  const orderExpiredRefreshRef = useRef(false);
 
   const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null);
   const [selectedTicketQrToken, setSelectedTicketQrToken] = useState("");
   const [selectedTicketQrLoading, setSelectedTicketQrLoading] = useState(false);
   const [selectedTicketQrError, setSelectedTicketQrError] = useState("");
-
-  const [producerTicketOpen, setProducerTicketOpen] = useState(false);
-  const [ticketSubject, setTicketSubject] = useState("");
-  const [ticketMessage, setTicketMessage] = useState("");
-  const [creatingSupportThread, setCreatingSupportThread] = useState(false);
-
-  const [paying, setPaying] = useState(false);
-  const [cancelingOrderMode, setCancelingOrderMode] = useState<
-    "" | "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80"
-  >("");
-  const [cancelingTicketMode, setCancelingTicketMode] = useState<
-    "" | "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80"
-  >("");
+  const [printMode, setPrintMode] = useState<"tickets" | "qr">("tickets");
+  const [printTokensByTicketId, setPrintTokensByTicketId] = useState<Record<string, string>>({});
+  const [preparingPrint, setPreparingPrint] = useState(false);
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferSourceTicket, setTransferSourceTicket] = useState<TicketItem | null>(null);
   const [transferTargetCpf, setTransferTargetCpf] = useState("");
   const [transferSubmitting, setTransferSubmitting] = useState(false);
-  const [transferSourceTicket, setTransferSourceTicket] =
-    useState<TicketItem | null>(null);
-  const [returningTicket, setReturningTicket] = useState(false);
 
-  const [transferActionLoading, setTransferActionLoading] = useState<
-    "" | "ACCEPT" | "REJECT" | "CANCEL"
-  >("");
-
-  const [timeLeftMs, setTimeLeftMs] = useState<number | null>(null);
-  const orderExpiredRefreshRef = useRef(false);
-
-  const isTransferPage = rawRouteId.startsWith("transfer_");
-  const entityId = isTransferPage
-    ? rawRouteId.replace("transfer_", "")
-    : rawRouteId;
   const currentUserId = currentUser?.id || null;
-
   const orderItems = order?.items || [];
   const payments = order?.payments || [];
   const cancellations = order?.cancellations || [];
@@ -452,24 +699,24 @@ export default function CustomerOrderDetailPage() {
   const isPendingOrder =
     !isTransferPage &&
     (order?.status === "PENDING" || order?.status === "PENDING_PAYMENT");
-
   const isPaidOrder = !isTransferPage && order?.status === "PAID";
-
-  const isPendingCountdownExpired =
-    isPendingOrder && timeLeftMs !== null && timeLeftMs <= 0;
-
   const showReleasedTickets = isTransferPage || isPaidOrder;
 
-  function goTo(path: string) {
-    window.location.href = path;
-  }
+  const ticketGroups = useMemo(() => buildTicketViewGroups(orderItems), [orderItems]);
 
-  function closeSelectedTicket() {
-    setSelectedTicket(null);
-    setSelectedTicketQrToken("");
-    setSelectedTicketQrError("");
-    setSelectedTicketQrLoading(false);
-  }
+  const flattenedTickets = useMemo(() => {
+    if (isTransferPage && transfer?.ticket) return [transfer.ticket];
+    return orderItems.flatMap((item) => item.tickets || []);
+  }, [isTransferPage, orderItems, transfer]);
+
+  const totalAccessQrCodes = flattenedTickets.length;
+  const totalCommercialTickets = ticketGroups.reduce(
+    (sum, group) => sum + group.commercialQuantity,
+    0,
+  );
+  const totalPaid = payments.reduce((sum, payment) => sum + toNumber(payment.amount), 0);
+  const totalAmount = isTransferPage ? 0 : toNumber(order?.totalAmount);
+  const remainingAmount = Math.max(0, totalAmount - totalPaid);
 
   async function loadData() {
     const token = localStorage.getItem("token");
@@ -498,8 +745,8 @@ export default function CustomerOrderDetailPage() {
 
     try {
       const url = isTransferPage
-        ? `http://localhost:3001/v1/tickets/customer/transfers/${entityId}`
-        : `http://localhost:3001/v1/orders/customer/${entityId}`;
+        ? `${API_BASE_URL}/tickets/customer/transfers/${entityId}`
+        : `${API_BASE_URL}/orders/customer/${entityId}`;
 
       const res = await fetch(url, {
         method: "GET",
@@ -512,11 +759,7 @@ export default function CustomerOrderDetailPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao carregar detalhes",
-        );
+        alert(typeof data?.message === "string" ? data.message : "Erro ao carregar detalhes");
         window.location.href = "/orders";
         return;
       }
@@ -573,61 +816,17 @@ export default function CustomerOrderDetailPage() {
 
     updateCountdown();
 
-    const interval = window.setInterval(() => {
-      updateCountdown();
-    }, 1000);
+    const interval = window.setInterval(updateCountdown, 1000);
 
     return () => window.clearInterval(interval);
   }, [isTransferPage, isPendingOrder, order?.expiresAt]);
 
-  function isTicketCanceled(ticket?: TicketItem | null) {
-    return ticket?.status === "CANCELED";
-  }
-
-  function isTicketTransferredAway(ticket?: TicketItem | null) {
-    if (!ticket || !currentUserId) return false;
-
-    return !!ticket.currentOwnerUserId && ticket.currentOwnerUserId !== currentUserId;
-  }
-
-  function isTicketTransferPending(ticket?: TicketItem | null) {
-    if (!ticket) return false;
-
-    return ticket.status === "TRANSFER_PENDING";
-  }
-
-  function isReturnOnlyTicket(ticket?: TicketItem | null) {
-    return ticket?.receivedViaTransferLocked === true;
-  }
-
-  function isReturnedTransferRecord() {
-    return isTransferPage && String(transfer?.status || "").toUpperCase() === "RETURNED";
-  }
-
-  function canTransferTicket(ticket?: TicketItem | null) {
-    if (!ticket || !currentUserId) return false;
-
-    return ticket.currentOwnerUserId === currentUserId && ticket.status === "AVAILABLE";
-  }
-
-  function getTicketVisualStatus(ticket?: TicketItem | null) {
-    if (!ticket) return "SEM STATUS";
-    if (isTicketTransferredAway(ticket)) return "TRANSFERRED";
-
-    return ticket.status || "SEM STATUS";
-  }
-
-  function getDisplayedTicketStatus(ticket?: TicketItem | null) {
-    if (isReturnedTransferRecord()) return "UNAVAILABLE";
-
-    return getTicketVisualStatus(ticket);
+  function goTo(path: string) {
+    window.location.href = path;
   }
 
   function getEventName() {
-    if (isTransferPage) {
-      return transfer?.order?.event?.name || "Transferência recebida";
-    }
-
+    if (isTransferPage) return transfer?.order?.event?.name || "Transferência recebida";
     return order?.event?.name || "Evento sem nome";
   }
 
@@ -635,138 +834,56 @@ export default function CustomerOrderDetailPage() {
     if (isTransferPage) {
       return (
         transfer?.order?.event?.description ||
-        "Este ingresso foi recebido por transferência e agora pertence à sua conta."
+        "Este ingresso foi recebido por transferência e pertence à sua conta."
       );
     }
 
     return (
       order?.event?.description ||
-      "Acompanhe aqui seus ingressos, pagamentos, transferências e cancelamentos."
+      "Acompanhe aqui seus ingressos, pagamentos, transferências e QR Codes."
     );
   }
 
   function getEventDate() {
-    if (isTransferPage) {
-      return transfer?.order?.event?.startDate || transfer?.order?.event?.eventDate;
-    }
-
+    if (isTransferPage) return transfer?.order?.event?.startDate || transfer?.order?.event?.eventDate;
     return order?.event?.startDate || order?.event?.eventDate;
   }
 
-  function getEventImageFromMedia(media?: EventMedia | null) {
-    return (
-      media?.bannerImageUrl ||
-      media?.coverImageUrl ||
-      media?.mobileBannerUrl ||
-      media?.thumbnailUrl ||
-      media?.gallery?.[0] ||
-      ""
-    );
-  }
-
   function getCurrentEventImage() {
-    if (isTransferPage) {
-      return getEventImageFromMedia(transfer?.order?.event?.media);
-    }
-
+    if (isTransferPage) return getEventImageFromMedia(transfer?.order?.event?.media);
     return getEventImageFromMedia(order?.event?.media);
   }
 
   function getBackPath() {
     if (isTransferPage) return "/orders";
     if (order?.event?.id) return `/events/${order.event.id}`;
-
     return "/orders";
   }
 
-  function buildTransferTicket(): TicketItem | null {
-    if (!transfer?.ticket) return null;
-
-    return {
-      id: transfer.ticket.id,
-      code: transfer.ticket.code,
-      status: transfer.ticket.status,
-      holderName: transfer.ticket.holderName,
-      holderEmail: transfer.ticket.holderEmail,
-      holderCpf: transfer.ticket.holderCpf,
-      currentOwnerUserId: transfer.ticket.currentOwnerUserId,
-      receivedViaTransferRequestId: transfer.ticket.receivedViaTransferRequestId,
-      receivedViaTransferLocked: transfer.ticket.receivedViaTransferLocked,
-      transferRequests: [
-        {
-          id: transfer.id,
-          ticketId: transfer.ticketId,
-          orderId: transfer.orderId,
-          requestedByUserId: transfer.requestedByUserId,
-          fromUserId: transfer.fromUserId,
-          toUserId: transfer.toUserId,
-          mode: transfer.mode,
-          returnOfTransferRequestId: transfer.returnOfTransferRequestId,
-          status: transfer.status,
-          responseReason: transfer.responseReason,
-          requestedAt: transfer.requestedAt,
-          respondedAt: transfer.respondedAt,
-          expiresAt: transfer.expiresAt,
-          requestedByName: transfer.requestedByName,
-          requestedByEmail: transfer.requestedByEmail,
-          requestedByCpf: transfer.requestedByCpf,
-          fromName: transfer.fromName,
-          fromEmail: transfer.fromEmail,
-          fromCpf: transfer.fromCpf,
-          toName: transfer.toName,
-          toEmail: transfer.toEmail,
-          toCpf: transfer.toCpf,
-          requestedByUser: transfer.requestedByUser,
-          fromUser: transfer.fromUser,
-          toUser: transfer.toUser,
-        },
-      ],
-    };
+  function closeSelectedTicket() {
+    setSelectedTicket(null);
+    setSelectedTicketQrToken("");
+    setSelectedTicketQrError("");
+    setSelectedTicketQrLoading(false);
   }
 
-  const flattenedTickets = useMemo(() => {
-    if (isTransferPage) {
-      const ticket = buildTransferTicket();
+  function isTicketCanceled(ticket?: TicketItem | null) {
+    return ticket?.status === "CANCELED";
+  }
 
-      return ticket ? [ticket] : [];
-    }
+  function isTicketTransferPending(ticket?: TicketItem | null) {
+    return ticket?.status === "TRANSFER_PENDING";
+  }
 
-    return orderItems.flatMap((item) => item.tickets || []);
-  }, [isTransferPage, orderItems, transfer]);
+  function isTicketTransferredAway(ticket?: TicketItem | null) {
+    if (!ticket || !currentUserId) return false;
+    return !!ticket.currentOwnerUserId && ticket.currentOwnerUserId !== currentUserId;
+  }
 
-  const totalTickets = useMemo(() => {
-    if (isTransferPage) return flattenedTickets.length;
-
-    return orderItems.reduce((sum, item) => {
-      const quantity =
-        typeof item.quantity === "number"
-          ? item.quantity
-          : (item.tickets || []).length;
-
-      return sum + quantity;
-    }, 0);
-  }, [isTransferPage, flattenedTickets, orderItems]);
-
-  const totalPaid =
-    payments.reduce((sum, payment) => sum + toNumber(payment.amount), 0) || 0;
-
-  const totalAmount = isTransferPage ? 0 : toNumber(order?.totalAmount);
-  const remainingAmount = Math.max(0, totalAmount - totalPaid);
-
-  const canAcceptTransfer =
-    isTransferPage &&
-    transfer?.status === "PENDING_ACCEPTANCE" &&
-    (!!currentUserId ? transfer?.toUserId === currentUserId : true);
-
-  const canRejectTransfer = canAcceptTransfer;
-
-  const canCancelTransfer =
-    isTransferPage &&
-    transfer?.status === "PENDING_ACCEPTANCE" &&
-    (!!currentUserId
-      ? transfer?.requestedByUserId === currentUserId ||
-        transfer?.fromUserId === currentUserId
-      : true);
+  function canTransferTicket(ticket?: TicketItem | null) {
+    if (!ticket || !currentUserId) return false;
+    return ticket.currentOwnerUserId === currentUserId && ticket.status === "AVAILABLE";
+  }
 
   async function loadTicketQrToken(ticket: TicketItem) {
     const token = localStorage.getItem("token");
@@ -782,16 +899,13 @@ export default function CustomerOrderDetailPage() {
     }
 
     try {
-      const res = await fetch(
-        `http://localhost:3001/v1/tickets/customer/${ticket.id}/qr-token`,
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+      const res = await fetch(`${API_BASE_URL}/tickets/customer/${ticket.id}/qr-token`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      );
+      });
 
       const data: TicketQrTokenResponse = await res.json();
 
@@ -813,33 +927,9 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-  function handlePrintDigitalTicket() {
-    window.print();
-  }
-
-  async function copyTicketCode(code?: string) {
-    if (!code) {
-      alert("Código não encontrado");
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(code);
-      alert("Código copiado com sucesso");
-    } catch (error) {
-      console.error(error);
-      alert("Não foi possível copiar o código");
-    }
-  }
-
   async function handleOpenTicket(ticket: TicketItem) {
     if (!showReleasedTickets) {
-      alert("Os ingressos serão liberados depois da confirmação do pagamento.");
-      return;
-    }
-
-    if (isReturnedTransferRecord()) {
-      alert("Este ingresso foi devolvido e está indisponível nesta conta.");
+      alert("Os QR Codes serão liberados depois da confirmação do pagamento.");
       return;
     }
 
@@ -849,16 +939,12 @@ export default function CustomerOrderDetailPage() {
     }
 
     if (isTicketTransferPending(ticket)) {
-      alert(
-        "Este ingresso está aguardando aceite da transferência e não pode ser visualizado agora.",
-      );
+      alert("Este ingresso está aguardando aceite da transferência.");
       return;
     }
 
     if (isTicketTransferredAway(ticket)) {
-      alert(
-        "Este ingresso já foi transferido para outra conta e não está mais disponível para você.",
-      );
+      alert("Este ingresso já foi transferido para outra conta.");
       return;
     }
 
@@ -866,9 +952,105 @@ export default function CustomerOrderDetailPage() {
     await loadTicketQrToken(ticket);
   }
 
+  async function handleFinalizePayment() {
+    const token = localStorage.getItem("token");
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    if (!order?.id) {
+      alert("Pedido inválido");
+      return;
+    }
+
+    setPaying(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/payments/customer/${order.id}/finalize`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ method: "PIX" }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(typeof data?.message === "string" ? data.message : "Erro ao finalizar pagamento");
+        return;
+      }
+
+      alert("Pagamento confirmado. QR Codes liberados.");
+      await loadData();
+    } catch (error) {
+      console.error("FINALIZE PAYMENT ERROR:", error);
+      alert("Erro ao conectar com a API");
+    } finally {
+      setPaying(false);
+    }
+  }
+
+
+
+  async function handleRequestWalletRefund() {
+    const token = localStorage.getItem("token");
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    if (!order?.id) {
+      alert("Pedido inválido");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Deseja cancelar este pedido e receber 80% do valor como crédito na wallet?",
+    );
+
+    if (!confirmed) return;
+
+    setCancelingRefund(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/orders/customer/${order.id}/cancel`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ mode: "WALLET_80" }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        alert(
+          typeof data?.message === "string"
+            ? data.message
+            : "Não foi possível solicitar o reembolso.",
+        );
+        return;
+      }
+
+      alert("Pedido cancelado. Crédito de 80% enviado para sua wallet.");
+      await loadData();
+    } catch (error) {
+      console.error("WALLET REFUND ERROR:", error);
+      alert("Erro ao conectar com a API");
+    } finally {
+      setCancelingRefund(false);
+    }
+  }
+
   function openTransferModal(ticket: TicketItem) {
     if (!canTransferTicket(ticket)) {
-      alert("Este ingresso não está disponível para transferência agora.");
+      alert("Este QR Code não está disponível para transferência agora.");
       return;
     }
 
@@ -879,8 +1061,8 @@ export default function CustomerOrderDetailPage() {
 
   function closeTransferModal() {
     setTransferModalOpen(false);
-    setTransferTargetCpf("");
     setTransferSourceTicket(null);
+    setTransferTargetCpf("");
   }
 
   async function handleSubmitTransfer(e: FormEvent) {
@@ -908,28 +1090,19 @@ export default function CustomerOrderDetailPage() {
     setTransferSubmitting(true);
 
     try {
-      const res = await fetch(
-        `http://localhost:3001/v1/tickets/customer/${transferSourceTicket.id}/transfer`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            targetCpf: cpf,
-          }),
+      const res = await fetch(`${API_BASE_URL}/tickets/customer/${transferSourceTicket.id}/transfer`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      );
+        body: JSON.stringify({ targetCpf: cpf }),
+      });
 
       const data = await res.json();
 
       if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao criar transferência",
-        );
+        alert(typeof data?.message === "string" ? data.message : "Erro ao criar transferência");
         return;
       }
 
@@ -945,843 +1118,416 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-  async function handleReturnTicket(ticket: TicketItem) {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined") {
-      window.location.href = "/login";
-      return;
-    }
-
-    if (!ticket.id) {
-      alert("Ingresso inválido");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      "Deseja devolver este ingresso para quem enviou originalmente?",
-    );
-
-    if (!confirmed) return;
-
-    setReturningTicket(true);
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/tickets/customer/${ticket.id}/transfer`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({}),
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao devolver ingresso",
-        );
-        return;
-      }
-
-      alert("Ingresso devolvido com sucesso");
-      closeSelectedTicket();
-      await loadData();
-    } catch (error) {
-      console.error("RETURN TICKET ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setReturningTicket(false);
-    }
-  }
-
-  async function handleAcceptTransfer() {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined" || !transfer?.id) {
-      window.location.href = "/login";
-      return;
-    }
-
-    setTransferActionLoading("ACCEPT");
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/tickets/customer/transfers/${transfer.id}/accept`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao aceitar transferência",
-        );
-        return;
-      }
-
-      alert("Transferência aceita com sucesso");
-      await loadData();
-    } catch (error) {
-      console.error("ACCEPT TRANSFER ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setTransferActionLoading("");
-    }
-  }
-
-  async function handleRejectTransfer() {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined" || !transfer?.id) {
-      window.location.href = "/login";
-      return;
-    }
-
-    const reason = window.prompt(
-      "Motivo da recusa (opcional)",
-      "Transferência recusada",
-    );
-
-    setTransferActionLoading("REJECT");
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/tickets/customer/transfers/${transfer.id}/reject`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            reason: reason || "Transferência recusada",
-          }),
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao recusar transferência",
-        );
-        return;
-      }
-
-      alert("Transferência recusada");
-      await loadData();
-    } catch (error) {
-      console.error("REJECT TRANSFER ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setTransferActionLoading("");
-    }
-  }
-
-  async function handleCancelTransfer() {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined" || !transfer?.id) {
-      window.location.href = "/login";
-      return;
-    }
-
-    const confirmed = window.confirm("Cancelar esta transferência pendente?");
-
-    if (!confirmed) return;
-
-    setTransferActionLoading("CANCEL");
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/tickets/customer/transfers/${transfer.id}/cancel`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao cancelar transferência",
-        );
-        return;
-      }
-
-      alert("Transferência cancelada");
-      await loadData();
-    } catch (error) {
-      console.error("CANCEL TRANSFER ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setTransferActionLoading("");
-    }
-  }
-
-  async function handleFinishPayment() {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined") {
-      window.location.href = "/login";
-      return;
-    }
-
-    if (!order?.id) {
-      alert("Pedido inválido");
-      return;
-    }
-
-    if (isPendingCountdownExpired) {
-      alert("O tempo deste pedido acabou. Atualizando o status...");
-      await loadData();
-      return;
-    }
-
-    setPaying(true);
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/payments/customer/${order.id}/finalize`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            method: "PIX",
-          }),
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao finalizar pagamento",
-        );
-        return;
-      }
-
-      alert("Pagamento confirmado com sucesso");
-      await loadData();
-    } catch (error) {
-      console.error("FINISH PAYMENT ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setPaying(false);
-    }
-  }
-
-  async function handleCancelOrder(mode: "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80") {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined") {
-      window.location.href = "/login";
-      return;
-    }
-
-    if (!order?.id) {
-      alert("Pedido inválido");
-      return;
-    }
-
-    const info = normalizeCancelMode(mode);
-    const confirmed = window.confirm(info.confirm);
-
-    if (!confirmed) return;
-
-    setCancelingOrderMode(mode);
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/orders/customer/${order.id}/cancel`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            mode,
-            reason: info.title,
-          }),
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao cancelar pedido",
-        );
-        return;
-      }
-
-      alert("Pedido atualizado com sucesso");
-      await loadData();
-    } catch (error) {
-      console.error("CANCEL ORDER ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setCancelingOrderMode("");
-    }
-  }
-
-  async function handleCancelTicket(
-    ticket: TicketItem,
-    mode: "PENDING_SIMPLE" | "REFUND_70" | "WALLET_80",
-  ) {
-    const token = localStorage.getItem("token");
-
-    if (!token || token === "undefined") {
-      window.location.href = "/login";
-      return;
-    }
-
-    if (!ticket?.id) {
-      alert("Ingresso inválido");
-      return;
-    }
-
-    const info = normalizeCancelMode(mode);
-    const confirmed = window.confirm(
-      `${info.confirm}\n\nIngresso: ${ticket.code || ticket.id}`,
-    );
-
-    if (!confirmed) return;
-
-    setCancelingTicketMode(mode);
-
-    try {
-      const res = await fetch(
-        `http://localhost:3001/v1/orders/customer/tickets/${ticket.id}/cancel`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            mode,
-            reason: info.title,
-          }),
-        },
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao cancelar ingresso",
-        );
-        return;
-      }
-
-      alert("Ingresso atualizado com sucesso");
-      closeSelectedTicket();
-      await loadData();
-    } catch (error) {
-      console.error("CANCEL TICKET ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setCancelingTicketMode("");
-    }
-  }
-
-  async function handleCreateSupportThread(e: FormEvent) {
-    e.preventDefault();
+  async function fetchTicketQrTokenForPrint(ticket: TicketItem) {
+    if (printTokensByTicketId[ticket.id]) return printTokensByTicketId[ticket.id];
 
     const token = localStorage.getItem("token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
-      return;
+      return "";
     }
-
-    const supportOrderId = isTransferPage ? transfer?.order?.id : order?.id;
-
-    if (!supportOrderId) {
-      alert("Pedido não encontrado para abrir suporte");
-      return;
-    }
-
-    if (ticketSubject.trim().length < 3) {
-      alert("Informe um assunto com pelo menos 3 caracteres");
-      return;
-    }
-
-    if (ticketMessage.trim().length < 3) {
-      alert("Informe uma mensagem com pelo menos 3 caracteres");
-      return;
-    }
-
-    setCreatingSupportThread(true);
 
     try {
-      const res = await fetch("http://localhost:3001/v1/support/customer", {
-        method: "POST",
+      const res = await fetch(`${API_BASE_URL}/tickets/customer/${ticket.id}/qr-token`, {
+        method: "GET",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          orderId: supportOrderId,
-          subject: ticketSubject.trim(),
-          message: ticketMessage.trim(),
-        }),
       });
 
-      const data: SupportThreadResponse = await res.json();
+      const data: TicketQrTokenResponse = await res.json();
+
+      if (!res.ok || !data.token) return "";
+      return data.token;
+    } catch (error) {
+      console.error("PRINT QR TOKEN ERROR:", error);
+      return "";
+    }
+  }
+
+  async function handlePrintDigitalTicket(mode: "tickets" | "qr" = "tickets") {
+    setPrintMode(mode);
+
+    if (mode === "tickets") {
+      const ticketsToPrint = isTransferPage && transfer?.ticket
+        ? [transfer.ticket]
+        : ticketGroups.flatMap((group) => group.tickets.map((entry) => entry.ticket));
+
+      setPreparingPrint(true);
+
+      try {
+        const tokenPairs = await Promise.all(
+          ticketsToPrint.map(async (ticket) => [ticket.id, await fetchTicketQrTokenForPrint(ticket)] as const),
+        );
+
+        setPrintTokensByTicketId((current) => {
+          const next = { ...current };
+          tokenPairs.forEach(([ticketId, qrToken]) => {
+            if (qrToken) next[ticketId] = qrToken;
+          });
+          return next;
+        });
+      } finally {
+        setPreparingPrint(false);
+      }
+    }
+
+    window.setTimeout(() => window.print(), 140);
+  }
+
+  function canRequestTicketWalletRefund(ticket?: TicketItem | null) {
+    if (!ticket) return false;
+    if (!isPaidOrder) return false;
+    if (isTicketCanceled(ticket)) return false;
+    if (String(ticket.status || "").toUpperCase() === "USED") return false;
+    return true;
+  }
+
+  async function handleRequestTicketWalletRefund(ticket: TicketItem) {
+    const token = localStorage.getItem("token");
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    if (!canRequestTicketWalletRefund(ticket)) {
+      alert("Este QR Code não está disponível para estorno.");
+      return;
+    }
+
+    const amount = getTicketAmount(ticket, null);
+    const walletCredit = amount * 0.8;
+    const confirmed = window.confirm(
+      `Deseja estornar este QR Code? ${formatMoney(walletCredit)} serão enviados para sua wallet.`,
+    );
+
+    if (!confirmed) return;
+
+    setCancelingTicketRefundId(ticket.id);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/orders/customer/tickets/${ticket.id}/cancel`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ mode: "WALLET_80" }),
+      });
+
+      const data = await res.json().catch(() => null);
 
       if (!res.ok) {
         alert(
           typeof data?.message === "string"
             ? data.message
-            : "Erro ao falar com o produtor",
+            : "Não foi possível solicitar o estorno deste QR Code.",
         );
         return;
       }
 
-      alert("Solicitação enviada com sucesso");
-      setProducerTicketOpen(false);
-      setTicketSubject("");
-      setTicketMessage("");
-
-      if (data.id) {
-        window.location.href = `/support/${data.id}`;
-      }
+      alert("Estorno aprovado. Crédito de 80% enviado para sua wallet.");
+      closeSelectedTicket();
+      await loadData();
     } catch (error) {
-      console.error("CREATE SUPPORT THREAD ERROR:", error);
+      console.error("TICKET WALLET REFUND ERROR:", error);
       alert("Erro ao conectar com a API");
     } finally {
-      setCreatingSupportThread(false);
+      setCancelingTicketRefundId(null);
     }
   }
-
-  const ticketTypeByTicketId = useMemo(() => {
-    const map = new Map<string, string>();
-
-    for (const item of orderItems) {
-      for (const ticket of item.tickets || []) {
-        map.set(ticket.id, item.ticketType?.name || "Ingresso");
-      }
-    }
-
-    if (transfer?.ticket?.id) {
-      map.set(
-        transfer.ticket.id,
-        transfer.ticket.orderItem?.ticketType?.name || "Ingresso transferido",
-      );
-    }
-
-    return map;
-  }, [orderItems, transfer]);
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f7f7f7]">
-        <div className="mx-auto max-w-[1180px] px-4 py-10">
-          <section className={cardClass()}>
-            <p className="text-sm font-semibold text-slate-700">
-              Carregando detalhes...
-            </p>
-          </section>
+      <main className="min-h-screen bg-slate-100 p-6 text-slate-950">
+        <div className="mx-auto max-w-[1180px] rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
+          <p className="text-lg font-bold">Carregando detalhes...</p>
         </div>
       </main>
     );
   }
 
-  if (!order && !transfer) {
+  if (!isTransferPage && !order) {
     return (
-      <main className="min-h-screen bg-[#f7f7f7]">
-        <div className="mx-auto max-w-[1180px] px-4 py-10">
-          <section className={cardClass()}>
-            <p className="text-sm font-semibold text-slate-700">
-              Pedido não encontrado.
-            </p>
-          </section>
+      <main className="min-h-screen bg-slate-100 p-6 text-slate-950">
+        <div className="mx-auto max-w-[1180px] rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm">
+          <p className="text-lg font-bold">Pedido não encontrado.</p>
         </div>
       </main>
     );
   }
 
-  const currentEventImage = getCurrentEventImage();
+  const eventImage = getCurrentEventImage();
+  const headerStatus = isTransferPage ? transfer?.status : order?.status;
+  const ticketPrintEntries = isTransferPage && transfer?.ticket
+    ? [
+        {
+          ticket: transfer.ticket,
+          title: transfer.ticket.accessLabel || transfer.ticket.orderItem?.ticketType?.name || "Ingresso transferido",
+          subtitle: "Recebido por transferência",
+          amount: getTicketAmount(transfer.ticket, null),
+        },
+      ]
+    : ticketGroups.flatMap((group) =>
+        group.tickets.map((entry) => ({
+          ticket: entry.ticket,
+          title: `${group.title} - ${entry.title}`,
+          subtitle: entry.subtitle,
+          amount: entry.amount,
+        })),
+      );
 
   return (
-    <main className="min-h-screen bg-[#f7f7f7] text-slate-950">
-      <div className="mx-auto max-w-[1180px] px-4 pb-14 pt-7">
+    <main className={`min-h-screen bg-slate-100 text-slate-950 print-mode-${printMode}`}>
+      <style>{`
+        @media print {
+          html, body {
+            background: #ffffff !important;
+          }
+
+          body * {
+            visibility: hidden !important;
+          }
+
+          .print-mode-tickets .ticket-print-area,
+          .print-mode-tickets .ticket-print-area *,
+          .print-mode-qr .qr-print-area,
+          .print-mode-qr .qr-print-area * {
+            visibility: visible !important;
+          }
+
+          .print-mode-tickets .ticket-print-area,
+          .print-mode-qr .qr-print-area {
+            display: block !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: none !important;
+            border: 0 !important;
+            box-shadow: none !important;
+            background: #ffffff !important;
+            padding: 14mm !important;
+          }
+
+          .ticket-print-hide {
+            display: none !important;
+          }
+
+          .ticket-print-card {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+            margin-bottom: 8mm !important;
+          }
+
+          .ticket-print-area button,
+          .qr-print-area button {
+            display: none !important;
+          }
+        }
+      `}</style>
+      <div className="mx-auto max-w-[1180px] px-4 pb-32 pt-7 xl:pb-12">
         <section className="mb-5 flex flex-wrap items-center gap-2 text-[13px] text-slate-500">
-          <button
-            type="button"
-            onClick={() => goTo("/dashboard")}
-            className="font-semibold text-sky-600 hover:text-sky-700"
-          >
+          <button type="button" onClick={() => goTo("/dashboard")} className="font-bold text-sky-600 hover:text-sky-700">
             Página inicial
           </button>
           <span>&gt;</span>
-          <button
-            type="button"
-            onClick={() => goTo("/orders")}
-            className="font-semibold text-sky-600 hover:text-sky-700"
-          >
+          <button type="button" onClick={() => goTo("/orders")} className="font-bold text-sky-600 hover:text-sky-700">
             Meus pedidos
           </button>
           <span>&gt;</span>
-          <span className="font-semibold text-slate-700">
-            {isTransferPage ? "Transferência" : "Detalhes do pedido"}
-          </span>
+          <span className="font-bold text-slate-700">Detalhes</span>
         </section>
 
-        <section className="overflow-hidden rounded-[30px] bg-white shadow-sm">
-          <div className="grid gap-0 lg:grid-cols-[1fr_390px]">
-            <div className="relative min-h-[280px] overflow-hidden bg-slate-950 p-7 text-white md:p-9">
-              {currentEventImage ? (
-                <img
-                  src={currentEventImage}
-                  alt={getEventName()}
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-              ) : (
-                <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-blue-950 to-sky-800" />
-              )}
+        <section className="overflow-hidden rounded-[34px] border border-slate-200 bg-slate-950 shadow-sm">
+          <div className="relative min-h-[320px]">
+            {eventImage ? (
+              <img src={eventImage} alt={getEventName()} className="absolute inset-0 h-full w-full object-cover opacity-50" />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-sky-700 via-blue-900 to-slate-950" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/65 to-slate-950/10" />
 
-              <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/70 to-slate-950/30" />
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.25),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.28),transparent_30%)]" />
-
-              <div className="relative z-10">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-white">
-                    {isTransferPage ? "Transferência" : "Detalhes do pedido"}
-                  </span>
-
-                  <span
-                    className={`rounded-full border px-3 py-1 text-[11px] font-black ${getStatusClasses(
-                      isTransferPage ? transfer?.status : order?.status,
-                    )}`}
-                  >
-                    {getStatusLabel(isTransferPage ? transfer?.status : order?.status)}
-                  </span>
-                </div>
-
-                <h1 className="mt-5 max-w-3xl text-[36px] font-black leading-tight md:text-[54px]">
-                  {getEventName()}
-                </h1>
-
-                <p className="mt-4 max-w-2xl text-sm leading-7 text-white/90">
-                  {getEventDescription()}
-                </p>
-
-                <div className="mt-8 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() => goTo(getBackPath())}
-                    className="rounded-xl bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-slate-100"
-                  >
-                    {isTransferPage ? "Voltar para meus pedidos" : "Ir para evento"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setProducerTicketOpen(true)}
-                    className="rounded-xl border border-white/30 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/20"
-                  >
-                    Falar com o produtor
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <aside className="space-y-3 p-5 md:p-6">
-              {isPendingOrder ? (
-                <div className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                    Tempo restante
-                  </p>
-                  <p
-                    className={`mt-2 text-4xl font-black ${getCountdownNumberClass(
-                      timeLeftMs,
-                    )}`}
-                  >
-                    {formatCountdown(timeLeftMs)}
-                  </p>
-                  <p className="mt-2 text-sm text-slate-500">
-                    Finalize o pagamento antes do cronômetro zerar.
-                  </p>
-                </div>
-              ) : null}
-
-              <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                  Registro
-                </p>
-                <p className="mt-2 break-all text-sm font-black text-slate-950">
-                  {isTransferPage ? transfer?.id : order?.id}
-                </p>
-              </div>
-
-              <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                  Data do evento
-                </p>
-                <p className="mt-2 text-sm font-black text-slate-950">
-                  {formatDate(getEventDate())}
-                </p>
-              </div>
-
-              {!isTransferPage ? (
-                <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                    Comprador
-                  </p>
-                  <p className="mt-2 text-sm font-black text-slate-950">
-                    {order?.customerName || "-"}
-                  </p>
-                  <p className="mt-1 break-all text-xs text-slate-500">
-                    {order?.customerEmail || "-"}
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                    Transferência
-                  </p>
-                  <p className="mt-2 text-sm font-black text-slate-950">
-                    De: {transfer?.fromName || transfer?.fromUser?.name || "-"}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Para: {transfer?.toName || transfer?.toUser?.name || "-"}
-                  </p>
-                </div>
-              )}
-            </aside>
-          </div>
-        </section>
-
-        <section className="mt-6 grid gap-4 md:grid-cols-4">
-          <SmallInfoCard
-            label="Status"
-            value={getStatusLabel(isTransferPage ? transfer?.status : order?.status)}
-            detail="Estado atual do registro"
-          />
-
-          <SmallInfoCard
-            label="Ingressos"
-            value={String(totalTickets)}
-            detail={showReleasedTickets ? "Liberados para consulta" : "Liberam após pagamento"}
-          />
-
-          <SmallInfoCard
-            label="Valor total"
-            value={isTransferPage ? "R$ 0,00" : formatMoney(order?.totalAmount)}
-            detail={isTransferPage ? "Recebido por transferência" : "Valor do pedido"}
-          />
-
-          <SmallInfoCard
-            label="Valor pago"
-            value={isTransferPage ? "R$ 0,00" : formatMoney(totalPaid)}
-            detail={!isTransferPage && remainingAmount > 0 ? `${formatMoney(remainingAmount)} restante` : "Sem pendência"}
-          />
-        </section>
-
-        <section className="mt-8 grid gap-7 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="space-y-6">
-            <section className={cardClass()}>
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-black text-slate-950">
-                    {showReleasedTickets ? "Ingressos" : "Itens do pedido"}
-                  </h2>
-                  <p className="mt-2 text-sm text-slate-500">
-                    {showReleasedTickets
-                      ? "Veja os ingressos liberados, titulares, código e ações disponíveis."
-                      : "Os ingressos deste pedido serão liberados após a confirmação do pagamento."}
-                  </p>
-                </div>
-
-                <span
-                  className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClasses(
-                    isTransferPage ? transfer?.status : order?.status,
-                  )}`}
-                >
-                  {getStatusLabel(isTransferPage ? transfer?.status : order?.status)}
+            <div className="relative z-10 flex min-h-[320px] flex-col justify-end p-7 text-white md:p-9">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-950">
+                  {isTransferPage ? "Transferência" : "Pedido"}
+                </span>
+                <span className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] ${getStatusClasses(headerStatus)}`}>
+                  {getStatusLabel(headerStatus)}
                 </span>
               </div>
 
-              {!showReleasedTickets ? (
-                <div className="mt-6 space-y-4">
-                  {orderItems.map((item, index) => (
-                    <div
-                      key={item.id}
-                      className="rounded-[22px] border border-slate-200 bg-white p-5"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                            Item {index + 1}
-                          </p>
-                          <h3 className="mt-2 text-xl font-black text-slate-950">
-                            {item.ticketType?.name || "Ingresso"}
-                          </h3>
-                          <p className="mt-1 text-sm text-slate-500">
-                            Quantidade: {item.quantity || item.tickets?.length || 0}
-                          </p>
-                        </div>
+              <h1 className="mt-5 text-[38px] font-black leading-tight md:text-[54px]">{getEventName()}</h1>
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-white/80">{getEventDescription()}</p>
 
-                        <div className="rounded-[18px] bg-slate-50 px-4 py-3 text-right">
-                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                            Total
-                          </p>
-                          <p className="mt-1 text-lg font-black text-slate-950">
-                            {formatMoney(item.totalPrice)}
-                          </p>
-                        </div>
-                      </div>
+              <div className="mt-7 grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
+                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-white/45">Data</p>
+                  <p className="mt-1 text-sm font-black text-white">{formatDate(getEventDate())}</p>
+                </div>
+                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
+                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-white/45">Pedido</p>
+                  <p className="mt-1 break-all text-sm font-black text-white">{entityId || "-"}</p>
+                </div>
+                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
+                  <p className="text-[11px] font-black uppercase tracking-[0.16em] text-white/45">QR Codes</p>
+                  <p className="mt-1 text-sm font-black text-white">{totalAccessQrCodes || (isTransferPage ? 1 : 0)} acesso(s)</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
 
-                      <div className="mt-4 rounded-[16px] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                        Os ingressos deste item serão liberados somente após a
-                        confirmação do pagamento.
-                      </div>
-                    </div>
-                  ))}
+        {!isTransferPage ? (
+          <section className="mt-6 grid gap-4 md:grid-cols-4">
+            <SmallInfoCard label="Total" value={formatMoney(totalAmount)} detail="Valor do pedido" />
+            <SmallInfoCard label="Pago" value={formatMoney(totalPaid)} detail="Pagamentos confirmados" />
+            <SmallInfoCard label="Saldo" value={formatMoney(remainingAmount)} detail="Valor pendente" />
+            <SmallInfoCard label="Ingressos" value={`${totalCommercialTickets}`} detail={`${totalAccessQrCodes} QR Code(s) de acesso`} />
+          </section>
+        ) : null}
+
+        {isPendingOrder ? (
+          <section className="mt-6 rounded-[28px] border border-amber-200 bg-amber-50 p-6 shadow-sm">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">Pedido aguardando pagamento</p>
+                <h2 className="mt-2 text-2xl font-black text-slate-950">Finalize para liberar os QR Codes</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Tempo restante: <strong>{formatCountdown(timeLeftMs)}</strong>. Depois disso, as reservas de mesa/cadeira podem ser liberadas.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleFinalizePayment}
+                disabled={paying || remainingAmount <= 0}
+                className="rounded-2xl bg-slate-950 px-6 py-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {paying ? "Confirmando..." : "Confirmar pagamento"}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="mt-8 grid gap-7 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-6">
+            <section className={cardClass()}>
+              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <p className="text-[12px] font-black uppercase tracking-[0.2em] text-sky-600">Meus ingressos</p>
+                  <h2 className="mt-2 text-3xl font-black">QR Codes do pedido</h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Mesa completa aparece como 1 ingresso principal no limite do produtor, mas abre os QR Codes internos por cadeira.
+                  </p>
+                </div>
+                <button type="button" onClick={() => handlePrintDigitalTicket("tickets")} className="ticket-print-hide rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:border-slate-950">
+                  {preparingPrint ? "Preparando QR Codes..." : "Imprimir ingressos"}
+                </button>
+              </div>
+
+              <div className="mt-6 space-y-4">
+                {ticketGroups.length === 0 && !isTransferPage ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-bold text-slate-600">
+                    Nenhum QR Code criado ainda. Se o pedido estiver pendente, eles aparecem após a confirmação do pagamento.
+                  </div>
+                ) : null}
+
+                {isTransferPage && transfer?.ticket ? (
+                  <TicketSingleCard
+                    ticket={transfer.ticket}
+                    title={transfer.ticket.accessLabel || transfer.ticket.orderItem?.ticketType?.name || "Ingresso transferido"}
+                    subtitle="Recebido por transferência"
+                    amount={0}
+                    canOpen={showReleasedTickets}
+                    canTransfer={canTransferTicket(transfer.ticket)}
+                    onOpen={() => handleOpenTicket(transfer.ticket!)}
+                    onTransfer={() => openTransferModal(transfer.ticket!)}
+                  />
+                ) : null}
+
+                {ticketGroups.map((group) => (
+                  <TicketGroupCard
+                    key={group.id}
+                    group={group}
+                    canOpen={showReleasedTickets}
+                    canTransferTicket={canTransferTicket}
+                    onOpenTicket={handleOpenTicket}
+                    onTransferTicket={openTransferModal}
+                  />
+                ))}
+              </div>
+            </section>
+          </div>
+
+          <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
+            <section className={cardClass()}>
+              <p className={smallLabelClass()}>{isTransferPage ? "Transferência" : "Resumo"}</p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">{isTransferPage ? getStatusLabel(transfer?.status) : getStatusLabel(order?.status)}</h2>
+
+              {!isTransferPage ? (
+                <div className="mt-5 space-y-3 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-500">Criado em</span>
+                    <strong>{formatDate(order?.createdAt)}</strong>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-500">Total</span>
+                    <strong>{formatMoney(order?.totalAmount)}</strong>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-500">Ingressos limite</span>
+                    <strong>{totalCommercialTickets}</strong>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-500">QR Codes acesso</span>
+                    <strong>{totalAccessQrCodes}</strong>
+                  </div>
                 </div>
               ) : (
-                <div className="mt-6 grid gap-4">
-                  {flattenedTickets.length === 0 ? (
-                    <div className="rounded-[22px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-                      Nenhum ingresso encontrado.
-                    </div>
-                  ) : (
-                    flattenedTickets.map((ticket, index) => {
-                      const status = getDisplayedTicketStatus(ticket);
-                      const ticketTypeName = ticketTypeByTicketId.get(ticket.id) || "Ingresso";
-
-                      return (
-                        <div
-                          key={ticket.id}
-                          className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-4">
-                            <div>
-                              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
-                                Ingresso {index + 1}
-                              </p>
-                              <h3 className="mt-2 text-xl font-black text-slate-950">
-                                {ticketTypeName}
-                              </h3>
-                              <p className="mt-1 text-sm text-slate-500">
-                                Titular: {ticket.holderName || "-"}
-                              </p>
-                              <p className="mt-1 text-sm text-slate-500">
-                                CPF: {formatCpf(ticket.holderCpf)}
-                              </p>
-                            </div>
-
-                            <span
-                              className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClasses(
-                                status,
-                              )}`}
-                            >
-                              {getStatusLabel(status)}
-                            </span>
-                          </div>
-
-                          <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
-                            <div className="rounded-[16px] bg-slate-50 p-4">
-                              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                                Código
-                              </p>
-                              <p className="mt-1 break-all text-sm font-black text-slate-950">
-                                {ticket.code || ticket.id}
-                              </p>
-                            </div>
-
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleOpenTicket(ticket)}
-                                className="rounded-xl bg-slate-950 px-4 py-3 text-sm font-black text-white hover:bg-slate-800"
-                              >
-                                Ver ingresso
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => copyTicketCode(ticket.code || ticket.id)}
-                                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                              >
-                                Copiar
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
+                <div className="mt-5 space-y-3 text-sm">
+                  <div>
+                    <p className="text-slate-500">De</p>
+                    <strong>{transfer?.fromName || transfer?.fromEmail || "Origem não informada"}</strong>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Para</p>
+                    <strong>{transfer?.toName || transfer?.toEmail || "Destino não informado"}</strong>
+                  </div>
                 </div>
               )}
+
+              <button type="button" onClick={() => goTo(getBackPath())} className="mt-6 w-full rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:border-slate-950">
+                Voltar
+              </button>
+
+              {!isTransferPage && isPaidOrder && cancellations.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={handleRequestWalletRefund}
+                  disabled={cancelingRefund}
+                  className="mt-3 w-full rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-black text-rose-700 transition hover:border-rose-400 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {cancelingRefund ? "Processando..." : "Cancelar e receber 80% na wallet"}
+                </button>
+              ) : null}
             </section>
 
             {!isTransferPage && payments.length > 0 ? (
               <section className={cardClass()}>
-                <h2 className="text-2xl font-black text-slate-950">Pagamentos</h2>
-
-                <div className="mt-5 space-y-3">
+                <p className={smallLabelClass()}>Pagamentos</p>
+                <div className="mt-4 space-y-3">
                   {payments.map((payment) => (
-                    <div
-                      key={payment.id}
-                      className="grid gap-3 rounded-[20px] border border-slate-200 bg-slate-50 p-4 md:grid-cols-[1fr_auto]"
-                    >
-                      <div>
-                        <p className="font-black text-slate-950">
-                          {payment.method || "Pagamento"}
-                        </p>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Criado em {formatDate(payment.createdAt)}
-                        </p>
-                      </div>
-
-                      <div className="text-left md:text-right">
-                        <p className="font-black text-slate-950">
-                          {formatMoney(payment.amount)}
-                        </p>
-                        <span
-                          className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-[11px] font-black ${getStatusClasses(
-                            payment.status,
-                          )}`}
-                        >
-                          {getStatusLabel(payment.status)}
-                        </span>
+                    <div key={payment.id} className="rounded-2xl bg-slate-50 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-black text-slate-950">{payment.method || "Pagamento"}</p>
+                          <p className="text-xs text-slate-500">{formatDate(payment.paidAt || payment.createdAt)}</p>
+                        </div>
+                        <strong className="text-sm">{formatMoney(payment.amount)}</strong>
                       </div>
                     </div>
                   ))}
@@ -1791,219 +1537,17 @@ export default function CustomerOrderDetailPage() {
 
             {!isTransferPage && cancellations.length > 0 ? (
               <section className={cardClass()}>
-                <h2 className="text-2xl font-black text-slate-950">
-                  Cancelamentos e créditos
-                </h2>
-
-                <div className="mt-5 space-y-3">
+                <p className={smallLabelClass()}>Cancelamentos</p>
+                <div className="mt-4 space-y-3">
                   {cancellations.map((cancellation) => (
-                    <div
-                      key={cancellation.id}
-                      className="rounded-[20px] border border-slate-200 bg-slate-50 p-4"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="font-black text-slate-950">
-                            {cancellation.mode || "Solicitação"}
-                          </p>
-                          <p className="mt-1 text-sm text-slate-500">
-                            Criado em {formatDate(cancellation.createdAt)}
-                          </p>
-                        </div>
-
-                        <span
-                          className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClasses(
-                            cancellation.status,
-                          )}`}
-                        >
-                          {getStatusLabel(cancellation.status)}
-                        </span>
-                      </div>
-
-                      <div className="mt-4 grid gap-3 md:grid-cols-2">
-                        <div className="rounded-[16px] bg-white p-3">
-                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                            Valor original
-                          </p>
-                          <p className="mt-1 font-black text-slate-950">
-                            {formatMoney(cancellation.originalAmount)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-[16px] bg-white p-3">
-                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                            Valor retornado
-                          </p>
-                          <p className="mt-1 font-black text-slate-950">
-                            {formatMoney(cancellation.returnedAmount)}
-                          </p>
-                        </div>
-                      </div>
+                    <div key={cancellation.id} className="rounded-2xl bg-rose-50 p-4 text-sm">
+                      <strong>{getStatusLabel(cancellation.status)}</strong>
+                      <p className="mt-1 text-xs text-slate-500">{formatDate(cancellation.createdAt)}</p>
+                      <p className="mt-2 text-xs font-black text-rose-700">
+                        Crédito/retorno: {formatMoney(cancellation.returnedAmount)}
+                      </p>
                     </div>
                   ))}
-                </div>
-              </section>
-            ) : null}
-          </div>
-
-          <aside className="space-y-5 lg:sticky lg:top-24 lg:self-start">
-            <section className={cardClass()}>
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                Ações rápidas
-              </p>
-              <h2 className="mt-2 text-2xl font-black text-slate-950">
-                Gerenciar
-              </h2>
-              <p className="mt-2 text-sm text-slate-500">
-                Escolha uma ação disponível para este registro.
-              </p>
-
-              <div className="mt-6 space-y-3">
-                {isPendingOrder ? (
-                  <>
-                    <div className="rounded-[18px] border border-slate-200 bg-white p-4">
-                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                        Tempo restante
-                      </p>
-                      <p
-                        className={`mt-2 text-3xl font-black ${getCountdownNumberClass(
-                          timeLeftMs,
-                        )}`}
-                      >
-                        {formatCountdown(timeLeftMs)}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Pague antes do cronômetro zerar.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleFinishPayment}
-                      disabled={paying || isPendingCountdownExpired}
-                      className="w-full rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      {paying ? "Finalizando..." : "Finalizar pagamento"}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleCancelOrder("PENDING_SIMPLE")}
-                      disabled={!!cancelingOrderMode}
-                      className="w-full rounded-xl border border-rose-200 bg-white px-5 py-4 text-sm font-black text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {cancelingOrderMode === "PENDING_SIMPLE"
-                        ? "Cancelando..."
-                        : "Cancelar pedido pendente"}
-                    </button>
-                  </>
-                ) : null}
-
-                {isPaidOrder ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleCancelOrder("REFUND_70")}
-                      disabled={!!cancelingOrderMode}
-                      className="w-full rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-black text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Solicitar reembolso 70%
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleCancelOrder("WALLET_80")}
-                      disabled={!!cancelingOrderMode}
-                      className="w-full rounded-xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Receber 80% na wallet
-                    </button>
-                  </>
-                ) : null}
-
-                {canAcceptTransfer ? (
-                  <button
-                    type="button"
-                    onClick={handleAcceptTransfer}
-                    disabled={!!transferActionLoading}
-                    className="w-full rounded-xl bg-emerald-600 px-5 py-4 text-sm font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {transferActionLoading === "ACCEPT"
-                      ? "Aceitando..."
-                      : "Aceitar transferência"}
-                  </button>
-                ) : null}
-
-                {canRejectTransfer ? (
-                  <button
-                    type="button"
-                    onClick={handleRejectTransfer}
-                    disabled={!!transferActionLoading}
-                    className="w-full rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-black text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {transferActionLoading === "REJECT"
-                      ? "Recusando..."
-                      : "Recusar transferência"}
-                  </button>
-                ) : null}
-
-                {canCancelTransfer ? (
-                  <button
-                    type="button"
-                    onClick={handleCancelTransfer}
-                    disabled={!!transferActionLoading}
-                    className="w-full rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-black text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {transferActionLoading === "CANCEL"
-                      ? "Cancelando..."
-                      : "Cancelar transferência"}
-                  </button>
-                ) : null}
-
-                <button
-                  type="button"
-                  onClick={() => setProducerTicketOpen(true)}
-                  className="w-full rounded-xl border border-sky-200 bg-white px-5 py-4 text-sm font-black text-sky-700 hover:bg-sky-50"
-                >
-                  Falar com o produtor
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => goTo("/orders")}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                >
-                  Voltar para meus pedidos
-                </button>
-              </div>
-            </section>
-
-            {!isTransferPage ? (
-              <section className={cardClass()}>
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                  Financeiro
-                </p>
-                <div className="mt-5 space-y-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Total do pedido</span>
-                    <span className="font-black text-slate-950">
-                      {formatMoney(order?.totalAmount)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Valor pago</span>
-                    <span className="font-black text-emerald-700">
-                      {formatMoney(totalPaid)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between border-t border-slate-200 pt-3">
-                    <span className="text-slate-500">Restante</span>
-                    <span className="font-black text-slate-950">
-                      {formatMoney(remainingAmount)}
-                    </span>
-                  </div>
                 </div>
               </section>
             ) : null}
@@ -2011,348 +1555,382 @@ export default function CustomerOrderDetailPage() {
         </section>
       </div>
 
-      {selectedTicket ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm print:static print:block print:bg-white print:p-0">
-          <div className="max-h-[94vh] w-full max-w-[880px] overflow-y-auto rounded-[34px] bg-white shadow-2xl print:max-h-none print:max-w-none print:overflow-visible print:rounded-none print:shadow-none">
-            <div className="relative overflow-hidden rounded-t-[34px] bg-slate-950 text-white print:rounded-none">
-              {currentEventImage ? (
-                <img
-                  src={currentEventImage}
-                  alt={getEventName()}
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-              ) : (
-                <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-blue-950 to-sky-800" />
-              )}
+      <section className="ticket-print-area hidden">
+        <div className="mb-6 border-b border-slate-200 pb-4">
+          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-sky-700">Ingressos digitais</p>
+          <h1 className="mt-2 text-3xl font-black text-slate-950">{getEventName()}</h1>
+          <p className="mt-1 text-sm font-bold text-slate-600">Pedido {entityId}</p>
+        </div>
 
-              <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/75 to-slate-950/35" />
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.26),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(99,102,241,0.28),transparent_32%)]" />
+        <div className="grid gap-5 md:grid-cols-2">
+          {ticketPrintEntries.map((entry, index) => {
+            const metadata = parseAccessMetadata(entry.ticket);
+            const qrToken = printTokensByTicketId[entry.ticket.id] || "";
+            const kindLabel = metadata.ticketKindLabel || metadata.ticketKind || getTicketKindLabel(entry.ticket);
+            const chairLabel = metadata.chairLabel || (metadata.chairIndex ? `C${metadata.chairIndex}` : "");
 
-              <div className="relative z-10 p-6 md:p-8">
+            return (
+              <article key={entry.ticket.id} className="ticket-print-card rounded-[24px] border border-slate-300 bg-white p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/70">
-                      Ingresso digital
-                    </p>
-
-                    <h2 className="mt-3 text-3xl font-black leading-tight md:text-5xl">
-                      {ticketTypeByTicketId.get(selectedTicket.id) || "Ingresso"}
-                    </h2>
-
-                    <p className="mt-3 max-w-2xl text-sm font-semibold leading-6 text-white/90 md:text-base">
-                      {getEventName()}
-                    </p>
-
-                    <div className="mt-5 flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-white/20 bg-white/15 px-4 py-2 text-xs font-black text-white shadow-sm">
-                        {formatDate(getEventDate())}
-                      </span>
-
-                      {selectedTicketQrToken ? (
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700 shadow-sm">
-                          QR seguro
-                        </span>
-                      ) : null}
-                    </div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">QR {index + 1}</p>
+                    <h2 className="mt-1 text-lg font-black text-slate-950">{entry.title}</h2>
+                    <p className="mt-1 text-xs font-bold text-slate-500">{chairLabel ? `${chairLabel} - ` : ""}{kindLabel}</p>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={closeSelectedTicket}
-                    className="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/15 text-xl font-black text-white shadow-sm transition hover:bg-white/25 print:hidden"
-                    aria-label="Fechar ingresso"
-                  >
-                    ×
-                  </button>
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-emerald-700">
+                    {getStatusLabel(entry.ticket.status)}
+                  </span>
                 </div>
-              </div>
-            </div>
 
-            <div className="grid bg-white md:grid-cols-[350px_1fr]">
-              <section className="border-b border-slate-200 bg-slate-50 p-6 md:border-b-0 md:border-r">
-                <div className="mx-auto max-w-[286px]">
-                  <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.12)]">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">
-                        QR Code
-                      </p>
-
-                      <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black text-emerald-700">
-                        Seguro
-                      </span>
-                    </div>
-
-                    <div className="mt-4 flex justify-center rounded-[24px] bg-white p-3">
-                      {selectedTicketQrLoading ? (
-                        <div className="flex h-[220px] w-[220px] items-center justify-center rounded-[20px] bg-slate-50 px-4 text-center text-sm font-bold text-slate-500">
-                          Gerando QR Code seguro...
-                        </div>
-                      ) : selectedTicketQrToken ? (
-                        <QRCodeSVG
-                          value={selectedTicketQrToken}
-                          size={220}
-                          level="H"
-                          includeMargin
-                        />
-                      ) : (
-                        <div className="flex h-[220px] w-[220px] items-center justify-center rounded-[20px] bg-rose-50 px-4 text-center text-sm font-bold text-rose-700">
-                          {selectedTicketQrError || "QR Code indisponível"}
-                        </div>
-                      )}
-                    </div>
+                <div className="mt-5 flex flex-col items-center gap-4">
+                  <div className="rounded-[22px] border border-slate-200 bg-white p-4">
+                    {qrToken ? (
+                      <QRCodeSVG value={qrToken} size={190} level="H" includeMargin />
+                    ) : (
+                      <div className="flex h-[190px] w-[190px] items-center justify-center rounded-2xl bg-slate-100 text-center text-xs font-bold text-slate-500">
+                        QR indisponível. Abra o ingresso para gerar novamente.
+                      </div>
+                    )}
                   </div>
 
-                  <div className="mt-5 rounded-[24px] border border-slate-200 bg-white p-5 text-center shadow-sm">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                      Código do ingresso
-                    </p>
-
-                    <p className="mt-3 break-all text-base font-black leading-6 text-slate-950">
-                      {selectedTicket.code || selectedTicket.id}
-                    </p>
-                  </div>
-
-                  <div className="mt-5 rounded-[22px] border border-sky-100 bg-sky-50 p-4 text-center">
-                    <p className="text-xs font-semibold leading-5 text-sky-800">
-                      Apresente este QR Code na entrada do evento. Ele usa um
-                      token seguro gerado pela API.
-                    </p>
-                  </div>
-                </div>
-              </section>
-
-              <section className="p-6 md:p-8">
-                <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
-                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">
-                    Dados do titular
-                  </p>
-
-                  <div className="mt-6 grid gap-4">
-                    <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-6">
-                      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
-                        Nome
-                      </p>
-
-                      <p className="mt-3 text-3xl font-black leading-tight text-slate-950">
-                        {selectedTicket.holderName || "-"}
-                      </p>
+                  <div className="grid w-full grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className={smallLabelClass()}>Titular</p>
+                      <p className="mt-1 font-black">{entry.ticket.holderName || "-"}</p>
                     </div>
-
-                    <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-6">
-                      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
-                        CPF
-                      </p>
-
-                      <p className="mt-3 text-2xl font-black leading-tight text-slate-950">
-                        {formatCpf(selectedTicket.holderCpf)}
-                      </p>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className={smallLabelClass()}>CPF</p>
+                      <p className="mt-1 font-black">{formatCpf(entry.ticket.holderCpf)}</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className={smallLabelClass()}>Valor</p>
+                      <p className="mt-1 font-black">{formatMoney(entry.amount)}</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className={smallLabelClass()}>Código</p>
+                      <p className="mt-1 break-all text-[10px] font-black">{entry.ticket.code || "-"}</p>
                     </div>
                   </div>
                 </div>
-
-                <div className="mt-5 rounded-[24px] border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-5">
-                  <div className="flex gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-base font-black text-amber-800">
-                      !
-                    </span>
-
-                    <div>
-                      <p className="text-sm font-black text-amber-950">
-                        Proteja seu ingresso
-                      </p>
-
-                      <p className="mt-2 text-sm leading-6 text-amber-800">
-                        Não compartilhe este QR Code publicamente. Se o ingresso
-                        for transferido ou cancelado, o acesso pode mudar
-                        automaticamente.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-6 grid gap-3 print:hidden md:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => copyTicketCode(selectedTicket.code || selectedTicket.id)}
-                    className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
-                  >
-                    Copiar código
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handlePrintDigitalTicket}
-                    disabled={!selectedTicketQrToken}
-                    className="rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                  >
-                    Imprimir ingresso
-                  </button>
-
-                  {canTransferTicket(selectedTicket) ? (
-                    <button
-                      type="button"
-                      onClick={() => openTransferModal(selectedTicket)}
-                      className="rounded-2xl border border-sky-200 bg-sky-50 px-5 py-4 text-sm font-black text-sky-700 shadow-sm transition hover:bg-sky-100"
-                    >
-                      Transferir ingresso
-                    </button>
-                  ) : null}
-
-                  {isReturnOnlyTicket(selectedTicket) ? (
-                    <button
-                      type="button"
-                      onClick={() => handleReturnTicket(selectedTicket)}
-                      disabled={returningTicket}
-                      className="rounded-2xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 shadow-sm transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {returningTicket ? "Devolvendo..." : "Devolver ingresso"}
-                    </button>
-                  ) : null}
-
-                  {isPaidOrder && selectedTicket.status === "AVAILABLE" ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleCancelTicket(selectedTicket, "REFUND_70")}
-                        disabled={!!cancelingTicketMode}
-                        className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-black text-amber-700 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Reembolso 70%
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleCancelTicket(selectedTicket, "WALLET_80")}
-                        disabled={!!cancelingTicketMode}
-                        className="rounded-2xl border border-violet-200 bg-violet-50 px-5 py-4 text-sm font-black text-violet-700 shadow-sm transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Crédito 80%
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              </section>
-            </div>
-          </div>
+              </article>
+            );
+          })}
         </div>
+      </section>
+
+      {selectedTicket ? (
+        <TicketQrModal
+          ticket={selectedTicket}
+          token={selectedTicketQrToken}
+          loading={selectedTicketQrLoading}
+          error={selectedTicketQrError}
+          onClose={closeSelectedTicket}
+          onRefund={() => handleRequestTicketWalletRefund(selectedTicket)}
+          refunding={cancelingTicketRefundId === selectedTicket.id}
+          canRefund={canRequestTicketWalletRefund(selectedTicket)}
+          onPrint={() => handlePrintDigitalTicket("qr")}
+          onTransfer={() => openTransferModal(selectedTicket)}
+          canTransfer={canTransferTicket(selectedTicket)}
+        />
       ) : null}
 
-      {transferModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
-          <form
-            onSubmit={handleSubmitTransfer}
-            className="w-full max-w-[520px] rounded-[28px] bg-white p-6 shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                  Transferência
-                </p>
-                <h2 className="mt-2 text-2xl font-black text-slate-950">
-                  Enviar ingresso
-                </h2>
-                <p className="mt-2 text-sm text-slate-500">
-                  Informe o CPF da pessoa que receberá este ingresso.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={closeTransferModal}
-                className="rounded-full border border-slate-200 px-3 py-1 text-sm font-black text-slate-600 hover:bg-slate-50"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="mt-6">
-              <label className="mb-2 block text-sm font-bold text-slate-700">
-                CPF do destinatário
-              </label>
+      {transferModalOpen && transferSourceTicket ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <form onSubmit={handleSubmitTransfer} className="w-full max-w-lg rounded-[30px] bg-white p-6 shadow-2xl">
+            <p className="text-[12px] font-black uppercase tracking-[0.2em] text-sky-600">Transferir QR Code</p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">Enviar para outro CPF</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              A API confere o limite do produtor também na transferência. Se o destino já atingiu o limite, a transferência será bloqueada.
+            </p>
+            <label className="mt-5 block">
+              <span className="text-sm font-bold text-slate-700">CPF do destinatário</span>
               <input
                 value={transferTargetCpf}
-                onChange={(event) => setTransferTargetCpf(formatCpf(event.target.value))}
-                maxLength={14}
-                inputMode="numeric"
+                onChange={(event) => setTransferTargetCpf(event.target.value)}
+                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
                 placeholder="000.000.000-00"
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
               />
-            </div>
-
-            <button
-              type="submit"
-              disabled={transferSubmitting}
-              className="mt-6 w-full rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
-              {transferSubmitting ? "Enviando..." : "Criar transferência"}
-            </button>
-          </form>
-        </div>
-      ) : null}
-
-      {producerTicketOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
-          <form
-            onSubmit={handleCreateSupportThread}
-            className="w-full max-w-[620px] rounded-[28px] bg-white p-6 shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                  Suporte
-                </p>
-                <h2 className="mt-2 text-2xl font-black text-slate-950">
-                  Falar com o produtor
-                </h2>
-                <p className="mt-2 text-sm text-slate-500">
-                  Abra uma solicitação vinculada a este pedido.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setProducerTicketOpen(false)}
-                className="rounded-full border border-slate-200 px-3 py-1 text-sm font-black text-slate-600 hover:bg-slate-50"
-              >
-                ✕
+            </label>
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button type="button" onClick={closeTransferModal} className="rounded-2xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 hover:border-slate-950">
+                Cancelar
+              </button>
+              <button type="submit" disabled={transferSubmitting} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                {transferSubmitting ? "Enviando..." : "Transferir"}
               </button>
             </div>
-
-            <div className="mt-6">
-              <label className="mb-2 block text-sm font-bold text-slate-700">
-                Assunto
-              </label>
-              <input
-                value={ticketSubject}
-                onChange={(event) => setTicketSubject(event.target.value)}
-                placeholder="Ex: Dúvida sobre meu ingresso"
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
-              />
-            </div>
-
-            <div className="mt-4">
-              <label className="mb-2 block text-sm font-bold text-slate-700">
-                Mensagem
-              </label>
-              <textarea
-                value={ticketMessage}
-                onChange={(event) => setTicketMessage(event.target.value)}
-                rows={5}
-                placeholder="Descreva sua solicitação..."
-                className="w-full resize-none rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={creatingSupportThread}
-              className="mt-6 w-full rounded-xl bg-slate-950 px-5 py-4 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
-              {creatingSupportThread ? "Enviando..." : "Enviar solicitação"}
-            </button>
           </form>
         </div>
       ) : null}
     </main>
+  );
+}
+
+function TicketGroupCard({
+  group,
+  canOpen,
+  canTransferTicket,
+  onOpenTicket,
+  onTransferTicket,
+}: {
+  group: TicketViewGroup;
+  canOpen: boolean;
+  canTransferTicket: (ticket?: TicketItem | null) => boolean;
+  onOpenTicket: (ticket: TicketItem) => void;
+  onTransferTicket: (ticket: TicketItem) => void;
+}) {
+  const [open, setOpen] = useState(group.kind !== "NORMAL");
+  const isTableFull = group.kind === "TABLE_FULL";
+  const isTableChair = group.kind === "TABLE_CHAIR";
+
+  return (
+    <article className="overflow-hidden rounded-[26px] border border-slate-200 bg-white shadow-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full flex-col gap-4 p-5 text-left transition hover:bg-slate-50 md:flex-row md:items-center md:justify-between"
+      >
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] ${isTableFull ? "bg-sky-100 text-sky-700" : isTableChair ? "bg-cyan-100 text-cyan-700" : "bg-slate-100 text-slate-600"}`}>
+              {isTableFull ? "Mesa completa" : isTableChair ? "Cadeiras" : "Ingresso"}
+            </span>
+            {group.status ? (
+              <span className={`rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] ${getStatusClasses(group.status)}`}>
+                {getStatusLabel(group.status)}
+              </span>
+            ) : null}
+          </div>
+          <h3 className="mt-3 text-xl font-black text-slate-950">{group.title}</h3>
+          <p className="mt-1 text-sm leading-6 text-slate-600">{group.subtitle}</p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 md:min-w-[320px]">
+          <div className="rounded-2xl bg-slate-50 p-3 text-center">
+            <p className={smallLabelClass()}>Limite</p>
+            <p className="mt-1 text-lg font-black">{group.commercialQuantity}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-3 text-center">
+            <p className={smallLabelClass()}>QRs</p>
+            <p className="mt-1 text-lg font-black">{group.qrCount}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-3 text-center">
+            <p className={smallLabelClass()}>Valor</p>
+            <p className="mt-1 text-sm font-black">{formatMoney(group.totalAmount)}</p>
+          </div>
+        </div>
+      </button>
+
+      {open ? (
+        <div className="border-t border-slate-200 bg-slate-50 p-4">
+          {isTableFull ? (
+            <div className="mb-4 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-900">
+              Esta mesa conta como <strong>1 ingresso principal</strong> para limite de compra, mas libera <strong>{group.qrCount} QR Code(s)</strong> para entrada, um por cadeira/pessoa.
+              {summarizeTicketBreakdown(group) ? (
+                <p className="mt-2 font-black text-sky-950">
+                  Distribuição: {summarizeTicketBreakdown(group)}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="grid gap-3 md:grid-cols-2">
+            {group.tickets.map((entry, index) => (
+              <TicketSingleCard
+                key={entry.ticket.id}
+                ticket={entry.ticket}
+                title={entry.title || `QR ${index + 1}`}
+                subtitle={entry.subtitle}
+                amount={entry.amount}
+                canOpen={canOpen}
+                canTransfer={canTransferTicket(entry.ticket)}
+                onOpen={() => onOpenTicket(entry.ticket)}
+                onTransfer={() => onTransferTicket(entry.ticket)}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function TicketSingleCard({
+  ticket,
+  title,
+  subtitle,
+  amount,
+  canOpen,
+  canTransfer,
+  onOpen,
+  onTransfer,
+}: {
+  ticket: TicketItem;
+  title: string;
+  subtitle: string;
+  amount: number;
+  canOpen: boolean;
+  canTransfer: boolean;
+  onOpen: () => void;
+  onTransfer: () => void;
+}) {
+  const metadata = parseAccessMetadata(ticket);
+  const holderLabel = ticket.holderName || "Titular a confirmar";
+  const cpfLabel = formatCpf(ticket.holderCpf);
+
+  return (
+    <div className="ticket-print-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-black text-slate-950">{title}</p>
+          <p className="mt-1 text-xs font-bold text-slate-500">{subtitle}</p>
+        </div>
+        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${getStatusClasses(ticket.status)}`}>
+          {getStatusLabel(ticket.status)}
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-xl bg-slate-50 p-3">
+          <p className="font-black uppercase tracking-[0.12em] text-slate-400">Titular</p>
+          <p className="mt-1 font-bold text-slate-800">{holderLabel}</p>
+        </div>
+        <div className="rounded-xl bg-slate-50 p-3">
+          <p className="font-black uppercase tracking-[0.12em] text-slate-400">CPF</p>
+          <p className="mt-1 font-bold text-slate-800">{cpfLabel}</p>
+        </div>
+        <div className="rounded-xl bg-slate-50 p-3">
+          <p className="font-black uppercase tracking-[0.12em] text-slate-400">Tipo</p>
+          <p className="mt-1 font-bold text-slate-800">{metadata.ticketKindLabel || metadata.ticketKind || getTicketKindLabel(ticket)}</p>
+        </div>
+        <div className="rounded-xl bg-slate-50 p-3">
+          <p className="font-black uppercase tracking-[0.12em] text-slate-400">Valor</p>
+          <p className="mt-1 font-bold text-slate-800">{formatMoney(amount)}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+        <button
+          type="button"
+          onClick={onOpen}
+          disabled={!canOpen}
+          className="flex-1 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+        >
+          {canOpen ? "Abrir QR" : "QR após pagamento"}
+        </button>
+        <button
+          type="button"
+          onClick={onTransfer}
+          disabled={!canTransfer}
+          className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:border-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Transferir
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TicketQrModal({
+  ticket,
+  token,
+  loading,
+  error,
+  onClose,
+  onRefund,
+  refunding,
+  canRefund,
+  onPrint,
+  onTransfer,
+  canTransfer,
+}: {
+  ticket: TicketItem;
+  token: string;
+  loading: boolean;
+  error: string;
+  onClose: () => void;
+  onRefund: () => void;
+  refunding: boolean;
+  canRefund: boolean;
+  onPrint: () => void;
+  onTransfer: () => void;
+  canTransfer: boolean;
+}) {
+  const metadata = parseAccessMetadata(ticket);
+  const title = ticket.accessLabel || metadata.label || "Ingresso";
+  const kind = metadata.ticketKindLabel || metadata.ticketKind || getTicketKindLabel(ticket);
+  const chair = metadata.chairLabel || (metadata.chairIndex ? `C${metadata.chairIndex}` : "");
+
+  return (
+    <div className="qr-print-area fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm print:static print:block print:bg-white print:p-0">
+      <section className="w-full max-w-[560px] overflow-hidden rounded-[34px] bg-white shadow-2xl print:shadow-none">
+        <div className="bg-slate-950 p-6 text-white">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[12px] font-black uppercase tracking-[0.2em] text-sky-300">QR Code seguro</p>
+              <h2 className="mt-2 text-2xl font-black">{title}</h2>
+              <p className="mt-1 text-sm text-white/70">
+                {chair ? `${chair} - ` : ""}{kind}
+              </p>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-2xl bg-white px-4 py-2 text-sm font-black text-slate-950 print:hidden">
+              Fechar
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6">
+          <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-6 text-center">
+            {loading ? (
+              <div className="flex h-[260px] items-center justify-center text-sm font-bold text-slate-500">
+                Gerando QR Code...
+              </div>
+            ) : error ? (
+              <div className="flex h-[260px] items-center justify-center rounded-2xl bg-rose-50 p-6 text-sm font-bold text-rose-700">
+                {error}
+              </div>
+            ) : token ? (
+              <div className="inline-block rounded-[24px] bg-white p-5 shadow-sm">
+                <QRCodeSVG value={token} size={240} level="H" includeMargin />
+              </div>
+            ) : (
+              <div className="flex h-[260px] items-center justify-center text-sm font-bold text-slate-500">
+                QR Code indisponível.
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5 grid gap-3 text-sm md:grid-cols-2">
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className={smallLabelClass()}>Titular</p>
+              <p className="mt-1 font-black">{ticket.holderName || "-"}</p>
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className={smallLabelClass()}>CPF</p>
+              <p className="mt-1 font-black">{formatCpf(ticket.holderCpf)}</p>
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className={smallLabelClass()}>Status</p>
+              <p className="mt-1 font-black">{getStatusLabel(ticket.status)}</p>
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className={smallLabelClass()}>Código</p>
+              <p className="mt-1 break-all text-xs font-black">{ticket.code || "-"}</p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row print:hidden">
+            <button type="button" onClick={onPrint} className="flex-1 rounded-2xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 hover:border-slate-950">
+              Imprimir
+            </button>
+            <button type="button" onClick={onRefund} disabled={!canRefund || refunding} className="flex-1 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-black text-rose-700 hover:border-rose-400 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400">
+              {refunding ? "Estornando..." : "Estornar 80%"}
+            </button>
+            <button type="button" onClick={onTransfer} disabled={!canTransfer} className="flex-1 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+              Transferir
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }

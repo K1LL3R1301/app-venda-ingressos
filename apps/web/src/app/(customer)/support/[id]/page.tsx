@@ -1,6 +1,8 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 type SupportMessage = {
   id: string;
@@ -39,58 +41,89 @@ type SupportThread = {
   messages?: SupportMessage[];
 };
 
+const API_BASE_URL = "http://localhost:3001/v1";
+
+function toNumber(value?: string | number) {
+  if (value === undefined || value === null) return 0;
+  const numeric = typeof value === "number" ? value : Number(String(value).replace(",", "."));
+  return Number.isNaN(numeric) ? 0 : numeric;
+}
+
 function formatDate(value?: string) {
   if (!value) return "-";
-
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
-  return date.toLocaleString("pt-BR");
+function formatMoney(value?: string | number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(toNumber(value));
+}
+
+function getStatusLabel(status?: string) {
+  if (status === "OPEN") return "Aberto";
+  if (status === "CUSTOMER_REPLY") return "Você respondeu";
+  if (status === "PRODUCER_REPLY") return "Resposta recebida";
+  if (status === "CLOSED") return "Fechado";
+  return status || "Sem status";
 }
 
 function getStatusClasses(status?: string) {
-  if (status === "OPEN") {
-    return "bg-emerald-50 text-emerald-700 border border-emerald-200";
-  }
-
-  if (status === "CUSTOMER_REPLY") {
-    return "bg-sky-50 text-sky-700 border border-sky-200";
-  }
-
-  if (status === "PRODUCER_REPLY") {
-    return "bg-violet-50 text-violet-700 border border-violet-200";
-  }
-
-  if (status === "CLOSED") {
-    return "bg-gray-100 text-gray-700 border border-gray-200";
-  }
-
-  return "bg-gray-50 text-gray-700 border border-gray-200";
+  if (status === "OPEN") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "CUSTOMER_REPLY") return "border-sky-200 bg-sky-50 text-sky-700";
+  if (status === "PRODUCER_REPLY") return "border-violet-200 bg-violet-50 text-violet-700";
+  if (status === "CLOSED") return "border-slate-200 bg-slate-100 text-slate-700";
+  return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
 function getSenderBubbleClasses(senderType?: string) {
   if (senderType === "CUSTOMER") {
-    return "ml-auto bg-sky-600 text-white";
+    return "ml-auto border-sky-500 bg-sky-600 text-white";
   }
 
-  return "mr-auto bg-white border border-gray-200 text-gray-900";
+  return "mr-auto border-slate-200 bg-white text-slate-900";
+}
+
+function getSenderLabel(item: SupportMessage) {
+  if (item.senderType === "CUSTOMER") return item.senderName || "Você";
+  if (item.senderType === "ADMIN") return item.senderName || "Atendimento";
+  if (item.senderType === "OPERATOR") return item.senderName || "Atendimento";
+  if (item.senderType === "PRODUCER") return item.senderName || "Produtor";
+  return item.senderName || "Atendimento";
+}
+
+function quickReply(kind: string) {
+  if (kind === "refund") return "Olá! Quero ajuda com reembolso/estorno deste pedido.";
+  if (kind === "ticket") return "Olá! Tenho dúvida sobre meus ingressos ou QR Codes.";
+  if (kind === "transfer") return "Olá! Quero ajuda com transferência de ingresso.";
+  return "Olá! Preciso de ajuda com este atendimento.";
+}
+
+function cardClass() {
+  return "rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm";
 }
 
 export default function CustomerSupportThreadPage() {
+  const params = useParams();
+  const threadId = String(params.id || "");
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
   const [thread, setThread] = useState<SupportThread | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [message, setMessage] = useState("");
 
-  const threadId = useMemo(() => {
-    if (typeof window === "undefined") return "";
-
-    const parts = window.location.pathname.split("/");
-    return parts[parts.length - 1] || "";
-  }, []);
-
-  async function loadThread(threadIdParam: string) {
+  async function loadThread(threadIdParam: string, silent = false) {
     const token = localStorage.getItem("token");
 
     if (!token || token === "undefined") {
@@ -100,39 +133,39 @@ export default function CustomerSupportThreadPage() {
 
     if (!threadIdParam) {
       alert("Atendimento inválido");
-      window.location.href = "/orders";
+      window.location.href = "/support";
       return;
     }
 
     try {
-      const res = await fetch(
-        `http://localhost:3001/v1/support/customer/${threadIdParam}`,
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+      const res = await fetch(`${API_BASE_URL}/support/customer/${threadIdParam}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      );
+      });
 
       const data = await res.json();
 
+      if (res.status === 401) {
+        localStorage.removeItem("token");
+        window.location.href = "/login";
+        return;
+      }
+
       if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao carregar atendimento",
-        );
-        window.location.href = "/orders";
+        if (!silent) {
+          alert(typeof data?.message === "string" ? data.message : "Erro ao carregar atendimento");
+          window.location.href = "/support";
+        }
         return;
       }
 
       setThread(data);
     } catch (error) {
       console.error("SUPPORT THREAD ERROR:", error);
-      alert("Erro ao conectar com a API");
-      window.location.href = "/orders";
+      if (!silent) alert("Erro ao conectar com a API");
     } finally {
       setLoading(false);
     }
@@ -142,9 +175,9 @@ export default function CustomerSupportThreadPage() {
     loadThread(threadId);
   }, [threadId]);
 
-  function goTo(path: string) {
-    window.location.href = path;
-  }
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [thread?.messages?.length]);
 
   async function handleSendMessage(e: FormEvent) {
     e.preventDefault();
@@ -171,28 +204,19 @@ export default function CustomerSupportThreadPage() {
     setSending(true);
 
     try {
-      const res = await fetch(
-        `http://localhost:3001/v1/support/customer/${thread.id}/messages`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            message: trimmedMessage,
-          }),
+      const res = await fetch(`${API_BASE_URL}/support/customer/${thread.id}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      );
+        body: JSON.stringify({ message: trimmedMessage }),
+      });
 
       const data = await res.json();
 
       if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao enviar mensagem",
-        );
+        alert(typeof data?.message === "string" ? data.message : "Erro ao enviar mensagem");
         return;
       }
 
@@ -222,25 +246,18 @@ export default function CustomerSupportThreadPage() {
     setReopening(true);
 
     try {
-      const res = await fetch(
-        `http://localhost:3001/v1/support/customer/${thread.id}/reopen`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
+      const res = await fetch(`${API_BASE_URL}/support/customer/${thread.id}/reopen`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      );
+      });
 
       const data = await res.json();
 
       if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao reabrir atendimento",
-        );
+        alert(typeof data?.message === "string" ? data.message : "Erro ao reabrir atendimento");
         return;
       }
 
@@ -253,225 +270,210 @@ export default function CustomerSupportThreadPage() {
     }
   }
 
+  const sortedMessages = useMemo(() => {
+    return [...(thread?.messages || [])].sort((a, b) => {
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      return aTime - bTime;
+    });
+  }, [thread?.messages]);
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-6xl px-4 py-10">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
-            Carregando atendimento...
-          </div>
+      <main className="mx-auto max-w-7xl px-4 py-8">
+        <div className={cardClass()}>
+          <p className="text-lg font-semibold text-slate-800">Carregando atendimento...</p>
         </div>
-      </div>
+      </main>
     );
   }
 
   if (!thread) {
     return (
-      <div className="min-h-screen bg-[#f6f7fb]">
-        <div className="mx-auto max-w-6xl px-4 py-10">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-8 shadow-sm">
-            Atendimento não encontrado.
-          </div>
+      <main className="mx-auto max-w-7xl px-4 py-8">
+        <div className={cardClass()}>
+          <p className="text-lg font-semibold text-slate-800">Atendimento não encontrado.</p>
+          <Link href="/support" className="mt-4 inline-flex rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white">
+            Voltar para suporte
+          </Link>
         </div>
-      </div>
+      </main>
     );
   }
 
-  const organizerName =
-    thread.organizer?.tradeName || thread.organizer?.legalName || "Produtor";
-
+  const organizerName = thread.organizer?.tradeName || thread.organizer?.legalName || "Produtor";
   const isClosed = thread.status === "CLOSED";
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <section className="overflow-hidden rounded-[32px] bg-gradient-to-r from-fuchsia-600 via-purple-600 to-indigo-700 p-8 text-white shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/75">
-          Atendimento
-        </p>
+    <main className="mx-auto max-w-7xl px-4 py-8">
+      <section className="overflow-hidden rounded-[36px] bg-slate-950 text-white shadow-sm">
+        <div className="p-8 md:p-10">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClasses(thread.status)}`}>{getStatusLabel(thread.status)}</span>
+            <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold text-white/80">Ticket #{thread.id.slice(0, 8)}</span>
+          </div>
 
-        <h1 className="mt-4 text-4xl font-black leading-tight md:text-5xl">
-          {thread.subject || "Suporte"}
-        </h1>
+          <h1 className="mt-5 text-4xl font-black leading-tight md:text-5xl">{thread.subject || "Atendimento"}</h1>
+          <p className="mt-4 max-w-3xl text-sm leading-7 text-white/80">
+            Converse com o produtor ou atendimento sobre este pedido. Toda a conversa fica registrada no app.
+          </p>
 
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <span
-            className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClasses(
-              thread.status,
-            )} bg-white`}
-          >
-            {thread.status || "SEM STATUS"}
-          </span>
+          <div className="mt-8 grid gap-3 md:grid-cols-3">
+            <div className="rounded-[24px] border border-white/10 bg-white/10 p-4 backdrop-blur">
+              <p className="text-xs uppercase tracking-[0.2em] text-white/55">Evento</p>
+              <p className="mt-2 font-black">{thread.event?.name || "-"}</p>
+            </div>
+            <div className="rounded-[24px] border border-white/10 bg-white/10 p-4 backdrop-blur">
+              <p className="text-xs uppercase tracking-[0.2em] text-white/55">Pedido</p>
+              <p className="mt-2 break-all font-black">#{thread.order?.id || "-"}</p>
+            </div>
+            <div className="rounded-[24px] border border-white/10 bg-white/10 p-4 backdrop-blur">
+              <p className="text-xs uppercase tracking-[0.2em] text-white/55">Última interação</p>
+              <p className="mt-2 font-black">{formatDate(thread.lastMessageAt || thread.updatedAt)}</p>
+            </div>
+          </div>
 
-          <span className="text-sm text-white/85">
-            Evento: {thread.event?.name || "-"}
-          </span>
-
-          <span className="text-sm text-white/85">
-            Pedido: #{thread.order?.id || "-"}
-          </span>
-        </div>
-
-        <div className="mt-6 flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => goTo("/orders")}
-            className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-sky-700 shadow-sm hover:bg-sky-50"
-          >
-            Voltar para pedidos
-          </button>
-
-          {thread.order?.id ? (
-            <button
-              type="button"
-              onClick={() => goTo(`/orders/${thread.order?.id}`)}
-              className="rounded-2xl border border-white/25 bg-white/10 px-5 py-3 text-sm font-semibold text-white hover:bg-white/15"
-            >
-              Ver pedido
-            </button>
-          ) : null}
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link href="/support" className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-950 hover:bg-slate-100">
+              Voltar ao suporte
+            </Link>
+            {thread.order?.id ? (
+              <Link href={`/orders/${thread.order.id}`} className="rounded-2xl border border-white/20 bg-white/10 px-5 py-3 text-sm font-black text-white hover:bg-white/15">
+                Ver pedido
+              </Link>
+            ) : null}
+          </div>
         </div>
       </section>
 
-      <section className="mt-8 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="space-y-6">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-900">
-              Dados do atendimento
-            </h2>
+      <section className="mt-8 grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+        <aside className="space-y-6">
+          <div className={cardClass()}>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-600">Detalhes</p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">Dados do atendimento</h2>
 
-            <div className="mt-5 grid gap-4">
-              <div className="rounded-2xl bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Produtor</p>
-                <p className="mt-1 font-semibold text-gray-900">
-                  {organizerName}
-                </p>
+            <div className="mt-5 grid gap-3">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Produtor</p>
+                <p className="mt-2 font-black text-slate-950">{organizerName}</p>
               </div>
-
-              <div className="rounded-2xl bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Evento</p>
-                <p className="mt-1 font-semibold text-gray-900">
-                  {thread.event?.name || "-"}
-                </p>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Evento</p>
+                <p className="mt-2 font-black text-slate-950">{thread.event?.name || "-"}</p>
+                <p className="mt-1 text-sm text-slate-500">{formatDate(thread.event?.eventDate)}</p>
               </div>
-
-              <div className="rounded-2xl bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Pedido</p>
-                <p className="mt-1 font-semibold text-gray-900">
-                  #{thread.order?.id || "-"}
-                </p>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Pedido</p>
+                <p className="mt-2 break-all font-black text-slate-950">#{thread.order?.id || "-"}</p>
+                <p className="mt-1 text-sm text-slate-500">{thread.order?.status || "-"} • {formatMoney(thread.order?.totalAmount)}</p>
               </div>
-
-              <div className="rounded-2xl bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Criado em</p>
-                <p className="mt-1 font-semibold text-gray-900">
-                  {formatDate(thread.createdAt)}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Última interação</p>
-                <p className="mt-1 font-semibold text-gray-900">
-                  {formatDate(thread.lastMessageAt)}
-                </p>
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Criado em</p>
+                <p className="mt-2 font-black text-slate-950">{formatDate(thread.createdAt)}</p>
               </div>
             </div>
           </div>
 
           {isClosed ? (
             <div className="rounded-[28px] border border-amber-200 bg-amber-50 p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-amber-800">
-                Atendimento encerrado
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-amber-700">
-                Você pode reabrir este atendimento e continuar a conversa.
-              </p>
-
+              <h2 className="text-xl font-black text-amber-900">Atendimento encerrado</h2>
+              <p className="mt-3 text-sm leading-6 text-amber-800">Reabra para continuar a conversa caso ainda precise de ajuda.</p>
               <button
                 type="button"
                 onClick={handleReopenThread}
                 disabled={reopening}
-                className="mt-5 rounded-2xl bg-amber-600 px-4 py-3 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="mt-5 rounded-2xl bg-amber-600 px-4 py-3 text-sm font-black text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {reopening ? "Reabrindo..." : "Reabrir atendimento"}
               </button>
             </div>
-          ) : null}
-        </div>
+          ) : (
+            <div className="rounded-[28px] border border-cyan-200 bg-cyan-50 p-6 shadow-sm">
+              <h2 className="text-xl font-black text-cyan-950">Respostas rápidas</h2>
+              <p className="mt-2 text-sm text-cyan-800">Use um modelo e ajuste antes de enviar.</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {[
+                  { id: "refund", label: "Reembolso" },
+                  { id: "ticket", label: "QR Code" },
+                  { id: "transfer", label: "Transferência" },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setMessage(quickReply(item.id))}
+                    className="rounded-full border border-cyan-200 bg-white px-3 py-2 text-xs font-black text-cyan-800 hover:bg-cyan-100"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
 
-        <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-bold text-gray-900">Conversa</h2>
+        <section className={cardClass()}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-600">Conversa</p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">Histórico do atendimento</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadThread(thread.id, true)}
+              className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-50"
+            >
+              Atualizar
+            </button>
+          </div>
 
-          <div className="mt-5 max-h-[520px] space-y-4 overflow-y-auto rounded-[24px] bg-gray-50 p-4">
-            {thread.messages?.length ? (
-              thread.messages.map((item) => (
-                <div
-                  key={item.id}
-                  className={`max-w-[85%] rounded-[22px] px-4 py-3 shadow-sm ${getSenderBubbleClasses(
-                    item.senderType,
-                  )}`}
-                >
+          <div className="mt-5 max-h-[620px] space-y-4 overflow-y-auto rounded-[28px] bg-slate-50 p-4">
+            {sortedMessages.length ? (
+              sortedMessages.map((item) => (
+                <div key={item.id} className={`max-w-[88%] rounded-[24px] border px-4 py-3 shadow-sm ${getSenderBubbleClasses(item.senderType)}`}>
                   <div className="mb-2 flex flex-wrap items-center gap-2 text-xs opacity-80">
-                    <span className="font-semibold">
-                      {item.senderType === "CUSTOMER"
-                        ? item.senderName || "Você"
-                        : item.senderName || "Produtor"}
-                    </span>
+                    <span className="font-black">{getSenderLabel(item)}</span>
                     <span>•</span>
                     <span>{formatDate(item.createdAt)}</span>
                   </div>
-
-                  <p className="whitespace-pre-wrap text-sm leading-6">
-                    {item.message || ""}
-                  </p>
+                  <p className="whitespace-pre-wrap text-sm leading-6">{item.message || ""}</p>
                 </div>
               ))
             ) : (
-              <div className="rounded-2xl bg-white p-4 text-sm text-gray-500">
-                Nenhuma mensagem ainda.
-              </div>
+              <div className="rounded-2xl bg-white p-4 text-sm text-slate-500">Nenhuma mensagem ainda.</div>
             )}
+            <div ref={bottomRef} />
           </div>
 
           {!isClosed ? (
             <form onSubmit={handleSendMessage} className="mt-5 space-y-4">
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  Nova mensagem
-                </label>
+                <label className="mb-2 block text-sm font-black text-slate-800">Nova mensagem</label>
                 <textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  className="min-h-[140px] w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-sky-500"
-                  placeholder="Digite sua mensagem para o produtor"
+                  className="min-h-[150px] w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-4 focus:ring-cyan-50"
+                  placeholder="Digite sua mensagem para o produtor ou atendimento"
                 />
               </div>
-
               <div className="flex flex-wrap gap-3">
                 <button
                   type="submit"
                   disabled={sending}
-                  className="rounded-2xl bg-sky-600 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {sending ? "Enviando..." : "Enviar mensagem"}
                 </button>
-
                 {thread.order?.id ? (
-                  <button
-                    type="button"
-                    onClick={() => goTo(`/orders/${thread.order?.id}`)}
-                    className="rounded-2xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-                  >
+                  <Link href={`/orders/${thread.order.id}`} className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">
                     Voltar ao pedido
-                  </button>
+                  </Link>
                 ) : null}
               </div>
             </form>
           ) : (
-            <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-              Este atendimento está encerrado.
-            </div>
+            <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Este atendimento está encerrado. Reabra para enviar nova mensagem.</div>
           )}
-        </div>
+        </section>
       </section>
     </main>
   );

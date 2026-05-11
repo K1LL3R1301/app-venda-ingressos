@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -1221,8 +1221,8 @@ export default function AdminEventDetailsPage() {
           <Link href={publicHref} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50">
             Página pública
           </Link>
-          <Link href="/admin/events/new" className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-sky-700">
-            Novo evento
+          <Link href={`/admin/events/${event.id}/edit`} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-sm transition hover:bg-sky-700">
+            Editar evento
           </Link>
         </div>
       </div>

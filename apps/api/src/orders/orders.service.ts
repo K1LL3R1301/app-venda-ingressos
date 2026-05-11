@@ -74,6 +74,37 @@ type RawPlaceReservationRow = {
   status: string;
 };
 
+type RawFullTableReservationRow = {
+  id: string;
+  eventSessionId: string | null;
+  venueSectorId: string | null;
+  seatMapObjectId: string | null;
+  ticketTypeId: string | null;
+  orderId: string | null;
+  userId: string | null;
+  physicalKey: string;
+  label: string | null;
+  quantity: number;
+  chairCount: number | null;
+  subTickets: unknown;
+  amount: unknown;
+  status: string;
+};
+
+type RawOrderHolderRow = {
+  customerUserId: string | null;
+  customerName: string | null;
+  customerEmail: string | null;
+  customerCpf: string | null;
+};
+
+type RawTicketHolderRow = {
+  holderName: string | null;
+  holderEmail: string | null;
+  holderCpf: string | null;
+  currentOwnerUserId: string | null;
+};
+
 @Injectable()
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -94,6 +125,115 @@ export class OrdersService {
     cancellations: true,
     transferRequests: true,
   } as const;
+
+
+
+  private async attachTicketAccessColumnsToOrder<T>(orderInput: T): Promise<T> {
+    const orders = Array.isArray(orderInput)
+      ? (orderInput as any[]).filter(Boolean)
+      : orderInput
+        ? [orderInput as any]
+        : [];
+
+    const ticketIds: string[] = [];
+
+    for (const order of orders) {
+      for (const item of order?.items || []) {
+        for (const ticket of item?.tickets || []) {
+          if (ticket?.id) ticketIds.push(ticket.id);
+        }
+      }
+    }
+
+    if (ticketIds.length === 0) {
+      return orderInput;
+    }
+
+    try {
+      const placeholders = ticketIds.map((_, index) => `$${index + 1}`).join(', ');
+      const rows = await this.prisma.$queryRawUnsafe<Array<{
+        id: string;
+        eventSessionId: string | null;
+        venueSectorId: string | null;
+        seatMapObjectId: string | null;
+        accessKind: string | null;
+        accessLabel: string | null;
+        accessMetadata: unknown | null;
+      }>>(
+        `SELECT "id", "eventSessionId", "venueSectorId", "seatMapObjectId",
+                "accessKind", "accessLabel", "accessMetadata"
+           FROM "Ticket"
+          WHERE "id" IN (${placeholders})`,
+        ...ticketIds,
+      );
+
+      const byId = new Map(rows.map((row) => [row.id, row]));
+
+      for (const order of orders) {
+        for (const item of order?.items || []) {
+          for (const ticket of item?.tickets || []) {
+            const extra = byId.get(ticket?.id);
+            if (!extra) continue;
+
+            ticket.eventSessionId = extra.eventSessionId;
+            ticket.venueSectorId = extra.venueSectorId;
+            ticket.seatMapObjectId = extra.seatMapObjectId;
+            ticket.accessKind = extra.accessKind;
+            ticket.accessLabel = extra.accessLabel;
+            ticket.accessMetadata = extra.accessMetadata;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Nao foi possivel anexar metadata de mesa/cadeira aos ingressos:', error);
+    }
+
+    return orderInput;
+  }
+
+
+
+  private parseTicketAccessMetadata(value: unknown): Record<string, any> {
+    if (!value) return {};
+
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+
+    if (typeof value === 'object') {
+      return value as Record<string, any>;
+    }
+
+    return {};
+  }
+
+  private async getTicketAccessInfo(ticketId: string, db: DbClient = this.prisma) {
+    const rows = await db.$queryRawUnsafe<Array<{
+      accessKind: string | null;
+      accessLabel: string | null;
+      accessMetadata: unknown | null;
+    }>>(
+      `SELECT "accessKind", "accessLabel", "accessMetadata"
+         FROM "Ticket"
+        WHERE "id" = $1
+        LIMIT 1`,
+      ticketId,
+    );
+
+    const row = rows[0];
+    const metadata = this.parseTicketAccessMetadata(row?.accessMetadata);
+
+    return {
+      accessKind: String(row?.accessKind || '').toUpperCase(),
+      accessLabel: row?.accessLabel || '',
+      metadata,
+    };
+  }
 
   private normalizeCpf(value?: string | null) {
     return String(value || '').replace(/\D/g, '');
@@ -117,17 +257,13 @@ export class OrdersService {
   }
 
   private getCancellationConfig(mode?: string) {
-    const normalizedMode = mode === 'WALLET_80' ? 'WALLET_80' : 'REFUND_70';
-
+    // Regra atual do projeto: todo reembolso cai como crédito de 80% na wallet.
+    // Reembolso bancário fica para uma etapa futura da Wallet.
     return {
-      mode: normalizedMode,
-      percent:
-        normalizedMode === 'WALLET_80'
-          ? new Prisma.Decimal('0.80')
-          : new Prisma.Decimal('0.70'),
-      createWalletCredit: normalizedMode === 'WALLET_80',
-      cancellationStatus:
-        normalizedMode === 'WALLET_80' ? 'CREDITED' : 'REFUND_REQUESTED',
+      mode: 'WALLET_80',
+      percent: new Prisma.Decimal('0.80'),
+      createWalletCredit: true,
+      cancellationStatus: 'CREDITED',
     };
   }
 
@@ -565,6 +701,184 @@ export class OrdersService {
     );
   }
 
+
+  private buildRemainingTableSubTicketsFromRows(
+    rows: Array<{ accessMetadata: unknown }>,
+  ) {
+    const grouped = new Map<
+      string,
+      {
+        ticketTypeId: string;
+        kind: string;
+        label: string;
+        quantity: number;
+        unitAmount: number;
+      }
+    >();
+
+    for (const row of rows) {
+      const metadata = this.parseTicketAccessMetadata(row.accessMetadata);
+      const ticketTypeId = String(metadata.ticketTypeId || '').trim();
+      const kind = String(metadata.ticketKind || metadata.ticketKindLabel || 'INGRESSO')
+        .trim()
+        .toUpperCase();
+      const label = String(metadata.ticketKindLabel || metadata.ticketKind || 'Ingresso').trim();
+      const unitAmount = Number(metadata.unitAmount || 0);
+      const key = `${ticketTypeId || 'sem-tipo'}:${kind}:${unitAmount}`;
+      const current = grouped.get(key) || {
+        ticketTypeId,
+        kind,
+        label,
+        quantity: 0,
+        unitAmount,
+      };
+
+      current.quantity += 1;
+      grouped.set(key, current);
+    }
+
+    return Array.from(grouped.values()).filter((item) => item.quantity > 0);
+  }
+
+  private async syncPlaceReservationAfterAccessTicketCancellation(params: {
+    db: Prisma.TransactionClient;
+    orderId: string;
+    orderItemId: string;
+    ticketId: string;
+    accessKind: string;
+    metadata: Record<string, any>;
+  }) {
+    const accessKind = String(params.accessKind || '').toUpperCase();
+    const metadata = params.metadata || {};
+    const physicalKey = String(metadata.physicalKey || '').trim();
+    const placeKey = String(metadata.placeId || '').trim();
+
+    if (!physicalKey && !placeKey) {
+      return;
+    }
+
+    if (accessKind === 'TABLE_FULL_ACCESS') {
+      const activeAccessTickets = await params.db.$queryRawUnsafe<
+        Array<{ id: string; accessMetadata: unknown }>
+      >(
+        `SELECT "id", "accessMetadata"
+           FROM "Ticket"
+          WHERE "orderItemId" = $1
+            AND "id" <> $2
+            AND "status" <> 'CANCELED'
+            AND "accessKind" = 'TABLE_FULL_ACCESS'
+            AND (
+              COALESCE("accessMetadata"->>'physicalKey', '') = $3
+              OR COALESCE("accessMetadata"->>'placeId', '') = $4
+            )
+          ORDER BY "createdAt" ASC`,
+        params.orderItemId,
+        params.ticketId,
+        physicalKey,
+        placeKey,
+      );
+
+      const remainingQuantity = activeAccessTickets.length;
+
+      if (remainingQuantity <= 0) {
+        await params.db.$executeRawUnsafe(
+          `UPDATE "PlaceReservation"
+              SET "status" = 'CANCELED',
+                  "quantity" = 0,
+                  "updatedAt" = NOW()
+            WHERE "orderId" = $1
+              AND "status" IN ('HELD', 'SOLD')
+              AND (
+                "physicalKey" = $2
+                OR "placeKey" = $3
+                OR "id" = $3
+              )`,
+          params.orderId,
+          physicalKey,
+          placeKey,
+        );
+        return;
+      }
+
+      const remainingSubTickets = this.buildRemainingTableSubTicketsFromRows(activeAccessTickets);
+      const remainingAmount = remainingSubTickets.reduce(
+        (sum, item) => sum + item.unitAmount * item.quantity,
+        0,
+      );
+      const chairCount = Math.max(
+        remainingQuantity,
+        Math.floor(Number(metadata.chairCount || remainingQuantity)),
+      );
+
+      await params.db.$executeRawUnsafe(
+        `UPDATE "PlaceReservation"
+            SET "kind" = 'TABLE_CHAIR',
+                "quantity" = $4,
+                "chairCount" = $5,
+                "subTickets" = CAST($6 AS jsonb),
+                "amount" = $7,
+                "updatedAt" = NOW()
+          WHERE "orderId" = $1
+            AND "status" IN ('HELD', 'SOLD')
+            AND (
+              "physicalKey" = $2
+              OR "placeKey" = $3
+              OR "id" = $3
+            )`,
+        params.orderId,
+        physicalKey,
+        placeKey,
+        remainingQuantity,
+        chairCount,
+        JSON.stringify(remainingSubTickets),
+        remainingAmount,
+      );
+
+      return;
+    }
+
+    if (accessKind === 'TABLE_CHAIR_ACCESS') {
+      await params.db.$executeRawUnsafe(
+        `UPDATE "PlaceReservation"
+            SET "quantity" = GREATEST("quantity" - 1, 0),
+                "amount" = GREATEST(COALESCE("amount", 0) - $4, 0),
+                "status" = CASE WHEN GREATEST("quantity" - 1, 0) <= 0 THEN 'CANCELED' ELSE "status" END,
+                "updatedAt" = NOW()
+          WHERE "orderId" = $1
+            AND "status" IN ('HELD', 'SOLD')
+            AND (
+              "placeKey" = $2
+              OR ("physicalKey" = $3 AND "ticketTypeId" = $5)
+            )`,
+        params.orderId,
+        placeKey,
+        physicalKey,
+        Number(metadata.unitAmount || 0),
+        String(metadata.ticketTypeId || ''),
+      );
+
+      return;
+    }
+
+    if (accessKind === 'SEAT_ACCESS') {
+      await params.db.$executeRawUnsafe(
+        `UPDATE "PlaceReservation"
+            SET "status" = 'CANCELED',
+                "updatedAt" = NOW()
+          WHERE "orderId" = $1
+            AND "status" IN ('HELD', 'SOLD')
+            AND (
+              "placeKey" = $2
+              OR "physicalKey" = $3
+              OR "id" = $2
+            )`,
+        params.orderId,
+        placeKey,
+        physicalKey,
+      );
+    }
+  }
+
   private async prepareOrderItems(data: CreateOrderDto, db: DbClient = this.prisma) {
     const event = await db.event.findUnique({
       where: { id: data.eventId },
@@ -962,7 +1276,7 @@ export class OrdersService {
                   ticketKindLabel: accessTicket.ticketKindLabel,
                   ticketTypeId: accessTicket.ticketTypeId,
                   unitAmount: accessTicket.unitAmount,
-                  commercialQuantity: 1,
+                  commercialQuantity: accessTicket.chairIndex === 1 ? 1 : 0,
                 },
               }),
             );
@@ -1037,6 +1351,292 @@ export class OrdersService {
       purchaserUser,
       ticketsByItem,
     };
+  }
+
+
+  private parseReservationSubTickets(row: RawFullTableReservationRow) {
+    let parsed: Array<{
+      ticketTypeId?: string;
+      kind?: string;
+      label?: string;
+      quantity?: number;
+      unitAmount?: number;
+    }> = [];
+
+    if (Array.isArray(row.subTickets)) {
+      parsed = row.subTickets as typeof parsed;
+    } else if (typeof row.subTickets === 'string' && row.subTickets.trim()) {
+      try {
+        parsed = JSON.parse(row.subTickets) as typeof parsed;
+      } catch {
+        parsed = [];
+      }
+    }
+
+    return (Array.isArray(parsed) ? parsed : [])
+      .map((item) => ({
+        ticketTypeId: String(item.ticketTypeId || row.ticketTypeId || ''),
+        kind: String(item.kind || item.label || 'INTEIRA').toUpperCase(),
+        label: String(item.label || item.kind || 'Inteira'),
+        quantity: Math.max(0, Number(item.quantity || 0)),
+        unitAmount: Number(item.unitAmount || 0),
+      }))
+      .filter((item) => item.ticketTypeId && item.quantity > 0);
+  }
+
+  private expandReservationAccessTickets(row: RawFullTableReservationRow) {
+    const subTickets = this.parseReservationSubTickets(row);
+    const expanded: Array<{
+      chairIndex: number;
+      chairLabel: string;
+      ticketKind: string;
+      ticketKindLabel: string;
+      ticketTypeId: string;
+      unitAmount: number;
+    }> = [];
+
+    for (const subTicket of subTickets) {
+      for (let index = 0; index < subTicket.quantity; index += 1) {
+        expanded.push({
+          chairIndex: expanded.length + 1,
+          chairLabel: `C${expanded.length + 1}`,
+          ticketKind: subTicket.kind,
+          ticketKindLabel: subTicket.label,
+          ticketTypeId: subTicket.ticketTypeId,
+          unitAmount: subTicket.unitAmount,
+        });
+      }
+    }
+
+    const fallbackQuantity = Math.max(
+      0,
+      Number(row.chairCount || row.quantity || expanded.length || 0),
+    );
+
+    if (expanded.length === 0 && fallbackQuantity > 0 && row.ticketTypeId) {
+      const unitAmount = Number(row.amount || 0) / Math.max(1, fallbackQuantity);
+
+      for (let index = 0; index < fallbackQuantity; index += 1) {
+        expanded.push({
+          chairIndex: expanded.length + 1,
+          chairLabel: `C${expanded.length + 1}`,
+          ticketKind: 'INTEIRA',
+          ticketKindLabel: 'Inteira',
+          ticketTypeId: row.ticketTypeId,
+          unitAmount,
+        });
+      }
+    }
+
+    return expanded;
+  }
+
+  private async ensureTableFullAccessTicketsForOrder(
+    orderId: string,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    const reservations = await db.$queryRawUnsafe<RawFullTableReservationRow[]>(
+      `SELECT "id", "eventSessionId", "venueSectorId", "seatMapObjectId", "ticketTypeId",
+              "orderId", "userId", "physicalKey", "label", "quantity", "chairCount",
+              "subTickets", "amount", "status"
+         FROM "PlaceReservation"
+        WHERE "orderId" = $1
+          AND "kind" = 'TABLE_FULL'
+          AND "status" IN ('HELD', 'SOLD')
+        ORDER BY "createdAt" ASC`,
+      orderId,
+    );
+
+    if (reservations.length === 0) {
+      return;
+    }
+
+    const orderRows = await db.$queryRawUnsafe<RawOrderHolderRow[]>(
+      `SELECT "customerUserId", "customerName", "customerEmail", "customerCpf"
+         FROM "Order"
+        WHERE "id" = $1
+        LIMIT 1`,
+      orderId,
+    );
+
+    const orderRow = orderRows[0];
+
+    for (const reservation of reservations) {
+      const accessTickets = this.expandReservationAccessTickets(reservation);
+      const expectedChairCount = Math.max(
+        0,
+        Number(reservation.chairCount || accessTickets.length || reservation.quantity || 0),
+      );
+
+      if (expectedChairCount <= 0 || accessTickets.length <= 0) {
+        continue;
+      }
+
+      const orderItems = await db.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT "id"
+           FROM "OrderItem"
+          WHERE "orderId" = $1
+            AND "ticketTypeId" = $2
+          ORDER BY "id" ASC
+          LIMIT 1`,
+        orderId,
+        reservation.ticketTypeId,
+      );
+
+      const orderItemId = orderItems[0]?.id;
+
+      if (!orderItemId) {
+        continue;
+      }
+
+      let existingAccessTickets = await db.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT "id"
+           FROM "Ticket"
+          WHERE "orderItemId" = $1
+            AND "accessKind" = 'TABLE_FULL_ACCESS'
+            AND (
+              COALESCE("accessMetadata"->>'physicalKey', '') = $2
+              OR COALESCE("accessMetadata"->>'placeId', '') = $3
+              OR COALESCE("accessLabel", '') ILIKE $4
+            )
+          ORDER BY "createdAt" ASC`,
+        orderItemId,
+        reservation.physicalKey,
+        reservation.id,
+        `${reservation.label || 'Mesa'}%`,
+      );
+
+      /*
+       * Reparo para pedidos criados nas versões anteriores:
+       * alguns tickets de mesa foram criados com accessKind correto,
+       * mas sem metadata/label físico suficiente. Nesse caso usamos os
+       * TABLE_FULL_ACCESS do mesmo OrderItem como candidatos e regravamos
+       * a distribuição correta a partir da PlaceReservation.
+       */
+      if (existingAccessTickets.length === 0) {
+        existingAccessTickets = await db.$queryRawUnsafe<Array<{ id: string }>>(
+          `SELECT "id"
+             FROM "Ticket"
+            WHERE "orderItemId" = $1
+              AND "accessKind" = 'TABLE_FULL_ACCESS'
+            ORDER BY "createdAt" ASC
+            LIMIT $2`,
+          orderItemId,
+          expectedChairCount,
+        );
+      }
+
+      const placeholderTickets = await db.$queryRawUnsafe<RawTicketHolderRow[]>(
+        `SELECT "holderName", "holderEmail", "holderCpf", "currentOwnerUserId"
+           FROM "Ticket"
+          WHERE "orderItemId" = $1
+            AND ("accessKind" IS NULL OR "accessKind" = '')
+          ORDER BY "createdAt" ASC`,
+        orderItemId,
+      );
+
+      const holder = placeholderTickets[0];
+      const holderName = holder?.holderName || orderRow?.customerName || null;
+      const holderEmail = holder?.holderEmail || orderRow?.customerEmail || null;
+      const holderCpf = holder?.holderCpf || orderRow?.customerCpf || null;
+      const ownerUserId = holder?.currentOwnerUserId || orderRow?.customerUserId || reservation.userId || null;
+
+      if (placeholderTickets.length > 0) {
+        await db.$executeRawUnsafe(
+          `DELETE FROM "Ticket"
+            WHERE "orderItemId" = $1
+              AND ("accessKind" IS NULL OR "accessKind" = '')`,
+          orderItemId,
+        );
+      }
+
+      const buildMetadata = (accessTicket: {
+        chairIndex: number;
+        chairLabel: string;
+        ticketKind: string;
+        ticketKindLabel: string;
+        ticketTypeId: string;
+        unitAmount: number;
+      }) => ({
+        placeId: reservation.id,
+        physicalKey: reservation.physicalKey,
+        placeKind: 'TABLE_FULL',
+        label: reservation.label || 'Mesa',
+        chairCount: expectedChairCount,
+        chairIndex: accessTicket.chairIndex,
+        chairLabel: accessTicket.chairLabel,
+        ticketKind: accessTicket.ticketKind,
+        ticketKindLabel: accessTicket.ticketKindLabel,
+        ticketTypeId: accessTicket.ticketTypeId,
+        unitAmount: accessTicket.unitAmount,
+        commercialQuantity: accessTicket.chairIndex === 1 ? 1 : 0,
+        repairedFromReservation: true,
+      });
+
+      const existingCountToUpdate = Math.min(existingAccessTickets.length, expectedChairCount);
+
+      for (let index = 0; index < existingCountToUpdate; index += 1) {
+        const existing = existingAccessTickets[index];
+        const accessTicket = accessTickets[index];
+        const metadata = buildMetadata(accessTicket);
+
+        await db.$executeRawUnsafe(
+          `UPDATE "Ticket"
+              SET "eventSessionId" = $2,
+                  "venueSectorId" = $3,
+                  "seatMapObjectId" = $4,
+                  "currentOwnerUserId" = COALESCE("currentOwnerUserId", $5),
+                  "holderName" = COALESCE("holderName", $6),
+                  "holderEmail" = COALESCE("holderEmail", $7),
+                  "holderCpf" = COALESCE("holderCpf", $8),
+                  "accessKind" = 'TABLE_FULL_ACCESS',
+                  "accessLabel" = $9,
+                  "accessMetadata" = CAST($10 AS jsonb),
+                  "updatedAt" = NOW()
+            WHERE "id" = $1`,
+          existing.id,
+          reservation.eventSessionId,
+          reservation.venueSectorId,
+          reservation.seatMapObjectId,
+          ownerUserId,
+          holderName,
+          holderEmail,
+          holderCpf,
+          `${reservation.label || 'Mesa'} - ${accessTicket.chairLabel} - ${accessTicket.ticketKindLabel}`,
+          JSON.stringify(metadata),
+        );
+      }
+
+      const toCreate = accessTickets.slice(existingCountToUpdate, expectedChairCount);
+
+      for (const accessTicket of toCreate) {
+        const metadata = buildMetadata(accessTicket);
+
+        await db.$executeRawUnsafe(
+          `INSERT INTO "Ticket" (
+            "id", "orderItemId", "eventSessionId", "venueSectorId", "seatMapObjectId",
+            "currentOwnerUserId", "code", "status", "holderName", "holderEmail", "holderCpf",
+            "accessKind", "accessLabel", "accessMetadata", "createdAt", "updatedAt"
+          ) VALUES (
+            $1, $2, $3, $4, $5,
+            $6, $7, 'AVAILABLE', $8, $9, $10,
+            'TABLE_FULL_ACCESS', $11, CAST($12 AS jsonb), NOW(), NOW()
+          )`,
+          crypto.randomUUID(),
+          orderItemId,
+          reservation.eventSessionId,
+          reservation.venueSectorId,
+          reservation.seatMapObjectId,
+          ownerUserId,
+          crypto.randomUUID(),
+          holderName,
+          holderEmail,
+          holderCpf,
+          `${reservation.label || 'Mesa'} - ${accessTicket.chairLabel} - ${accessTicket.ticketKindLabel}`,
+          JSON.stringify(metadata),
+        );
+      }
+    }
   }
 
   private async createTransferRequestsForOrder(
@@ -1330,6 +1930,8 @@ export class OrdersService {
         db: tx,
       });
 
+      await this.ensureTableFullAccessTicketsForOrder(order.id, tx);
+
       await this.createTransferRequestsForOrder(
         order.id,
         ticketsByItem,
@@ -1435,6 +2037,8 @@ export class OrdersService {
         db: tx,
       });
 
+      await this.ensureTableFullAccessTicketsForOrder(order.id, tx);
+
       await this.createTransferRequestsForOrder(
         order.id,
         ticketsByItem,
@@ -1482,6 +2086,105 @@ export class OrdersService {
     });
   }
 
+
+  async findPublicPlaceReservations(eventId: string) {
+    await this.expireOldPlaceReservations(this.prisma);
+
+    const heldReservations = await this.prisma.$queryRawUnsafe<Array<{
+      id: string;
+      eventId: string;
+      eventSessionId: string | null;
+      venueSectorId: string | null;
+      seatMapObjectId: string | null;
+      ticketTypeId: string | null;
+      physicalKey: string;
+      kind: string;
+      label: string | null;
+      quantity: number;
+      chairCount: number | null;
+      status: string;
+      expiresAt: Date | null;
+    }>>(
+      `SELECT "id", "eventId", "eventSessionId", "venueSectorId", "seatMapObjectId",
+              "ticketTypeId", "physicalKey", "kind", "label", "quantity", "chairCount",
+              "status", "expiresAt"
+         FROM "PlaceReservation"
+        WHERE "eventId" = $1
+          AND "status" = 'HELD'
+          AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
+        ORDER BY "createdAt" ASC`,
+      eventId,
+    );
+
+    const soldFromTickets = await this.prisma.$queryRawUnsafe<Array<{
+      id: string;
+      eventId: string;
+      eventSessionId: string | null;
+      venueSectorId: string | null;
+      seatMapObjectId: string | null;
+      ticketTypeId: string | null;
+      physicalKey: string;
+      kind: string;
+      label: string | null;
+      quantity: number;
+      chairCount: number | null;
+      status: string;
+      expiresAt: Date | null;
+    }>>(
+      `WITH access_rows AS (
+          SELECT
+            t."id",
+            tt."eventId",
+            t."eventSessionId",
+            t."venueSectorId",
+            t."seatMapObjectId",
+            COALESCE(t."accessMetadata"->>'ticketTypeId', oi."ticketTypeId") AS "ticketTypeId",
+            COALESCE(t."accessMetadata"->>'physicalKey', '') AS "physicalKey",
+            COALESCE(t."accessMetadata"->>'label', t."accessLabel", 'Mesa') AS "label",
+            t."accessKind",
+            CASE
+              WHEN COALESCE(t."accessMetadata"->>'chairCount', '') ~ '^[0-9]+$'
+              THEN (t."accessMetadata"->>'chairCount')::int
+              ELSE NULL
+            END AS "chairCount"
+          FROM "Ticket" t
+          INNER JOIN "OrderItem" oi ON oi."id" = t."orderItemId"
+          INNER JOIN "Order" o ON o."id" = oi."orderId"
+          INNER JOIN "TicketType" tt ON tt."id" = oi."ticketTypeId"
+          WHERE tt."eventId" = $1
+            AND o."status" = 'PAID'
+            AND t."status" <> 'CANCELED'
+            AND t."accessKind" IN ('TABLE_FULL_ACCESS', 'TABLE_CHAIR_ACCESS', 'SEAT_ACCESS')
+            AND COALESCE(t."accessMetadata"->>'physicalKey', '') <> ''
+        )
+        SELECT
+          MIN("id") AS "id",
+          "eventId",
+          "eventSessionId",
+          "venueSectorId",
+          "seatMapObjectId",
+          MIN("ticketTypeId") AS "ticketTypeId",
+          "physicalKey",
+          CASE
+            WHEN BOOL_AND("accessKind" = 'SEAT_ACCESS') THEN 'SEAT'
+            WHEN BOOL_AND("accessKind" = 'TABLE_FULL_ACCESS')
+              AND COUNT(*) >= COALESCE(MAX("chairCount"), COUNT(*)) THEN 'TABLE_FULL'
+            ELSE 'TABLE_CHAIR'
+          END AS "kind",
+          MAX("label") AS "label",
+          COUNT(*)::int AS "quantity",
+          MAX("chairCount") AS "chairCount",
+          'SOLD' AS "status",
+          NULL::timestamp AS "expiresAt"
+        FROM access_rows
+        GROUP BY "eventId", "eventSessionId", "venueSectorId", "seatMapObjectId", "physicalKey"
+        ORDER BY MIN("id") ASC`,
+      eventId,
+    );
+
+    return [...heldReservations, ...soldFromTickets];
+  }
+
   async findAll() {
     await this.expirePendingOrders();
 
@@ -1495,6 +2198,7 @@ export class OrdersService {
 
   async findById(id: string) {
     await this.expireOrderNow(id);
+    await this.ensureTableFullAccessTicketsForOrder(id);
 
     const order = await this.prisma.order.findUnique({
       where: { id },
@@ -1505,7 +2209,7 @@ export class OrdersService {
       throw new NotFoundException('Pedido nao encontrado');
     }
 
-    return order;
+    return this.attachTicketAccessColumnsToOrder(order);
   }
 
   async findByEvent(eventId: string) {
@@ -1532,7 +2236,7 @@ export class OrdersService {
     const normalizedCustomerEmail = this.normalizeEmail(customerEmail);
     await this.expirePendingOrders({ customerEmail: normalizedCustomerEmail || '' });
 
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where: {
         customerEmail: normalizedCustomerEmail || '',
       },
@@ -1541,11 +2245,14 @@ export class OrdersService {
         createdAt: 'desc',
       },
     });
+
+    return this.attachTicketAccessColumnsToOrder(orders);
   }
 
   async findCustomerOrderById(orderId: string, customerEmail: string) {
     const normalizedCustomerEmail = this.normalizeEmail(customerEmail);
     await this.expireOrderNow(orderId);
+    await this.ensureTableFullAccessTicketsForOrder(orderId);
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -1562,7 +2269,7 @@ export class OrdersService {
       );
     }
 
-    return order;
+    return this.attachTicketAccessColumnsToOrder(order);
   }
 
   private async cancelSingleTicket(params: {
@@ -1597,7 +2304,18 @@ export class OrdersService {
     }
 
     const order = ticket.orderItem.order;
-    const originalAmount = new Prisma.Decimal(ticket.orderItem.unitPrice);
+    const accessInfo = await this.getTicketAccessInfo(ticket.id);
+    const metadataUnitAmount = Number(accessInfo.metadata?.unitAmount || 0);
+    const originalAmount =
+      metadataUnitAmount > 0
+        ? new Prisma.Decimal(metadataUnitAmount)
+        : new Prisma.Decimal(ticket.orderItem.unitPrice);
+    const commercialQuantity = Number(accessInfo.metadata?.commercialQuantity ?? 1);
+    const isTableFullAccess = accessInfo.accessKind === 'TABLE_FULL_ACCESS';
+    const isPlaceAccessTicket = ['TABLE_FULL_ACCESS', 'TABLE_CHAIR_ACCESS', 'SEAT_ACCESS'].includes(
+      accessInfo.accessKind,
+    );
+    const shouldReturnCommercialStock = !isTableFullAccess && commercialQuantity > 0;
     const cancellationConfig = this.getCancellationConfig(params.mode);
     const returnedAmount = originalAmount.mul(cancellationConfig.percent);
 
@@ -1637,21 +2355,34 @@ export class OrdersService {
         },
       });
 
-      await tx.ticketType.update({
-        where: { id: ticket.orderItem.ticketTypeId },
-        data: {
-          quantity: {
-            increment: 1,
+      if (shouldReturnCommercialStock) {
+        await tx.ticketType.update({
+          where: { id: ticket.orderItem.ticketTypeId },
+          data: {
+            quantity: {
+              increment: 1,
+            },
           },
-        },
-      });
+        });
+      }
 
-      await this.updateOrderPlaceReservationsStatus(
-        order.id,
-        'CANCELED',
-        tx,
-        ticket.orderItem.ticketTypeId,
-      );
+      if (isPlaceAccessTicket) {
+        await this.syncPlaceReservationAfterAccessTicketCancellation({
+          db: tx,
+          orderId: order.id,
+          orderItemId: ticket.orderItemId,
+          ticketId: ticket.id,
+          accessKind: accessInfo.accessKind,
+          metadata: accessInfo.metadata,
+        });
+      } else {
+        await this.updateOrderPlaceReservationsStatus(
+          order.id,
+          'CANCELED',
+          tx,
+          ticket.orderItem.ticketTypeId,
+        );
+      }
 
       if (
         order.status === 'PAID' &&
@@ -1666,7 +2397,7 @@ export class OrdersService {
             source: 'TICKET_CANCELLATION',
             sourceId: ticket.id,
             amount: returnedAmount,
-            description: `Credito por cancelamento do ingresso ${ticket.id}`,
+            description: `Credito de 80% por estorno do QR ${ticket.id}`,
           },
         });
       }

@@ -155,6 +155,24 @@ type VenueLayout = {
   objects?: SeatMapObject[] | null;
 };
 
+
+
+type PublicPlaceReservation = {
+  id: string;
+  eventId?: string | null;
+  eventSessionId?: string | null;
+  venueSectorId?: string | null;
+  seatMapObjectId?: string | null;
+  ticketTypeId?: string | null;
+  physicalKey?: string | null;
+  kind?: string | null;
+  label?: string | null;
+  quantity?: number | string | null;
+  chairCount?: number | string | null;
+  status?: string | null;
+  expiresAt?: string | null;
+};
+
 type EventDetail = {
   id: string;
   name?: string | null;
@@ -1434,6 +1452,7 @@ function ReservedPlaceChooser({
   object,
   ticket,
   selectedPlaces,
+  publicPlaceReservations,
   maxPerPurchase,
   onTogglePlace,
   onSetTableMix,
@@ -1445,6 +1464,7 @@ function ReservedPlaceChooser({
   object: SeatMapObject | null;
   ticket: TicketTypeItem | null;
   selectedPlaces: Record<string, ReservedPlaceSelection>;
+  publicPlaceReservations: PublicPlaceReservation[];
   maxPerPurchase: number;
   onTogglePlace: (
     ticket: TicketTypeItem,
@@ -1533,6 +1553,36 @@ function ReservedPlaceChooser({
         );
       });
 
+    const getExternalTableReservationState = (tableNumber: number) => {
+      const physicalKey = `${session.id}:${sector.id}:${objectId}:table:${tableNumber}`;
+      const active = publicPlaceReservations.filter((reservation) => {
+        const status = String(reservation.status || "").toUpperCase();
+        return (
+          reservation.physicalKey === physicalKey &&
+          reservation.eventSessionId === session.id &&
+          reservation.venueSectorId === sector.id &&
+          (status === "SOLD" || status === "HELD")
+        );
+      });
+
+      const hasFullTable = active.some(
+        (reservation) => String(reservation.kind || "").toUpperCase() === "TABLE_FULL",
+      );
+      const usedChairs = hasFullTable
+        ? chairsPerTable
+        : active.reduce(
+            (sum, reservation) =>
+              sum + Math.max(0, Math.floor(Number(reservation.quantity || 0))),
+            0,
+          );
+
+      return {
+        hasFullTable,
+        usedChairs: Math.min(chairsPerTable, usedChairs),
+        freeChairs: Math.max(0, chairsPerTable - usedChairs),
+      };
+    };
+
     const getKindCountsForTable = (tableNumber: number) => {
       const counts: Record<TicketKind, number> = {
         INTEIRA: 0,
@@ -1564,6 +1614,7 @@ function ReservedPlaceChooser({
     };
 
     const focusedSelections = getTableSelections(focusedTable);
+    const focusedExternalState = getExternalTableReservationState(focusedTable);
     const focusedFullPlaceId = `${session.id}:${sector.id}:${objectId}:table:${focusedTable}:full`;
     const focusedFullSelection = focusedSelections.find(
       (selection) => selection.kind === "TABLE_FULL",
@@ -1581,10 +1632,16 @@ function ReservedPlaceChooser({
       0,
     );
     const focusedFullSelected = Boolean(focusedFullSelection);
-    const focusedCanSellFull = !focusedFullSelection && focusedChairCount <= 0;
-    const focusedFreeChairs = focusedFullSelected
-      ? Math.max(0, chairsPerTable - focusedAssignedSeatCount)
-      : Math.max(0, chairsPerTable - focusedChairCount);
+    const focusedCanSellFull =
+      !focusedFullSelection &&
+      focusedChairCount <= 0 &&
+      !focusedExternalState.hasFullTable &&
+      focusedExternalState.usedChairs <= 0;
+    const focusedFreeChairs = focusedExternalState.hasFullTable
+      ? 0
+      : focusedFullSelected
+        ? Math.max(0, chairsPerTable - focusedAssignedSeatCount)
+        : Math.max(0, chairsPerTable - focusedExternalState.usedChairs - focusedChairCount);
 
     const selectedUnitPrice =
       toNumber(ticket.price) + toNumber(ticket.feeAmount);
@@ -1605,8 +1662,15 @@ function ReservedPlaceChooser({
         0,
       );
 
-      if (total > chairsPerTable) {
-        alert(`Esta mesa possui somente ${chairsPerTable} lugar(es).`);
+      if (focusedExternalState.hasFullTable) {
+        alert("Esta mesa já foi comprada inteira. Escolha outra mesa.");
+        return;
+      }
+
+      if (focusedExternalState.usedChairs + total > chairsPerTable) {
+        alert(
+          `Esta mesa possui somente ${Math.max(0, chairsPerTable - focusedExternalState.usedChairs)} lugar(es) livre(s).`,
+        );
         return;
       }
 
@@ -1708,21 +1772,20 @@ function ReservedPlaceChooser({
               {tablePositions.map((position) => {
                 const tableNumber = position.index + 1;
                 const tableSelections = getTableSelections(tableNumber);
+                const externalState = getExternalTableReservationState(tableNumber);
                 const fullSelection = tableSelections.find(
                   (selection) => selection.kind === "TABLE_FULL",
                 );
-                const chairSelections = tableSelections.filter(
-                  (selection) => selection.kind === "TABLE_CHAIR",
-                );
                 const isFocused = focusedTable === tableNumber;
-                const tableSeatCount = tableSelections.reduce(
+                const localTableSeatCount = tableSelections.reduce(
                   (sum, selection) => sum + getSelectionSeatQuantity(selection),
                   0,
                 );
+                const tableSeatCount = externalState.usedChairs + localTableSeatCount;
                 const hasAnySelection =
-                  Boolean(fullSelection) || tableSeatCount > 0;
+                  externalState.usedChairs > 0 || Boolean(fullSelection) || tableSeatCount > 0;
                 const isFull =
-                  Boolean(fullSelection) || tableSeatCount >= chairsPerTable;
+                  externalState.hasFullTable || Boolean(fullSelection) || tableSeatCount >= chairsPerTable;
                 const isUnavailable = isFull;
 
                 return (
@@ -2084,6 +2147,9 @@ export default function CustomerEventDetailPage() {
   const [selectedPlaces, setSelectedPlaces] = useState<
     Record<string, ReservedPlaceSelection>
   >({});
+  const [publicPlaceReservations, setPublicPlaceReservations] = useState<
+    PublicPlaceReservation[]
+  >([]);
   const [placeChooserOpen, setPlaceChooserOpen] = useState(false);
 
   useEffect(() => {
@@ -2124,6 +2190,34 @@ export default function CustomerEventDetailPage() {
     }
     void loadEvent();
   }, [eventId]);
+
+  useEffect(() => {
+    async function loadPublicPlaceReservations() {
+      if (!event?.id) {
+        setPublicPlaceReservations([]);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/orders/public-place-reservations/${event.id}`,
+          {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+            cache: "no-store",
+          },
+        );
+
+        const data = await response.json().catch(() => []);
+        setPublicPlaceReservations(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error("PUBLIC PLACE RESERVATIONS ERROR:", error);
+        setPublicPlaceReservations([]);
+      }
+    }
+
+    void loadPublicPlaceReservations();
+  }, [event?.id]);
 
   const sessions = useMemo(() => getSessions(event), [event]);
   const sectors = useMemo(() => getSectors(event), [event]);
@@ -2392,6 +2486,33 @@ export default function CustomerEventDetailPage() {
 
     if (requestedSeats > payload.chairsPerTable) {
       alert(`Esta mesa possui somente ${payload.chairsPerTable} lugar(es).`);
+      return;
+    }
+
+    const basePhysicalKey = `${payload.sessionId}:${payload.sectorId}:${payload.objectId}:table:${payload.tableNumber}`;
+    const activeExternalReservations = publicPlaceReservations.filter((reservation) => {
+      const status = String(reservation.status || "").toUpperCase();
+      return reservation.physicalKey === basePhysicalKey && (status === "SOLD" || status === "HELD");
+    });
+    const hasExternalFullTable = activeExternalReservations.some(
+      (reservation) => String(reservation.kind || "").toUpperCase() === "TABLE_FULL",
+    );
+    const externalUsedChairs = hasExternalFullTable
+      ? payload.chairsPerTable
+      : activeExternalReservations.reduce(
+          (sum, reservation) => sum + Math.max(0, Math.floor(Number(reservation.quantity || 0))),
+          0,
+        );
+
+    if (hasExternalFullTable) {
+      alert("Esta mesa já foi comprada inteira. Escolha outra mesa.");
+      return;
+    }
+
+    if (externalUsedChairs + requestedSeats > payload.chairsPerTable) {
+      alert(
+        `Esta mesa tem apenas ${Math.max(0, payload.chairsPerTable - externalUsedChairs)} lugar(es) livre(s).`,
+      );
       return;
     }
 
@@ -3489,6 +3610,7 @@ export default function CustomerEventDetailPage() {
                 object={selectedMapObject}
                 ticket={currentTicketForPlaceSelection}
                 selectedPlaces={selectedPlaces}
+                publicPlaceReservations={publicPlaceReservations}
                 maxPerPurchase={maxPerPurchase}
                 onTogglePlace={toggleReservedPlace}
                 onSetTableMix={setTableMixForFocusedTable}

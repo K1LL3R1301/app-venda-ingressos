@@ -74,6 +74,11 @@ export class OrdersController {
     return this.ordersService.findCustomerOrderById(id, req.user.email);
   }
 
+  @Get('public-place-reservations/:eventId')
+  findPublicPlaceReservations(@Param('eventId') eventId: string) {
+    return this.ordersService.findPublicPlaceReservations(eventId);
+  }
+
   @ApiBearerAuth('bearer')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch('customer/:id/cancel')
