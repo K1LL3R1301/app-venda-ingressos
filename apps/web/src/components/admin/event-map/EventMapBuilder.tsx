@@ -405,6 +405,69 @@ function createAislePoints(preset: AislePreset) {
   ];
 }
 
+function splitMapLabel(label: string, maxChars: number, maxLines = 2) {
+  const words = String(label || "").trim().split(/\s+/).filter(Boolean);
+
+  if (words.length === 0) return [""];
+
+  const lines: string[] = [];
+  let current = "";
+
+  words.forEach((word) => {
+    const next = current ? `${current} ${word}` : word;
+
+    if (next.length <= maxChars) {
+      current = next;
+      return;
+    }
+
+    if (current) {
+      lines.push(current);
+      current = word;
+      return;
+    }
+
+    lines.push(word.slice(0, maxChars));
+    current = word.slice(maxChars);
+  });
+
+  if (current) {
+    lines.push(current);
+  }
+
+  const finalLines = lines.slice(0, maxLines);
+
+  if (lines.length > maxLines) {
+    finalLines[maxLines - 1] = `${finalLines[maxLines - 1].slice(0, Math.max(4, maxChars - 1))}…`;
+  }
+
+  return finalLines;
+}
+
+function getLabelFontSize(object: EventMapObject) {
+  const role = object.metadata?.role;
+  const minSide = Math.min(object.width, object.height);
+
+  if (role === "OPERATIONAL") return 15;
+  if (object.type === "AISLE") return 16;
+  if (object.type === "STAGE") return 18;
+  if (minSide < 70) return 13;
+  if (object.width < 150) return 14;
+  if (object.width < 260) return 17;
+
+  return 21;
+}
+
+function getLabelMaxChars(object: EventMapObject) {
+  if (object.metadata?.role === "OPERATIONAL") return 16;
+  if (object.type === "AISLE") return 22;
+  if (object.width < 110) return 9;
+  if (object.width < 180) return 12;
+  if (object.width < 280) return 17;
+
+  return 24;
+}
+
 function renderStaticObject({
   object,
   sectors,
@@ -423,15 +486,50 @@ function renderStaticObject({
   const points = absolutePoints(object);
   const hasPoints = points.length >= 3;
   const shape = object.metadata?.shape || "RECT";
+  const role = object.metadata?.role;
   const labelX = object.x + object.width / 2;
   const labelY = object.y + object.height / 2;
+  const fontSize = getLabelFontSize(object);
+  const lineHeight = Math.round(fontSize * 1.18);
+  const maxChars = getLabelMaxChars(object);
+  const labelLines = splitMapLabel(object.label, maxChars, object.width < 85 ? 1 : 2);
+  const maxLineLength = Math.max(...labelLines.map((line) => line.length), 1);
+  const estimatedTextWidth = Math.min(
+    Math.max(74, maxLineLength * fontSize * 0.58 + 26),
+    Math.max(92, object.width * 1.02),
+  );
+  const labelBoxHeight = labelLines.length * lineHeight + 12;
+  const showLabel = object.width >= 42 && object.height >= 28;
+  const labelBoxColor =
+    role === "OPERATIONAL"
+      ? "rgba(2, 44, 34, 0.72)"
+      : object.type === "AISLE"
+        ? "rgba(15, 23, 42, 0.58)"
+        : object.type === "STAGE"
+          ? "rgba(250, 204, 21, 0.74)"
+          : "rgba(15, 23, 42, 0.50)";
+  const labelColor = object.type === "STAGE" ? "#020617" : "#ffffff";
+  const shapeOpacity =
+    object.type === "AISLE"
+      ? 0.82
+      : role === "OPERATIONAL"
+        ? 0.90
+        : 0.94;
 
   const commonProps = {
     onPointerDown,
     className: onPointerDown ? "cursor-move transition" : "transition",
     fill: color,
-    stroke: active ? "#ffffff" : "rgba(255,255,255,0.65)",
-    strokeWidth: active ? 4 * widthScale : 2 * widthScale,
+    opacity: shapeOpacity,
+    stroke: active ? "#38bdf8" : "rgba(255,255,255,0.72)",
+    strokeWidth: active ? 4 * widthScale : 1.8 * widthScale,
+    strokeLinejoin: "round" as const,
+    strokeLinecap: "round" as const,
+    style: {
+      filter: active
+        ? "drop-shadow(0px 0px 13px rgba(56,189,248,0.85))"
+        : "drop-shadow(0px 10px 16px rgba(0,0,0,0.28))",
+    },
   };
 
   return (
@@ -456,23 +554,49 @@ function renderStaticObject({
           y={object.y}
           width={object.width}
           height={object.height}
-          rx={object.type === "AISLE" ? 18 : 28}
+          rx={object.type === "AISLE" ? 14 : role === "OPERATIONAL" ? 22 : 18}
         />
       )}
 
-      <text
-        x={labelX}
-        y={labelY}
-        textAnchor="middle"
-        dominantBaseline="middle"
-        fill={objectTextColor(object)}
-        className="pointer-events-none select-none text-[22px] font-black"
-      >
-        {object.label}
-      </text>
+      {showLabel ? (
+        <g className="pointer-events-none select-none">
+          <rect
+            x={labelX - estimatedTextWidth / 2}
+            y={labelY - labelBoxHeight / 2}
+            width={estimatedTextWidth}
+            height={labelBoxHeight}
+            rx={Math.min(18, labelBoxHeight / 2)}
+            fill={labelBoxColor}
+            stroke="rgba(255,255,255,0.18)"
+            strokeWidth={1}
+          />
+          <text
+            x={labelX}
+            y={labelY - ((labelLines.length - 1) * lineHeight) / 2}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill={labelColor}
+            style={{
+              fontSize,
+              fontWeight: 900,
+              paintOrder: "stroke",
+              stroke: object.type === "STAGE" ? "rgba(255,255,255,0.45)" : "rgba(2,6,23,0.45)",
+              strokeWidth: 2,
+              letterSpacing: role === "OPERATIONAL" ? 0.2 : 0,
+            }}
+          >
+            {labelLines.map((line, index) => (
+              <tspan key={`${object.localId}-label-${index}`} x={labelX} dy={index === 0 ? 0 : lineHeight}>
+                {line}
+              </tspan>
+            ))}
+          </text>
+        </g>
+      ) : null}
     </g>
   );
 }
+
 
 function MapPreview({
   sectors,
@@ -656,11 +780,21 @@ function MapStudio({
   const [selectedSectorId, setSelectedSectorId] = useState(sectors[0]?.localId || "");
   const [multiSpaceSectorIds, setMultiSpaceSectorIds] = useState<string[]>([]);
   const [selectedObjectId, setSelectedObjectId] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [spacePressed, setSpacePressed] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ clientX: 0, clientY: 0, x: 0, y: 0 });
   const [drawingPoints, setDrawingPoints] = useState<EventMapPoint[]>([]);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantPrompt, setAssistantPrompt] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantReferenceImage, setAssistantReferenceImage] = useState<{
+    name: string;
+    mimeType: string;
+    dataUrl: string;
+  } | null>(null);
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([
     {
       role: "assistant",
@@ -688,6 +822,30 @@ function MapStudio({
       if (isTypingTarget(event.target)) return;
 
       const key = event.key.toLowerCase();
+
+      if (event.code === "Space") {
+        event.preventDefault();
+        setSpacePressed(true);
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && (key === "+" || key === "=")) {
+        event.preventDefault();
+        zoomIn();
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && key === "-") {
+        event.preventDefault();
+        zoomOut();
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && key === "0") {
+        event.preventDefault();
+        resetZoom();
+        return;
+      }
 
       if ((event.ctrlKey || event.metaKey) && key === "z") {
         event.preventDefault();
@@ -727,10 +885,40 @@ function MapStudio({
       }
     }
 
-    window.addEventListener("keydown", handleKeyDown);
+    function handleKeyUp(event: KeyboardEvent) {
+      if (event.code === "Space") {
+        setSpacePressed(false);
+        setIsPanning(false);
+      }
+    }
 
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [drawingPoints.length, selectedObjectId]);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [drawingPoints.length, selectedObjectId, zoom, pan.x, pan.y, objects.length]);
+
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyHeight = document.body.style.height;
+    const previousHtmlHeight = document.documentElement.style.height;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.height = "100%";
+    document.documentElement.style.height = "100%";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.height = previousBodyHeight;
+      document.documentElement.style.height = previousHtmlHeight;
+    };
+  }, []);
 
   const selectedObject = useMemo(
     () => objects.find((object) => object.localId === selectedObjectId) || null,
@@ -798,6 +986,96 @@ function MapStudio({
     }
   }
 
+  function getVisibleViewBox() {
+    const safeZoom = Math.max(0.35, Math.min(4, zoom));
+    const visibleWidth = width / safeZoom;
+    const visibleHeight = height / safeZoom;
+    const maxX = Math.max(0, width - visibleWidth);
+    const maxY = Math.max(0, height - visibleHeight);
+
+    return {
+      x: Math.round(clamp(pan.x, 0, maxX)),
+      y: Math.round(clamp(pan.y, 0, maxY)),
+      width: Math.round(visibleWidth),
+      height: Math.round(visibleHeight),
+    };
+  }
+
+  function setZoomKeepingCenter(nextZoom: number) {
+    const current = getVisibleViewBox();
+    const centerX = current.x + current.width / 2;
+    const centerY = current.y + current.height / 2;
+    const safeZoom = Math.max(0.35, Math.min(4, nextZoom));
+    const nextWidth = width / safeZoom;
+    const nextHeight = height / safeZoom;
+
+    setZoom(safeZoom);
+    setPan({
+      x: clamp(centerX - nextWidth / 2, 0, Math.max(0, width - nextWidth)),
+      y: clamp(centerY - nextHeight / 2, 0, Math.max(0, height - nextHeight)),
+    });
+  }
+
+  function zoomIn() {
+    setZoomKeepingCenter(zoom * 1.25);
+  }
+
+  function zoomOut() {
+    setZoomKeepingCenter(zoom / 1.25);
+  }
+
+  function resetZoom() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
+
+  function fitAllObjects() {
+    if (objects.length === 0) {
+      resetZoom();
+      return;
+    }
+
+    const minX = Math.min(...objects.map((object) => object.x));
+    const minY = Math.min(...objects.map((object) => object.y));
+    const maxX = Math.max(...objects.map((object) => object.x + object.width));
+    const maxY = Math.max(...objects.map((object) => object.y + object.height));
+    const padding = 90;
+    const boxWidth = Math.max(120, maxX - minX + padding * 2);
+    const boxHeight = Math.max(120, maxY - minY + padding * 2);
+    const nextZoom = Math.max(0.35, Math.min(4, Math.min(width / boxWidth, height / boxHeight)));
+
+    setZoom(nextZoom);
+    setPan({
+      x: clamp(minX - padding, 0, Math.max(0, width - width / nextZoom)),
+      y: clamp(minY - padding, 0, Math.max(0, height - height / nextZoom)),
+    });
+  }
+
+  function focusSelectedObject() {
+    if (!selectedObject) return;
+
+    const nextZoom = Math.max(1.5, zoom);
+    const visibleWidth = width / nextZoom;
+    const visibleHeight = height / nextZoom;
+    const centerX = selectedObject.x + selectedObject.width / 2;
+    const centerY = selectedObject.y + selectedObject.height / 2;
+
+    setZoom(nextZoom);
+    setPan({
+      x: clamp(centerX - visibleWidth / 2, 0, Math.max(0, width - visibleWidth)),
+      y: clamp(centerY - visibleHeight / 2, 0, Math.max(0, height - visibleHeight)),
+    });
+  }
+
+  function movePan(deltaX: number, deltaY: number) {
+    const current = getVisibleViewBox();
+
+    setPan({
+      x: clamp(current.x + deltaX, 0, Math.max(0, width - current.width)),
+      y: clamp(current.y + deltaY, 0, Math.max(0, height - current.height)),
+    });
+  }
+
   function pointFromEvent(event: ReactPointerEvent<SVGSVGElement | SVGElement>) {
     const svg = svgRef.current;
     const rect = svg?.getBoundingClientRect();
@@ -809,12 +1087,13 @@ function MapStudio({
       };
     }
 
-    const scaleX = width / rect.width;
-    const scaleY = height / rect.height;
+    const viewBox = getVisibleViewBox();
+    const scaleX = viewBox.width / rect.width;
+    const scaleY = viewBox.height / rect.height;
 
     return {
-      x: Math.round(clamp((event.clientX - rect.left) * scaleX, 0, width)),
-      y: Math.round(clamp((event.clientY - rect.top) * scaleY, 0, height)),
+      x: Math.round(clamp(viewBox.x + (event.clientX - rect.left) * scaleX, 0, width)),
+      y: Math.round(clamp(viewBox.y + (event.clientY - rect.top) * scaleY, 0, height)),
     };
   }
 
@@ -908,8 +1187,21 @@ function MapStudio({
   }
 
   function handleCanvasPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
-    if (tool === "select") {
-      setSelectedObjectId("");
+    if (spacePressed || event.button === 1 || tool === "select") {
+      event.preventDefault();
+
+      if (tool === "select") {
+        setSelectedObjectId("");
+      }
+
+      const current = getVisibleViewBox();
+      setIsPanning(true);
+      setPanStart({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        x: current.x,
+        y: current.y,
+      });
       return;
     }
 
@@ -981,6 +1273,23 @@ function MapStudio({
   }
 
   function handleCanvasMove(event: ReactPointerEvent<SVGSVGElement>) {
+    if (isPanning) {
+      const viewBox = getVisibleViewBox();
+      const svg = svgRef.current;
+      const rect = svg?.getBoundingClientRect();
+
+      if (!rect) return;
+
+      const scaleX = viewBox.width / rect.width;
+      const scaleY = viewBox.height / rect.height;
+
+      setPan({
+        x: clamp(panStart.x - (event.clientX - panStart.clientX) * scaleX, 0, Math.max(0, width - viewBox.width)),
+        y: clamp(panStart.y - (event.clientY - panStart.clientY) * scaleY, 0, Math.max(0, height - viewBox.height)),
+      });
+      return;
+    }
+
     if (!dragState) return;
 
     const point = pointFromEvent(event);
@@ -1403,6 +1712,50 @@ function MapStudio({
     createObjectFromPoints(drawingPoints, tool);
   }
 
+  function resizeReferenceImage(file: File) {
+    return new Promise<{
+      name: string;
+      mimeType: string;
+      dataUrl: string;
+    }>((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onerror = () => reject(new Error("Não consegui ler a imagem."));
+      reader.onload = () => {
+        const image = new Image();
+
+        image.onerror = () => reject(new Error("Imagem inválida."));
+        image.onload = () => {
+          const maxSize = 1200;
+          const ratio = Math.min(1, maxSize / Math.max(image.width, image.height));
+          const canvas = document.createElement("canvas");
+
+          canvas.width = Math.max(1, Math.round(image.width * ratio));
+          canvas.height = Math.max(1, Math.round(image.height * ratio));
+
+          const context = canvas.getContext("2d");
+
+          if (!context) {
+            reject(new Error("Não consegui preparar a imagem."));
+            return;
+          }
+
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+          resolve({
+            name: file.name,
+            mimeType: "image/jpeg",
+            dataUrl: canvas.toDataURL("image/jpeg", 0.78),
+          });
+        };
+
+        image.src = String(reader.result || "");
+      };
+
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function callRealMapAi(mode: "chat" | "generate", prompt: string) {
     const token =
       typeof window !== "undefined" ? localStorage.getItem("token") : "";
@@ -1426,6 +1779,13 @@ function MapStudio({
         },
         sectors,
         currentObjects: objects,
+        referenceImage: assistantReferenceImage
+          ? {
+              name: assistantReferenceImage.name,
+              mimeType: assistantReferenceImage.mimeType,
+              dataUrl: assistantReferenceImage.dataUrl,
+            }
+          : undefined,
       }),
     });
 
@@ -1781,16 +2141,16 @@ function MapStudio({
   }
 
   return (
-    <div className="fixed inset-0 z-[9999] flex flex-col bg-slate-950 text-white">
+    <div className="fixed inset-0 z-[9999] flex h-screen max-h-screen flex-col overflow-hidden bg-slate-950 text-white">
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-slate-950 px-4">
         <div className="flex items-center gap-3">
           <div className="rounded-2xl bg-sky-500 px-3 py-2 text-xs font-black text-white">
             MAPA
           </div>
           <div>
-            <p className="text-sm font-black">Criador de mapa do evento <span className="ml-2 rounded-lg bg-emerald-500 px-2 py-1 text-[10px] text-white">v19</span></p>
+            <p className="text-sm font-black">Criador de mapa do evento <span className="ml-2 rounded-lg bg-emerald-500 px-2 py-1 text-[10px] text-white">v27</span></p>
             <p className="text-xs font-semibold text-slate-400">
-              Tela grande estilo editor gráfico. Ctrl+Z remove o último ponto, Del apaga a forma selecionada.
+              Ctrl+Z remove ponto, Del apaga forma, Ctrl +/- muda zoom. Em Selecionar, arraste o fundo para mover. Scroll da página desativado.
             </p>
           </div>
         </div>
@@ -1985,7 +2345,7 @@ function MapStudio({
           <div className="absolute left-4 right-4 top-4 z-30 rounded-[24px] border border-sky-400/30 bg-slate-900/98 p-3 shadow-2xl shadow-sky-950/40 backdrop-blur">
             <div className="flex flex-wrap items-center gap-3">
               <div className="rounded-2xl bg-sky-500 px-3 py-2 text-xs font-black text-white">
-                Ferramentas v19
+                Ferramentas v27
               </div>
               <div className="flex rounded-2xl border border-white/10 bg-slate-950 p-1">
                 {PRIMARY_TOOLS.map((item) => (
@@ -2074,6 +2434,44 @@ function MapStudio({
             </div>
           </div>
 
+          <div className="absolute bottom-6 right-6 z-30 flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl backdrop-blur">
+            <button
+              type="button"
+              onClick={zoomIn}
+              className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white/20"
+              title="Zoom in"
+            >
+              +
+            </button>
+            <div className="rounded-xl bg-slate-950 px-3 py-2 text-center text-[11px] font-black text-sky-100">
+              {Math.round(zoom * 100)}%
+            </div>
+            <button
+              type="button"
+              onClick={zoomOut}
+              className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white/20"
+              title="Zoom out"
+            >
+              -
+            </button>
+            <button
+              type="button"
+              onClick={fitAllObjects}
+              className="rounded-xl bg-sky-600 px-3 py-2 text-[10px] font-black text-white hover:bg-sky-500"
+              title="Encaixar objetos"
+            >
+              Fit
+            </button>
+            <button
+              type="button"
+              onClick={resetZoom}
+              className="rounded-xl bg-white/10 px-3 py-2 text-[10px] font-black text-white hover:bg-white/20"
+              title="Resetar zoom"
+            >
+              100
+            </button>
+          </div>
+
           {drawingPoints.length > 0 ? (
             <div className="absolute left-6 top-28 z-20 rounded-2xl border border-sky-300/40 bg-sky-950/90 p-4 text-sm font-bold text-sky-50 shadow-2xl">
               Pontos: {drawingPoints.length}. Clique perto do primeiro ponto ou feche pelo botão.
@@ -2104,12 +2502,26 @@ function MapStudio({
 
           <svg
             ref={svgRef}
-            viewBox={`0 0 ${width} ${height}`}
+            viewBox={`${getVisibleViewBox().x} ${getVisibleViewBox().y} ${getVisibleViewBox().width} ${getVisibleViewBox().height}`}
             onPointerDown={handleCanvasPointerDown}
             onPointerMove={handleCanvasMove}
-            onPointerUp={() => setDragState(null)}
-            onPointerLeave={() => setDragState(null)}
-            className="h-full w-full rounded-[28px] border border-white/10 bg-[linear-gradient(rgba(255,255,255,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.055)_1px,transparent_1px)] bg-[length:40px_40px]"
+            onPointerUp={() => {
+              setDragState(null);
+              setIsPanning(false);
+            }}
+            onPointerLeave={() => {
+              setDragState(null);
+              setIsPanning(false);
+            }}
+            onWheel={(event) => {
+              event.preventDefault();
+              if (event.deltaY < 0) {
+                zoomIn();
+              } else {
+                zoomOut();
+              }
+            }}
+            className={`h-full w-full rounded-[28px] border border-white/10 bg-[linear-gradient(rgba(255,255,255,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.055)_1px,transparent_1px)] bg-[length:40px_40px] ${isPanning ? "cursor-grabbing" : tool === "select" || spacePressed ? "cursor-grab" : ""}`}
           >
             <rect width={width} height={height} fill="transparent" />
 
@@ -2167,6 +2579,65 @@ function MapStudio({
                     {message.content}
                   </div>
                 ))}
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950 p-3">
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                  Imagem de referência
+                </p>
+                <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-400">
+                  Opcional. Envie uma planta/foto para a IA analisar antes de montar o mapa.
+                </p>
+
+                {assistantReferenceImage ? (
+                  <div className="mt-3 flex items-center gap-3">
+                    <img
+                      src={assistantReferenceImage.dataUrl}
+                      alt="Referência do mapa"
+                      className="h-16 w-20 rounded-xl object-cover"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-black text-white">
+                        {assistantReferenceImage.name}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setAssistantReferenceImage(null)}
+                        className="mt-2 rounded-lg bg-rose-500/20 px-2 py-1 text-[10px] font-black text-rose-100 hover:bg-rose-500/30"
+                      >
+                        Remover imagem
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="mt-3 block cursor-pointer rounded-xl border border-dashed border-sky-400/40 bg-sky-500/10 px-3 py-3 text-center text-xs font-black text-sky-100 hover:bg-sky-500/20">
+                    Escolher imagem
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (event) => {
+                        const file = event.target.files?.[0];
+
+                        if (!file) return;
+
+                        try {
+                          const resized = await resizeReferenceImage(file);
+                          setAssistantReferenceImage(resized);
+                          setNotice("Imagem de referência adicionada.");
+                        } catch (error) {
+                          setNotice(
+                            error instanceof Error
+                              ? error.message
+                              : "Não consegui carregar a imagem.",
+                          );
+                        } finally {
+                          event.target.value = "";
+                        }
+                      }}
+                    />
+                  </label>
+                )}
               </div>
 
               <textarea
@@ -2399,6 +2870,20 @@ function MapStudio({
                     Forma e camadas
                   </p>
                   <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={focusSelectedObject}
+                      className="rounded-xl bg-emerald-600 px-2 py-2 text-[10px] font-black text-white hover:bg-emerald-500"
+                    >
+                      Focar setor
+                    </button>
+                    <button
+                      type="button"
+                      onClick={fitAllObjects}
+                      className="rounded-xl bg-sky-600 px-2 py-2 text-[10px] font-black text-white hover:bg-sky-500"
+                    >
+                      Ver todos
+                    </button>
                     <button
                       type="button"
                       onClick={convertSelectedShapeToPoints}

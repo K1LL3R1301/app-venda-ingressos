@@ -47,6 +47,13 @@ export type EventMapAiMap = {
   height?: number;
 };
 
+export type EventMapAiReferenceImage = {
+  name?: string;
+  mimeType?: string;
+  base64?: string;
+  dataUrl?: string;
+};
+
 export class GenerateEventMapAiDto {
   @IsString()
   prompt: string;
@@ -63,4 +70,7 @@ export class GenerateEventMapAiDto {
 
   @Allow()
   currentObjects?: EventMapAiObject[];
+
+  @Allow()
+  referenceImage?: EventMapAiReferenceImage;
 }
