@@ -20,11 +20,9 @@ function normalizeNumber(value?: string | number | null) {
 
 function normalizeInt(value?: string | number | null) {
   const numeric = normalizeNumber(value);
-<<<<<<< HEAD
-  if (numeric === undefined) return undefined;
-=======
 
->>>>>>> ee98e10 (V1 12/05)
+  if (numeric === undefined) return undefined;
+
   const parsed = Math.round(numeric);
   return parsed > 0 ? parsed : undefined;
 }
@@ -126,10 +124,7 @@ export class EventMapController {
 
       for (const sector of body.sectors || []) {
         const name = normalizeString(sector.name);
-<<<<<<< HEAD
-=======
 
->>>>>>> ee98e10 (V1 12/05)
         if (!name) continue;
 
         const localId = normalizeString(sector.localId);
@@ -186,10 +181,7 @@ export class EventMapController {
 
       for (const layout of body.venueLayouts || []) {
         const name = normalizeString(layout.name);
-<<<<<<< HEAD
-=======
 
->>>>>>> ee98e10 (V1 12/05)
         if (!name) continue;
 
         const createdLayout = await tx.venueLayout.create({
@@ -211,10 +203,7 @@ export class EventMapController {
 
         for (const object of layout.objects || []) {
           const code = normalizeString(object.code);
-<<<<<<< HEAD
-=======
 
->>>>>>> ee98e10 (V1 12/05)
           if (!code) continue;
 
           const objectSectorId =
