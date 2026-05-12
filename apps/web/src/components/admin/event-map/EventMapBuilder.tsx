@@ -67,6 +67,7 @@ export type EventMapObject = {
     points?: EventMapPoint[];
     role?: MapRole;
     operationalType?: OperationalType;
+    customColor?: string;
     generatedBy?: "manual" | "assistant";
     prompt?: string;
   };
@@ -85,10 +86,20 @@ type DrawRole = "SECTOR" | "STAGE" | "AISLE" | "BLOCKED";
 type StagePreset = "RECT" | "T" | "RUNWAY" | "CIRCLE";
 type AislePreset = "STRAIGHT" | "L" | "CURVE";
 
+type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
 type DragState =
   | {
       kind: "object";
       objectId: string;
+      startX: number;
+      startY: number;
+      original: EventMapObject;
+    }
+  | {
+      kind: "resize";
+      objectId: string;
+      handle: ResizeHandle;
       startX: number;
       startY: number;
       original: EventMapObject;
@@ -145,6 +156,16 @@ const OPERATIONAL_LABELS: Record<OperationalType, string> = {
   EMERGENCY: "Emergência",
   ACCESSIBILITY: "Acessibilidade",
 };
+
+const ROLE_LABELS: Record<MapRole, string> = {
+  SECTOR: "Setor de venda",
+  STAGE: "Palco",
+  AISLE: "Corredor",
+  BLOCKED: "Bloqueio",
+  OPERATIONAL: "Operacional",
+};
+
+const STATUS_OPTIONS = ["AVAILABLE", "UNAVAILABLE", "RESERVED", "BLOCKED"];
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -248,6 +269,7 @@ function sectorUsedCount(objects: EventMapObject[], sectorId: string) {
 }
 
 function objectColor(object: EventMapObject, sector?: EventMapSector) {
+  if (object.metadata?.customColor) return object.metadata.customColor;
   if (object.type === "STAGE") return "#facc15";
   if (object.type === "AISLE") return "#94a3b8";
   if (object.type === "BLOCKED_SPACE") return "#ef4444";
@@ -986,16 +1008,78 @@ function MapStudio({
     }
   }
 
+  function duplicateObject(object: EventMapObject) {
+    const nextObject: EventMapObject = {
+      ...object,
+      localId: makeId("map-copy"),
+      code: `${object.code || object.type}-COPY`,
+      label: `${object.label} cópia`,
+      x: object.x + 36,
+      y: object.y + 36,
+      metadata: {
+        ...object.metadata,
+        points: object.metadata?.points
+          ? object.metadata.points.map((point) => ({ ...point }))
+          : undefined,
+      },
+    };
+
+    updateObjects((current) => [...current, nextObject]);
+    setSelectedObjectId(nextObject.localId);
+    setNotice("Objeto duplicado.");
+  }
+
+  function updateSelectedObjectNumber(
+    object: EventMapObject,
+    field: "x" | "y" | "width" | "height" | "rotation",
+    value: string,
+  ) {
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) return;
+
+    if (field === "width" || field === "height") {
+      updateObject(object.localId, {
+        [field]: Math.max(20, Math.round(parsed)),
+      });
+      return;
+    }
+
+    updateObject(object.localId, {
+      [field]: Math.round(parsed),
+    });
+  }
+
+  function getPanBounds(visibleWidth: number, visibleHeight: number) {
+    const marginX = visibleWidth * 0.75;
+    const marginY = visibleHeight * 0.75;
+
+    return {
+      minX: -marginX,
+      maxX: width + marginX - visibleWidth,
+      minY: -marginY,
+      maxY: height + marginY - visibleHeight,
+    };
+  }
+
+  function clampPan(nextPan: { x: number; y: number }, visibleWidth: number, visibleHeight: number) {
+    const bounds = getPanBounds(visibleWidth, visibleHeight);
+
+    return {
+      x: clamp(nextPan.x, bounds.minX, bounds.maxX),
+      y: clamp(nextPan.y, bounds.minY, bounds.maxY),
+    };
+  }
+
   function getVisibleViewBox() {
     const safeZoom = Math.max(0.35, Math.min(4, zoom));
     const visibleWidth = width / safeZoom;
     const visibleHeight = height / safeZoom;
-    const maxX = Math.max(0, width - visibleWidth);
-    const maxY = Math.max(0, height - visibleHeight);
+    const nextPan = clampPan(pan, visibleWidth, visibleHeight);
 
     return {
-      x: Math.round(clamp(pan.x, 0, maxX)),
-      y: Math.round(clamp(pan.y, 0, maxY)),
+      x: Math.round(nextPan.x),
+      y: Math.round(nextPan.y),
       width: Math.round(visibleWidth),
       height: Math.round(visibleHeight),
     };
@@ -1010,10 +1094,10 @@ function MapStudio({
     const nextHeight = height / safeZoom;
 
     setZoom(safeZoom);
-    setPan({
-      x: clamp(centerX - nextWidth / 2, 0, Math.max(0, width - nextWidth)),
-      y: clamp(centerY - nextHeight / 2, 0, Math.max(0, height - nextHeight)),
-    });
+    setPan(clampPan({
+      x: centerX - nextWidth / 2,
+      y: centerY - nextHeight / 2,
+    }, nextWidth, nextHeight));
   }
 
   function zoomIn() {
@@ -1027,6 +1111,17 @@ function MapStudio({
   function resetZoom() {
     setZoom(1);
     setPan({ x: 0, y: 0 });
+  }
+
+  function centerCanvas() {
+    const safeZoom = Math.max(0.35, Math.min(4, zoom));
+    const visibleWidth = width / safeZoom;
+    const visibleHeight = height / safeZoom;
+
+    setPan(clampPan({
+      x: width / 2 - visibleWidth / 2,
+      y: height / 2 - visibleHeight / 2,
+    }, visibleWidth, visibleHeight));
   }
 
   function fitAllObjects() {
@@ -1044,11 +1139,14 @@ function MapStudio({
     const boxHeight = Math.max(120, maxY - minY + padding * 2);
     const nextZoom = Math.max(0.35, Math.min(4, Math.min(width / boxWidth, height / boxHeight)));
 
+    const visibleWidth = width / nextZoom;
+    const visibleHeight = height / nextZoom;
+
     setZoom(nextZoom);
-    setPan({
-      x: clamp(minX - padding, 0, Math.max(0, width - width / nextZoom)),
-      y: clamp(minY - padding, 0, Math.max(0, height - height / nextZoom)),
-    });
+    setPan(clampPan({
+      x: minX - padding,
+      y: minY - padding,
+    }, visibleWidth, visibleHeight));
   }
 
   function focusSelectedObject() {
@@ -1061,19 +1159,19 @@ function MapStudio({
     const centerY = selectedObject.y + selectedObject.height / 2;
 
     setZoom(nextZoom);
-    setPan({
-      x: clamp(centerX - visibleWidth / 2, 0, Math.max(0, width - visibleWidth)),
-      y: clamp(centerY - visibleHeight / 2, 0, Math.max(0, height - visibleHeight)),
-    });
+    setPan(clampPan({
+      x: centerX - visibleWidth / 2,
+      y: centerY - visibleHeight / 2,
+    }, visibleWidth, visibleHeight));
   }
 
   function movePan(deltaX: number, deltaY: number) {
     const current = getVisibleViewBox();
 
-    setPan({
-      x: clamp(current.x + deltaX, 0, Math.max(0, width - current.width)),
-      y: clamp(current.y + deltaY, 0, Math.max(0, height - current.height)),
-    });
+    setPan(clampPan({
+      x: current.x + deltaX,
+      y: current.y + deltaY,
+    }, current.width, current.height));
   }
 
   function pointFromEvent(event: ReactPointerEvent<SVGSVGElement | SVGElement>) {
@@ -1244,6 +1342,36 @@ function MapStudio({
     });
   }
 
+  function startResizeDrag(
+    event: ReactPointerEvent<SVGRectElement>,
+    object: EventMapObject,
+    handle: ResizeHandle,
+  ) {
+    event.stopPropagation();
+
+    if (tool !== "select") return;
+
+    const point = pointFromEvent(event);
+
+    setSelectedObjectId(object.localId);
+    setDragState({
+      kind: "resize",
+      objectId: object.localId,
+      handle,
+      startX: point.x,
+      startY: point.y,
+      original: {
+        ...object,
+        metadata: {
+          ...object.metadata,
+          points: object.metadata?.points
+            ? object.metadata.points.map((item) => ({ ...item }))
+            : undefined,
+        },
+      },
+    });
+  }
+
   function startPointDrag(
     event: ReactPointerEvent<SVGCircleElement>,
     object: EventMapObject,
@@ -1283,10 +1411,10 @@ function MapStudio({
       const scaleX = viewBox.width / rect.width;
       const scaleY = viewBox.height / rect.height;
 
-      setPan({
-        x: clamp(panStart.x - (event.clientX - panStart.clientX) * scaleX, 0, Math.max(0, width - viewBox.width)),
-        y: clamp(panStart.y - (event.clientY - panStart.clientY) * scaleY, 0, Math.max(0, height - viewBox.height)),
-      });
+      setPan(clampPan({
+        x: panStart.x - (event.clientX - panStart.clientX) * scaleX,
+        y: panStart.y - (event.clientY - panStart.clientY) * scaleY,
+      }, viewBox.width, viewBox.height));
       return;
     }
 
@@ -1309,6 +1437,68 @@ function MapStudio({
       updateObject(dragState.objectId, {
         x: Math.round(nextX),
         y: Math.round(nextY),
+      });
+
+      return;
+    }
+
+    if (dragState.kind === "resize") {
+      const deltaX = point.x - dragState.startX;
+      const deltaY = point.y - dragState.startY;
+      const original = dragState.original;
+      const minSize = 24;
+
+      let nextX = original.x;
+      let nextY = original.y;
+      let nextWidth = original.width;
+      let nextHeight = original.height;
+
+      if (dragState.handle.includes("e")) {
+        nextWidth = Math.max(minSize, original.width + deltaX);
+      }
+
+      if (dragState.handle.includes("s")) {
+        nextHeight = Math.max(minSize, original.height + deltaY);
+      }
+
+      if (dragState.handle.includes("w")) {
+        const rawWidth = original.width - deltaX;
+        nextWidth = Math.max(minSize, rawWidth);
+        nextX = original.x + original.width - nextWidth;
+      }
+
+      if (dragState.handle.includes("n")) {
+        const rawHeight = original.height - deltaY;
+        nextHeight = Math.max(minSize, rawHeight);
+        nextY = original.y + original.height - nextHeight;
+      }
+
+      const originalPoints = original.metadata?.points;
+
+      const scaledPoints = originalPoints?.length
+        ? originalPoints.map((item) => {
+            const scaleX = original.width ? nextWidth / original.width : 1;
+            const scaleY = original.height ? nextHeight / original.height : 1;
+
+            return {
+              ...item,
+              x: Math.round(item.x * scaleX),
+              y: Math.round(item.y * scaleY),
+              cx: item.cx === undefined ? undefined : Math.round(item.cx * scaleX),
+              cy: item.cy === undefined ? undefined : Math.round(item.cy * scaleY),
+            };
+          })
+        : undefined;
+
+      updateObject(dragState.objectId, {
+        x: Math.round(nextX),
+        y: Math.round(nextY),
+        width: Math.round(nextWidth),
+        height: Math.round(nextHeight),
+        metadata: {
+          ...original.metadata,
+          points: scaledPoints || original.metadata?.points,
+        },
       });
 
       return;
@@ -2080,6 +2270,45 @@ function MapStudio({
           onPointerDown: (event) => startObjectDrag(event, object),
         })}
 
+        {active ? (
+          <g className="pointer-events-none">
+            <rect
+              x={object.x}
+              y={object.y}
+              width={object.width}
+              height={object.height}
+              fill="none"
+              stroke="#38bdf8"
+              strokeWidth={2}
+              strokeDasharray="8 8"
+            />
+            {([
+              ["nw", object.x, object.y],
+              ["n", object.x + object.width / 2, object.y],
+              ["ne", object.x + object.width, object.y],
+              ["e", object.x + object.width, object.y + object.height / 2],
+              ["se", object.x + object.width, object.y + object.height],
+              ["s", object.x + object.width / 2, object.y + object.height],
+              ["sw", object.x, object.y + object.height],
+              ["w", object.x, object.y + object.height / 2],
+            ] as [ResizeHandle, number, number][]).map(([handle, x, y]) => (
+              <rect
+                key={`${object.localId}-resize-${handle}`}
+                x={x - 8}
+                y={y - 8}
+                width={16}
+                height={16}
+                rx={4}
+                fill="#38bdf8"
+                stroke="#ffffff"
+                strokeWidth={3}
+                className="pointer-events-auto cursor-nwse-resize"
+                onPointerDown={(event) => startResizeDrag(event, object, handle)}
+              />
+            ))}
+          </g>
+        ) : null}
+
         {active && hasPoints
           ? points.map((point, index) => {
               const localPoint = object.metadata?.points?.[index];
@@ -2148,9 +2377,9 @@ function MapStudio({
             MAPA
           </div>
           <div>
-            <p className="text-sm font-black">Criador de mapa do evento <span className="ml-2 rounded-lg bg-emerald-500 px-2 py-1 text-[10px] text-white">v27</span></p>
+            <p className="text-sm font-black">Criador de mapa do evento <span className="ml-2 rounded-lg bg-emerald-500 px-2 py-1 text-[10px] text-white">v30</span></p>
             <p className="text-xs font-semibold text-slate-400">
-              Ctrl+Z remove ponto, Del apaga forma, Ctrl +/- muda zoom. Em Selecionar, arraste o fundo para mover. Scroll da página desativado.
+              Tudo editável: arraste objetos, use alças azuis para redimensionar, pontos brancos para formas e painel lateral para campos.
             </p>
           </div>
         </div>
@@ -2345,7 +2574,7 @@ function MapStudio({
           <div className="absolute left-4 right-4 top-4 z-30 rounded-[24px] border border-sky-400/30 bg-slate-900/98 p-3 shadow-2xl shadow-sky-950/40 backdrop-blur">
             <div className="flex flex-wrap items-center gap-3">
               <div className="rounded-2xl bg-sky-500 px-3 py-2 text-xs font-black text-white">
-                Ferramentas v27
+                Ferramentas v30
               </div>
               <div className="flex rounded-2xl border border-white/10 bg-slate-950 p-1">
                 {PRIMARY_TOOLS.map((item) => (
@@ -2461,6 +2690,14 @@ function MapStudio({
               title="Encaixar objetos"
             >
               Fit
+            </button>
+            <button
+              type="button"
+              onClick={centerCanvas}
+              className="rounded-xl bg-white/10 px-3 py-2 text-[10px] font-black text-white hover:bg-white/20"
+              title="Centralizar mapa"
+            >
+              Centro
             </button>
             <button
               type="button"
@@ -2748,6 +2985,10 @@ function MapStudio({
 
             {selectedObject ? (
               <div className="mt-4 space-y-3">
+                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-xs font-black leading-5 text-emerald-100">
+                  Tudo que aparece no mapa é editável: arraste para mover, use as alças azuis para redimensionar, ou ajuste os campos abaixo.
+                </div>
+
                 <label className="block">
                   <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
                     Nome
@@ -2763,28 +3004,112 @@ function MapStudio({
                   />
                 </label>
 
-                <label className="block">
-                  <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-                    Tipo
-                  </span>
-                  <select
-                    className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
-                    value={selectedObject.type}
-                    onChange={(event) =>
-                      updateObject(selectedObject.localId, {
-                        type: event.target.value as EventMapObjectType,
-                      })
-                    }
-                  >
-                    {(["AREA", "STAGE", "AISLE", "BOOTH", "BLOCKED_SPACE"] as EventMapObjectType[]).map(
-                      (item) => (
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Código
+                    </span>
+                    <input
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
+                      value={selectedObject.code}
+                      onChange={(event) =>
+                        updateObject(selectedObject.localId, {
+                          code: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Status
+                    </span>
+                    <select
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
+                      value={selectedObject.status || "AVAILABLE"}
+                      onChange={(event) =>
+                        updateObject(selectedObject.localId, {
+                          status: event.target.value,
+                        })
+                      }
+                    >
+                      {STATUS_OPTIONS.map((item) => (
                         <option key={item} value={item}>
-                          {typeLabel(item)}
+                          {item}
                         </option>
-                      ),
-                    )}
-                  </select>
-                </label>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Tipo visual
+                    </span>
+                    <select
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
+                      value={selectedObject.type}
+                      onChange={(event) =>
+                        updateObject(selectedObject.localId, {
+                          type: event.target.value as EventMapObjectType,
+                        })
+                      }
+                    >
+                      {(["AREA", "TABLE", "SEAT", "STAGE", "AISLE", "BOOTH", "BLOCKED_SPACE"] as EventMapObjectType[]).map(
+                        (item) => (
+                          <option key={item} value={item}>
+                            {typeLabel(item)}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Papel
+                    </span>
+                    <select
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
+                      value={selectedObject.metadata?.role || "SECTOR"}
+                      onChange={(event) =>
+                        updateObjectMetadata(selectedObject, {
+                          role: event.target.value as MapRole,
+                        })
+                      }
+                    >
+                      {(Object.keys(ROLE_LABELS) as MapRole[]).map((item) => (
+                        <option key={item} value={item}>
+                          {ROLE_LABELS[item]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {(selectedObject.metadata?.role || "SECTOR") === "OPERATIONAL" ? (
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Tipo operacional
+                    </span>
+                    <select
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
+                      value={selectedObject.metadata?.operationalType || "ACCESSIBILITY"}
+                      onChange={(event) =>
+                        updateObjectMetadata(selectedObject, {
+                          operationalType: event.target.value as OperationalType,
+                        })
+                      }
+                    >
+                      {(Object.keys(OPERATIONAL_LABELS) as OperationalType[]).map((item) => (
+                        <option key={item} value={item}>
+                          {OPERATIONAL_LABELS[item]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
 
                 <label className="block">
                   <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
@@ -2806,7 +3131,57 @@ function MapStudio({
                       </option>
                     ))}
                   </select>
+                  <p className="mt-2 text-[11px] font-semibold leading-4 text-slate-500">
+                    Use setor vinculado somente para áreas de venda. Praça, bar, banheiro, entrada e corredores devem ficar sem setor.
+                  </p>
                 </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Capacidade
+                    </span>
+                    <input
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
+                      value={selectedObject.capacity}
+                      onChange={(event) =>
+                        updateObject(selectedObject.localId, {
+                          capacity: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Cor manual
+                    </span>
+                    <input
+                      type="color"
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-2 py-2 outline-none"
+                      value={selectedObject.metadata?.customColor || objectColor(selectedObject, sectors.find((item) => item.localId === selectedObject.venueSectorLocalId))}
+                      onChange={(event) =>
+                        updateObjectMetadata(selectedObject, {
+                          customColor: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+
+                {selectedObject.metadata?.customColor ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateObjectMetadata(selectedObject, {
+                        customColor: undefined,
+                      })
+                    }
+                    className="w-full rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white/20"
+                  >
+                    Usar cor original do setor/tipo
+                  </button>
+                ) : null}
 
                 <div className="grid grid-cols-2 gap-2">
                   <label className="block">
@@ -2816,11 +3191,7 @@ function MapStudio({
                     <input
                       className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
                       value={String(selectedObject.x)}
-                      onChange={(event) =>
-                        updateObject(selectedObject.localId, {
-                          x: Number(event.target.value) || 0,
-                        })
-                      }
+                      onChange={(event) => updateSelectedObjectNumber(selectedObject, "x", event.target.value)}
                     />
                   </label>
                   <label className="block">
@@ -2830,11 +3201,27 @@ function MapStudio({
                     <input
                       className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
                       value={String(selectedObject.y)}
-                      onChange={(event) =>
-                        updateObject(selectedObject.localId, {
-                          y: Number(event.target.value) || 0,
-                        })
-                      }
+                      onChange={(event) => updateSelectedObjectNumber(selectedObject, "y", event.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Largura
+                    </span>
+                    <input
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
+                      value={String(selectedObject.width)}
+                      onChange={(event) => updateSelectedObjectNumber(selectedObject, "width", event.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                      Altura
+                    </span>
+                    <input
+                      className="h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 text-sm font-bold text-white outline-none focus:ring-4 focus:ring-sky-500/20"
+                      value={String(selectedObject.height)}
+                      onChange={(event) => updateSelectedObjectNumber(selectedObject, "height", event.target.value)}
                     />
                   </label>
                 </div>
@@ -2875,7 +3262,7 @@ function MapStudio({
                       onClick={focusSelectedObject}
                       className="rounded-xl bg-emerald-600 px-2 py-2 text-[10px] font-black text-white hover:bg-emerald-500"
                     >
-                      Focar setor
+                      Focar
                     </button>
                     <button
                       type="button"
@@ -2883,6 +3270,13 @@ function MapStudio({
                       className="rounded-xl bg-sky-600 px-2 py-2 text-[10px] font-black text-white hover:bg-sky-500"
                     >
                       Ver todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => duplicateObject(selectedObject)}
+                      className="rounded-xl bg-violet-600 px-2 py-2 text-[10px] font-black text-white hover:bg-violet-500"
+                    >
+                      Duplicar
                     </button>
                     <button
                       type="button"
@@ -2927,9 +3321,6 @@ function MapStudio({
                       Descer
                     </button>
                   </div>
-                  <p className="mt-2 text-[11px] font-semibold leading-4 text-slate-500">
-                    Use camadas para colocar um setor dentro ou por cima de outro, como Diamante no backstage ou Ouro sobre camarotes.
-                  </p>
                 </div>
 
                 {selectedObject.metadata?.points?.length ? (
@@ -2949,6 +3340,32 @@ function MapStudio({
                           <p className="text-xs font-black text-slate-200">
                             Ponto {index + 1}: {point.curve ? "curvo" : "reto"}
                           </p>
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <input
+                              className="h-9 rounded-lg border border-white/10 bg-slate-900 px-2 text-[11px] font-bold text-white outline-none"
+                              value={String(point.x)}
+                              onChange={(event) => {
+                                const points = [...(selectedObject.metadata?.points || [])];
+                                points[index] = {
+                                  ...points[index],
+                                  x: Number(event.target.value) || 0,
+                                };
+                                updateObjectMetadata(selectedObject, { points });
+                              }}
+                            />
+                            <input
+                              className="h-9 rounded-lg border border-white/10 bg-slate-900 px-2 text-[11px] font-bold text-white outline-none"
+                              value={String(point.y)}
+                              onChange={(event) => {
+                                const points = [...(selectedObject.metadata?.points || [])];
+                                points[index] = {
+                                  ...points[index],
+                                  y: Number(event.target.value) || 0,
+                                };
+                                updateObjectMetadata(selectedObject, { points });
+                              }}
+                            />
+                          </div>
                           <div className="mt-2 flex flex-wrap gap-2">
                             <button
                               type="button"
