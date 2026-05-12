@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -856,7 +856,6 @@ function EventMapPreview({
     if (!element) return;
 
     function updateWidth() {
-      if (!element) return;
       const rect = element.getBoundingClientRect();
       setAvailableWidth(Math.max(280, rect.width));
     }

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -1477,15 +1477,7 @@ function ReservedPlaceChooser({
 
   if (!sector || !object || !ticket || !session) return null;
 
-  
-const activeSessionId = session.id;
-const activeSectorId = sector.id;
-const activeSession = session;
-  const activeSector = sector;
-  const activeObject = object;
-  const activeTicket = ticket;
-
-  const objectId = getObjectStableId(activeObject);
+  const objectId = getObjectStableId(object);
   const isTable = isTableLikeSector(sector, object);
   const isSeat = isSeatLikeSector(sector, object) && !isTable;
   const selectedForTicket = Object.values(selectedPlaces).filter(
@@ -1695,8 +1687,8 @@ const activeSession = session;
       }
 
       onSetTableMix({
-        sessionId: activeSessionId,
-        sectorId: activeSectorId,
+        sessionId: session.id,
+        sectorId: sector.id,
         objectId,
         tableNumber: focusedTable,
         chairsPerTable,
@@ -1894,8 +1886,8 @@ const activeSession = session;
                   disabled={!focusedCanSellFull || focusedFullSelected}
                   onClick={() => {
                     onSetTableMix({
-                      sessionId: activeSessionId,
-                      sectorId: activeSectorId,
+                      sessionId: session.id,
+                      sectorId: sector.id,
                       objectId,
                       tableNumber: focusedTable,
                       chairsPerTable,
@@ -2102,8 +2094,8 @@ const activeSession = session;
                 onClick={() =>
                   onTogglePlace(ticket, {
                     id: placeId,
-                    sessionId: activeSessionId,
-                    sectorId: activeSectorId,
+                    sessionId: session.id,
+                    sectorId: sector.id,
                     objectId,
                     kind: "SEAT",
                     label: `Fileira ${rowNumber} cadeira ${seatNumber}`,
