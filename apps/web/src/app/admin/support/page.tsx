@@ -1,501 +1,1250 @@
-"use client";
+﻿"use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type SupportThreadListItem = {
-  id: string;
-  subject?: string;
-  status?: string;
-  customerName?: string | null;
-  customerEmail?: string;
-  createdAt?: string;
-  updatedAt?: string;
-  lastMessageAt?: string;
-  event?: {
-    id?: string;
-    name?: string;
-    eventDate?: string;
-  } | null;
-  order?: {
-    id?: string;
-    status?: string;
-    totalAmount?: string | number;
-  } | null;
-  organizer?: {
-    id?: string;
-    tradeName?: string;
-    legalName?: string;
-  } | null;
-  assignedUser?: {
-    id?: string;
-    name?: string;
-    email?: string;
-  } | null;
-  messages?: Array<{
-    id: string;
-    message?: string;
-    senderType?: string;
-    senderName?: string | null;
-    createdAt?: string;
-  }>;
+type StoredUser = {
+  id?: string;
+  name?: string;
+  email?: string;
+  role?: string;
 };
 
-type SupportFilter = "all" | "queue" | "open" | "closed" | "unassigned";
+type SupportTab = "chats" | "boosts" | "admin-approvals";
 
-function toNumber(value?: string | number) {
-  if (value === undefined || value === null) return 0;
-  const numeric = typeof value === "number" ? value : Number(String(value).replace(",", "."));
-  return Number.isNaN(numeric) ? 0 : numeric;
+type AdminModeTab = "my-support" | "new-support";
+
+type AdminSupportTicket = {
+  id: string;
+  protocol: string;
+  requesterUserId?: string;
+  requesterRole?: string;
+  requesterName?: string;
+  requesterEmail?: string;
+  requesterCpf?: string;
+  eventId?: string | null;
+  eventTitle: string;
+  subject: string;
+  message: string;
+  priority?: string;
+  category?: string;
+  status: string;
+  replyText?: string;
+  repliedAt?: string;
+  moderatorName?: string;
+  moderatorEmail?: string;
+  submittedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type BoostRequest = {
+  id: string;
+  protocol: string;
+  status: "PAID_PENDING_REVIEW" | "APPROVED" | "REJECTED" | string;
+  requesterName?: string;
+  requesterEmail?: string;
+  requesterCpf?: string;
+  eventTitle: string;
+  eventId?: string | null;
+  eventDate: string;
+  placementLabel: string;
+  placementDescription?: string;
+  periodDays: number;
+  unitPriceCents: number;
+  cycles: number;
+  totalAmountCents: number;
+  startsAt?: string;
+  endsAt?: string;
+  paymentMethod?: string;
+  paymentReference?: string;
+  paymentProofText?: string;
+  notes?: string;
+  submittedAt?: string;
+  reviewedAt?: string;
+  moderatorName?: string;
+  moderatorEmail?: string;
+  moderatorNote?: string;
+};
+
+type AdminAccessRequest = {
+  id: string;
+  protocol: string;
+  status: "PENDING_REVIEW" | "APPROVED" | "REJECTED" | string;
+  requesterUserId?: string;
+  requesterRole?: string;
+  requesterName?: string;
+  requesterEmail?: string;
+  requesterCpf?: string;
+  fullName?: string;
+  email?: string;
+  cpfCnpj?: string;
+  phone?: string;
+  producerName?: string;
+  producerDocument?: string;
+  city?: string;
+  state?: string;
+  websiteOrSocial?: string;
+  eventTypes?: string;
+  firstEventDescription?: string;
+  estimatedEventDate?: string;
+  expectedAudience?: string;
+  experience?: string;
+  reason?: string;
+  extraNotes?: string;
+  reviewDeadlineBusinessDays?: number;
+  submittedAt?: string;
+  reviewedAt?: string;
+  moderatorName?: string;
+  moderatorEmail?: string;
+  moderatorNote?: string;
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+function formatMoneyFromCents(value?: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format((value || 0) / 100);
 }
 
 function formatDate(value?: string) {
   if (!value) return "-";
+
   const date = new Date(value);
+
   if (Number.isNaN(date.getTime())) return value;
 
-  return date.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return date.toLocaleString("pt-BR");
 }
 
-function formatMoney(value?: string | number) {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(toNumber(value));
+function getBoostStatusLabel(status: string) {
+  if (status === "APPROVED") return "Aprovado";
+  if (status === "REJECTED") return "Reprovado";
+  if (status === "PAID_PENDING_REVIEW") return "Pago, aguardando aprovação";
+
+  return status || "-";
 }
 
-function normalizeText(value?: string | null) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
+function getAdminStatusLabel(status: string) {
+  if (status === "APPROVED") return "Aprovada";
+  if (status === "REJECTED") return "Reprovada";
+  if (status === "PENDING_REVIEW") return "Pendente de análise";
+
+  return status || "-";
 }
 
-function getStatusLabel(status?: string) {
-  const normalized = String(status || "").toUpperCase();
-  if (normalized === "OPEN") return "Aberto";
-  if (normalized === "CUSTOMER_REPLY") return "Na fila";
-  if (normalized === "PRODUCER_REPLY") return "Respondido";
-  if (normalized === "CLOSED") return "Fechado";
-  return status || "Sem status";
+function getTicketStatusLabel(status: string) {
+  if (status === "OPEN") return "Aberto";
+  if (status === "IN_REVIEW") return "Em análise";
+  if (status === "ANSWERED") return "Respondido";
+  if (status === "CLOSED") return "Encerrado";
+
+  return status || "-";
 }
 
-function getStatusClasses(status?: string) {
-  const normalized = String(status || "").toUpperCase();
-  if (normalized === "CUSTOMER_REPLY") {
-    return "border-rose-200 bg-rose-50 text-rose-700";
+function getStatusClass(status: string) {
+  if (["APPROVED", "ANSWERED", "CLOSED"].includes(status)) {
+    return "bg-emerald-50 text-emerald-700 ring-emerald-100";
   }
-  if (normalized === "OPEN") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-  if (normalized === "PRODUCER_REPLY") {
-    return "border-sky-200 bg-sky-50 text-sky-700";
-  }
-  if (normalized === "CLOSED") {
-    return "border-slate-200 bg-slate-100 text-slate-600";
-  }
-  return "border-slate-200 bg-slate-50 text-slate-600";
+
+  if (status === "REJECTED") return "bg-red-50 text-red-700 ring-red-100";
+
+  return "bg-orange-50 text-[#19002f] ring-orange-100";
 }
 
-function getAgeLabel(value?: string) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  const diffMs = Date.now() - date.getTime();
-  const diffHours = Math.max(0, Math.floor(diffMs / 1000 / 60 / 60));
-
-  if (diffHours < 1) return "agora";
-  if (diffHours < 24) return `${diffHours}h`;
-  const days = Math.floor(diffHours / 24);
-  return `${days}d`;
+function InfoBox({ label, value }: { label: string; value?: string | number | null }) {
+  return (
+    <div className="rounded-2xl bg-neutral-50 p-4">
+      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-neutral-400">
+        {label}
+      </p>
+      <p className="mt-2 break-words text-sm font-bold text-neutral-800">
+        {value || "-"}
+      </p>
+    </div>
+  );
 }
 
-function firstMessage(thread: SupportThreadListItem) {
-  return thread.messages?.[0]?.message || "Sem mensagem.";
-}
-
-function rowNeedsAttention(thread: SupportThreadListItem) {
-  const status = String(thread.status || "").toUpperCase();
-  return status === "CUSTOMER_REPLY" || status === "OPEN";
+function TabButton({
+  active,
+  children,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  count?: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-xl px-5 py-3 text-sm font-black transition ${
+        active
+          ? "bg-[#19002f] text-white shadow-sm"
+          : "bg-white text-neutral-600 ring-1 ring-neutral-200 hover:bg-orange-50 hover:text-[#19002f]"
+      }`}
+    >
+      {children}
+      {count && count > 0 ? (
+        <span
+          className={`ml-2 rounded-full px-2 py-0.5 text-[11px] ${
+            active ? "bg-white text-[#19002f]" : "bg-orange-500 text-white"
+          }`}
+        >
+          {count}
+        </span>
+      ) : null}
+    </button>
+  );
 }
 
 export default function AdminSupportPage() {
-  const [threads, setThreads] = useState<SupportThreadListItem[]>([]);
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [activeTab, setActiveTab] = useState<SupportTab>("chats");
+  const [adminModeTab, setAdminModeTab] = useState<AdminModeTab>("my-support");
+
+  const [tickets, setTickets] = useState<AdminSupportTicket[]>([]);
+  const [boosts, setBoosts] = useState<BoostRequest[]>([]);
+  const [adminRequests, setAdminRequests] = useState<AdminAccessRequest[]>([]);
+
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [activeFilter, setActiveFilter] = useState<SupportFilter>("all");
+  const [loadingTickets, setLoadingTickets] = useState(false);
+  const [loadingBoosts, setLoadingBoosts] = useState(false);
+  const [loadingAdminRequests, setLoadingAdminRequests] = useState(false);
+
+  const [error, setError] = useState("");
+  const [boostModeratorNote, setBoostModeratorNote] = useState<Record<string, string>>({});
+  const [adminModeratorNote, setAdminModeratorNote] = useState<Record<string, string>>({});
+  const [ticketReply, setTicketReply] = useState<Record<string, string>>({});
+
+  const [eventId, setEventId] = useState("");
+  const [eventTitle, setEventTitle] = useState("");
+  const [subject, setSubject] = useState("");
+  const [priority, setPriority] = useState("NORMAL");
+  const [category, setCategory] = useState("EVENT_SUPPORT");
+  const [message, setMessage] = useState("");
+  const [creatingTicket, setCreatingTicket] = useState(false);
+  const [ticketSuccess, setTicketSuccess] = useState("");
+
+  const role = String(user?.role || "").toUpperCase();
+  const isSuperAdmin = role === "SUPER_ADMIN";
+  const isAdmin = role === "ADMIN" || isSuperAdmin;
+
+  const pendingTickets = tickets.filter((ticket) => ["OPEN", "IN_REVIEW"].includes(ticket.status));
+  const pendingBoosts = boosts.filter((boost) => boost.status === "PAID_PENDING_REVIEW");
+  const approvedBoosts = boosts.filter((boost) => boost.status === "APPROVED");
+  const pendingAdminRequests = adminRequests.filter(
+    (request) => request.status === "PENDING_REVIEW",
+  );
+
+  const pendingBoostAmount = pendingBoosts.reduce(
+    (sum, boost) => sum + (boost.totalAmountCents || 0),
+    0,
+  );
+  const approvedBoostAmount = approvedBoosts.reduce(
+    (sum, boost) => sum + (boost.totalAmountCents || 0),
+    0,
+  );
 
   useEffect(() => {
-    async function loadThreads() {
-      const token = localStorage.getItem("token");
+    const token = localStorage.getItem("token");
+    const rawUser = localStorage.getItem("user");
 
-      if (!token || token === "undefined") {
-        window.location.href = "/login";
-        return;
-      }
-
-      try {
-        const res = await fetch("http://localhost:3001/v1/support/admin", {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        const result = await res.json();
-
-        if (!res.ok) {
-          alert(
-            typeof result?.message === "string"
-              ? result.message
-              : "Erro ao carregar atendimentos",
-          );
-          return;
-        }
-
-        setThreads(Array.isArray(result) ? result : []);
-      } catch (error) {
-        console.error("ADMIN SUPPORT LIST ERROR:", error);
-        alert("Erro ao conectar com a API");
-      } finally {
-        setLoading(false);
-      }
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
     }
 
-    loadThreads();
+    if (window.location.search) {
+      window.history.replaceState(null, "", "/admin/support");
+    }
+
+    try {
+      setUser(rawUser ? (JSON.parse(rawUser) as StoredUser) : null);
+    } catch {
+      setUser(null);
+    }
+
+    setLoading(false);
   }, []);
 
-  const summary = useMemo(() => {
-    return {
-      total: threads.length,
-      queue: threads.filter((item) => item.status === "CUSTOMER_REPLY").length,
-      open: threads.filter((item) => item.status === "OPEN" || item.status === "PRODUCER_REPLY").length,
-      closed: threads.filter((item) => item.status === "CLOSED").length,
-      unassigned: threads.filter((item) => !item.assignedUser?.id).length,
-    };
-  }, [threads]);
+  useEffect(() => {
+    if (!user || !isAdmin) return;
 
-  const filteredThreads = useMemo(() => {
-    const term = normalizeText(search);
+    if (isSuperAdmin) {
+      loadAllForSuperAdmin();
+      return;
+    }
 
-    return [...threads]
-      .filter((thread) => {
-        const status = String(thread.status || "").toUpperCase();
+    loadMyTickets();
+  }, [user, isAdmin, isSuperAdmin]);
 
-        if (activeFilter === "queue" && status !== "CUSTOMER_REPLY") return false;
-        if (activeFilter === "open" && !["OPEN", "PRODUCER_REPLY"].includes(status)) return false;
-        if (activeFilter === "closed" && status !== "CLOSED") return false;
-        if (activeFilter === "unassigned" && thread.assignedUser?.id) return false;
+  async function loadAllForSuperAdmin() {
+    await Promise.all([loadAllTickets(), loadBoosts(), loadAdminRequests()]);
+  }
 
-        if (!term) return true;
+  async function loadAllTickets() {
+    const token = localStorage.getItem("token");
 
-        const haystack = normalizeText(
-          [
-            thread.subject,
-            thread.customerName,
-            thread.customerEmail,
-            thread.event?.name,
-            thread.organizer?.tradeName,
-            thread.organizer?.legalName,
-            thread.order?.id,
-            thread.order?.status,
-            thread.assignedUser?.name,
-            thread.assignedUser?.email,
-            firstMessage(thread),
-            thread.status,
-          ]
-            .filter(Boolean)
-            .join(" "),
-        );
+    setLoadingTickets(true);
 
-        return haystack.includes(term);
-      })
-      .sort((a, b) => {
-        const attentionA = rowNeedsAttention(a) ? 1 : 0;
-        const attentionB = rowNeedsAttention(b) ? 1 : 0;
-        if (attentionA !== attentionB) return attentionB - attentionA;
-
-        const aTime = new Date(a.lastMessageAt || a.updatedAt || a.createdAt || 0).getTime();
-        const bTime = new Date(b.lastMessageAt || b.updatedAt || b.createdAt || 0).getTime();
-        return bTime - aTime;
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin-support-tickets`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
-  }, [threads, search, activeFilter]);
 
-  const filters: Array<{ id: SupportFilter; label: string; count: number }> = [
-    { id: "all", label: "Todos", count: summary.total },
-    { id: "queue", label: "Fila", count: summary.queue },
-    { id: "open", label: "Ativos", count: summary.open },
-    { id: "closed", label: "Fechados", count: summary.closed },
-    { id: "unassigned", label: "Sem resp.", count: summary.unassigned },
-  ];
+      const data = await response.json().catch(() => null);
 
-  return (
-    <main className="mx-auto max-w-[1500px] px-4 py-5">
-      <section className="rounded-[28px] border border-slate-800 bg-slate-950 p-5 text-white shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-sky-300">
-              Suporte operacional
-            </p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight md:text-4xl">
-              Atendimentos
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-300">
-              Fila compacta para responder clientes, abrir pedido e acessar evento sem rolagem gigante.
-            </p>
-          </div>
+      if (response.ok && Array.isArray(data)) {
+        setTickets(data);
+      } else {
+        setTickets([]);
+      }
+    } catch {
+      setTickets([]);
+    } finally {
+      setLoadingTickets(false);
+    }
+  }
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 lg:min-w-[560px]">
-            <Metric label="Total" value={summary.total} />
-            <Metric label="Fila" value={summary.queue} tone="danger" />
-            <Metric label="Ativos" value={summary.open} tone="success" />
-            <Metric label="Fechados" value={summary.closed} />
-            <Metric label="Sem resp." value={summary.unassigned} tone="warning" />
-          </div>
-        </div>
-      </section>
+  async function loadMyTickets() {
+    const token = localStorage.getItem("token");
 
-      <section className="sticky top-0 z-10 mt-5 rounded-[24px] border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur">
-        <div className="grid gap-3 xl:grid-cols-[1fr_auto] xl:items-center">
-          <div className="flex h-12 items-center rounded-2xl border border-slate-200 bg-white px-4">
-            <span className="mr-3 text-slate-400">🔎</span>
-            <input
-              type="text"
-              placeholder="Buscar cliente, pedido, evento, produtor, responsável ou mensagem..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-            />
-          </div>
+    setLoadingTickets(true);
 
-          <div className="flex gap-2 overflow-x-auto pb-1 xl:justify-end">
-            {filters.map((filter) => {
-              const active = activeFilter === filter.id;
-              return (
-                <button
-                  key={filter.id}
-                  type="button"
-                  onClick={() => setActiveFilter(filter.id)}
-                  className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm font-bold transition ${
-                    active
-                      ? "border-slate-950 bg-slate-950 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  {filter.label} <span className="opacity-70">{filter.count}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </section>
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin-support-tickets/mine`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-      <section className="mt-5 rounded-[28px] border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+      const data = await response.json().catch(() => null);
+
+      if (response.ok && Array.isArray(data)) {
+        setTickets(data);
+      } else {
+        setTickets([]);
+      }
+    } catch {
+      setTickets([]);
+    } finally {
+      setLoadingTickets(false);
+    }
+  }
+
+  async function loadBoosts() {
+    const token = localStorage.getItem("token");
+
+    setLoadingBoosts(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/promotion-boosts`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(data?.message || "Não foi possível carregar os impulsionamentos.");
+      }
+
+      setBoosts(Array.isArray(data) ? data : []);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Não foi possível carregar os impulsionamentos.",
+      );
+    } finally {
+      setLoadingBoosts(false);
+    }
+  }
+
+  async function loadAdminRequests() {
+    const token = localStorage.getItem("token");
+
+    setLoadingAdminRequests(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin-access-requests`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (response.ok && Array.isArray(data)) {
+        setAdminRequests(data);
+      } else {
+        setAdminRequests([]);
+      }
+    } catch {
+      setAdminRequests([]);
+    } finally {
+      setLoadingAdminRequests(false);
+    }
+  }
+
+  async function createTicket(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!eventTitle.trim() || !subject.trim() || !message.trim()) {
+      setError("Informe o evento, o assunto e a descrição do problema.");
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+
+    setCreatingTicket(true);
+    setTicketSuccess("");
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin-support-tickets`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          eventId,
+          eventTitle,
+          subject,
+          message,
+          priority,
+          category,
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(data?.message || "Não foi possível abrir o suporte.");
+      }
+
+      setTicketSuccess(`Suporte criado com sucesso. Protocolo: ${data.protocol}`);
+      setEventId("");
+      setEventTitle("");
+      setSubject("");
+      setMessage("");
+      setPriority("NORMAL");
+      setCategory("EVENT_SUPPORT");
+      setAdminModeTab("my-support");
+
+      if (isSuperAdmin) {
+        await loadAllTickets();
+      } else {
+        await loadMyTickets();
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível abrir o suporte.");
+    } finally {
+      setCreatingTicket(false);
+    }
+  }
+
+  async function reviewTicket(id: string, status: "IN_REVIEW" | "ANSWERED" | "CLOSED") {
+    const token = localStorage.getItem("token");
+
+    const response = await fetch(`${API_BASE_URL}/admin-support-tickets/${id}/review`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        status,
+        replyText: ticketReply[id] || "",
+      }),
+    });
+
+    const updated = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      alert(updated?.message || "Não foi possível atualizar o suporte.");
+      return;
+    }
+
+    setTickets((current) => current.map((item) => (item.id === id ? updated : item)));
+  }
+
+  async function reviewBoost(id: string, status: "APPROVED" | "REJECTED") {
+    const token = localStorage.getItem("token");
+
+    const response = await fetch(`${API_BASE_URL}/promotion-boosts/${id}/review`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        status,
+        moderatorNote: boostModeratorNote[id] || "",
+      }),
+    });
+
+    const updated = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      alert(updated?.message || "Não foi possível atualizar o impulsionamento.");
+      return;
+    }
+
+    setBoosts((current) => current.map((item) => (item.id === id ? updated : item)));
+  }
+
+  async function reviewAdminRequest(id: string, status: "APPROVED" | "REJECTED") {
+    const token = localStorage.getItem("token");
+
+    const response = await fetch(`${API_BASE_URL}/admin-access-requests/${id}/review`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        status,
+        moderatorNote: adminModeratorNote[id] || "",
+      }),
+    });
+
+    const updated = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      alert(updated?.message || "Não foi possível atualizar a solicitação.");
+      return;
+    }
+
+    setAdminRequests((current) => current.map((item) => (item.id === id ? updated : item)));
+  }
+
+  function renderAdminTicketCard(ticket: AdminSupportTicket) {
+    return (
+      <article key={ticket.id} className="rounded-[24px] bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.22em] text-sky-600">
-              Fila
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-orange-600">
+              {ticket.protocol}
             </p>
-            <h2 className="text-xl font-black text-slate-950">
-              {loading ? "Carregando..." : `${filteredThreads.length} atendimento(s)`}
-            </h2>
+            <h2 className="mt-2 text-[24px] font-black">{ticket.subject}</h2>
+            <p className="mt-1 text-sm text-neutral-500">
+              Evento: {ticket.eventTitle}
+              {ticket.eventId ? ` • ID: ${ticket.eventId}` : ""}
+            </p>
+            {isSuperAdmin ? (
+              <p className="mt-1 text-sm text-neutral-500">
+                Admin: {ticket.requesterName || "-"} • {ticket.requesterEmail || "-"}
+              </p>
+            ) : null}
           </div>
-          <p className="hidden text-sm text-slate-500 md:block">
-            Os que precisam de resposta sobem automaticamente.
+
+          <span className={`rounded-full px-3 py-2 text-xs font-black ring-1 ${getStatusClass(ticket.status)}`}>
+            {getTicketStatusLabel(ticket.status)}
+          </span>
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-3">
+          <InfoBox label="Prioridade" value={ticket.priority} />
+          <InfoBox label="Categoria" value={ticket.category} />
+          <InfoBox label="Enviado em" value={formatDate(ticket.submittedAt || ticket.createdAt)} />
+        </div>
+
+        <div className="mt-5 rounded-2xl bg-neutral-50 p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-neutral-400">
+            Problema relatado
+          </p>
+          <p className="mt-2 whitespace-pre-wrap text-sm font-semibold leading-6 text-neutral-700">
+            {ticket.message}
           </p>
         </div>
 
-        {loading ? (
-          <div className="p-8 text-sm text-slate-500">Carregando atendimentos...</div>
-        ) : filteredThreads.length === 0 ? (
-          <div className="p-10 text-center">
-            <p className="text-lg font-black text-slate-950">Nenhum atendimento encontrado.</p>
-            <p className="mt-2 text-sm text-slate-500">Troque o filtro ou limpe a busca.</p>
+        {ticket.replyText ? (
+          <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-700">
+              Resposta do super admin
+            </p>
+            <p className="mt-2 whitespace-pre-wrap text-sm font-semibold leading-6 text-emerald-900">
+              {ticket.replyText}
+            </p>
+            <p className="mt-3 text-xs font-semibold text-emerald-700">
+              Respondido em {formatDate(ticket.repliedAt)} por {ticket.moderatorName || "Super Admin"}
+            </p>
           </div>
-        ) : (
-          <>
-            <div className="hidden overflow-x-auto xl:block">
-              <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-[0.16em] text-slate-500">
-                  <tr>
-                    <th className="px-5 py-3 font-bold">Atendimento</th>
-                    <th className="px-5 py-3 font-bold">Cliente</th>
-                    <th className="px-5 py-3 font-bold">Evento</th>
-                    <th className="px-5 py-3 font-bold">Pedido</th>
-                    <th className="px-5 py-3 font-bold">Responsável</th>
-                    <th className="px-5 py-3 font-bold">Atualizado</th>
-                    <th className="px-5 py-3 text-right font-bold">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredThreads.map((thread) => (
-                    <SupportRow key={thread.id} thread={thread} />
-                  ))}
-                </tbody>
-              </table>
+        ) : null}
+
+        {isSuperAdmin ? (
+          <div className="mt-5 border-t border-neutral-100 pt-5">
+            <textarea
+              value={ticketReply[ticket.id] || ""}
+              onChange={(event) =>
+                setTicketReply((current) => ({
+                  ...current,
+                  [ticket.id]: event.target.value,
+                }))
+              }
+              placeholder="Responder ao admin sobre este problema..."
+              rows={3}
+              className="w-full resize-none rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-[#19002f]"
+            />
+
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => reviewTicket(ticket.id, "IN_REVIEW")}
+                className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-black text-white hover:bg-neutral-800"
+              >
+                Marcar em análise
+              </button>
+              <button
+                type="button"
+                onClick={() => reviewTicket(ticket.id, "ANSWERED")}
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+              >
+                Responder
+              </button>
+              <button
+                type="button"
+                onClick={() => reviewTicket(ticket.id, "CLOSED")}
+                className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-700"
+              >
+                Encerrar
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </article>
+    );
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[#f4f4f4] px-4 py-10 text-neutral-950">
+        <section className="mx-auto max-w-[1180px] rounded-3xl bg-white p-8 shadow-sm">
+          <p className="text-sm font-bold text-neutral-600">Carregando suporte...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (user && !isAdmin) {
+    return (
+      <main className="min-h-screen bg-[#f4f4f4] px-4 py-10 text-neutral-950">
+        <section className="mx-auto max-w-[900px] rounded-3xl bg-white p-8 shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+            Suporte
+          </p>
+          <h1 className="mt-3 text-[34px] font-black">Acesso restrito</h1>
+          <p className="mt-3 text-sm leading-7 text-neutral-500">
+            Apenas administradores podem acessar o suporte administrativo.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!isSuperAdmin) {
+    return (
+      <main className="min-h-screen bg-[#f4f4f4] px-4 py-10 text-neutral-950">
+        <section className="mx-auto max-w-[1180px]">
+          <section className="mb-6 rounded-[28px] bg-gradient-to-r from-orange-500 via-orange-700 to-[#19002f] p-8 text-white shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/75">
+              Suporte do administrador
+            </p>
+            <h1 className="mt-3 text-[40px] font-black leading-tight md:text-[48px]">
+              Suporte dos seus eventos
+            </h1>
+            <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/82">
+              Abra chamados relacionados aos seus eventos e acompanhe as respostas do super administrador.
+            </p>
+          </section>
+
+          <section className="mb-6 grid gap-4 md:grid-cols-3">
+            <div className="rounded-[22px] bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-neutral-400">
+                Meus suportes
+              </p>
+              <p className="mt-2 text-[34px] font-black">{tickets.length}</p>
+              <p className="text-sm font-bold text-neutral-500">atrelados aos seus eventos</p>
             </div>
 
-            <div className="divide-y divide-slate-100 xl:hidden">
-              {filteredThreads.map((thread) => (
-                <SupportMobileCard key={thread.id} thread={thread} />
-              ))}
+            <div className="rounded-[22px] bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+                Em aberto
+              </p>
+              <p className="mt-2 text-[34px] font-black">{pendingTickets.length}</p>
+              <p className="text-sm font-bold text-neutral-500">aguardando resposta</p>
             </div>
-          </>
-        )}
+
+            <div className="rounded-[22px] bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-600">
+                Resolvidos/respondidos
+              </p>
+              <p className="mt-2 text-[34px] font-black">
+                {tickets.filter((ticket) => ["ANSWERED", "CLOSED"].includes(ticket.status)).length}
+              </p>
+              <p className="text-sm font-bold text-neutral-500">com retorno do super admin</p>
+            </div>
+          </section>
+
+          <section className="mb-6 rounded-[22px] bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap gap-3">
+              <TabButton
+                active={adminModeTab === "my-support"}
+                count={tickets.length}
+                onClick={() => setAdminModeTab("my-support")}
+              >
+                Meus suportes
+              </TabButton>
+
+              <TabButton
+                active={adminModeTab === "new-support"}
+                onClick={() => setAdminModeTab("new-support")}
+              >
+                Criar suporte para super admin
+              </TabButton>
+
+              <button
+                type="button"
+                onClick={loadMyTickets}
+                className="ml-auto rounded-xl bg-[#19002f] px-5 py-3 text-sm font-black text-white hover:bg-[#2a0648]"
+              >
+                Atualizar
+              </button>
+            </div>
+          </section>
+
+          {error ? (
+            <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          {ticketSuccess ? (
+            <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+              {ticketSuccess}
+            </div>
+          ) : null}
+
+          {adminModeTab === "new-support" ? (
+            <form onSubmit={createTicket} className="rounded-[24px] bg-white p-6 shadow-sm">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="text-[11px] font-black uppercase tracking-[0.16em] text-neutral-400">
+                    Evento relacionado
+                  </span>
+                  <input
+                    required
+                    value={eventTitle}
+                    onChange={(event) => setEventTitle(event.target.value)}
+                    placeholder="Ex: Rodeio Jaguariúna 2026"
+                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 px-4 text-sm font-bold outline-none focus:border-[#19002f]"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[11px] font-black uppercase tracking-[0.16em] text-neutral-400">
+                    ID do evento, opcional
+                  </span>
+                  <input
+                    value={eventId}
+                    onChange={(event) => setEventId(event.target.value)}
+                    placeholder="Cole o ID do evento se souber"
+                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 px-4 text-sm font-bold outline-none focus:border-[#19002f]"
+                  />
+                </label>
+
+                <label className="block md:col-span-2">
+                  <span className="text-[11px] font-black uppercase tracking-[0.16em] text-neutral-400">
+                    Assunto
+                  </span>
+                  <input
+                    required
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    placeholder="Ex: problema nos lotes, validação, mapa, pagamentos..."
+                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 px-4 text-sm font-bold outline-none focus:border-[#19002f]"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[11px] font-black uppercase tracking-[0.16em] text-neutral-400">
+                    Prioridade
+                  </span>
+                  <select
+                    value={priority}
+                    onChange={(event) => setPriority(event.target.value)}
+                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 px-4 text-sm font-bold outline-none focus:border-[#19002f]"
+                  >
+                    <option value="NORMAL">Normal</option>
+                    <option value="HIGH">Alta</option>
+                    <option value="URGENT">Urgente</option>
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-[11px] font-black uppercase tracking-[0.16em] text-neutral-400">
+                    Categoria
+                  </span>
+                  <select
+                    value={category}
+                    onChange={(event) => setCategory(event.target.value)}
+                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 px-4 text-sm font-bold outline-none focus:border-[#19002f]"
+                  >
+                    <option value="EVENT_SUPPORT">Evento</option>
+                    <option value="PAYMENT">Pagamento</option>
+                    <option value="TICKETS_LOTS">Ingressos / lotes</option>
+                    <option value="MAP">Mapa</option>
+                    <option value="VALIDATION">Validação</option>
+                    <option value="OTHER">Outro</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="mt-4 block">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-neutral-400">
+                  Descrição do problema
+                </span>
+                <textarea
+                  required
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                  placeholder="Descreva o problema para o super administrador analisar."
+                  rows={6}
+                  className="mt-2 w-full resize-none rounded-xl border border-neutral-200 px-4 py-3 text-sm font-bold outline-none focus:border-[#19002f]"
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={creatingTicket}
+                className="mt-6 rounded-xl bg-[#19002f] px-7 py-4 text-sm font-black text-white hover:bg-[#2a0648] disabled:opacity-60"
+              >
+                {creatingTicket ? "Enviando..." : "Enviar suporte para super admin"}
+              </button>
+            </form>
+          ) : (
+            <section>
+              {loadingTickets ? (
+                <div className="rounded-2xl bg-white p-8 text-center text-sm font-bold text-neutral-600 shadow-sm">
+                  Carregando seus suportes...
+                </div>
+              ) : tickets.length === 0 ? (
+                <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
+                  <h2 className="text-[24px] font-black">Nenhum suporte aberto</h2>
+                  <p className="mt-2 text-sm text-neutral-500">
+                    Crie um suporte para relatar um problema de evento ao super administrador.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-5">
+                  {tickets.map(renderAdminTicketCard)}
+                </div>
+              )}
+            </section>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f4f4f4] px-4 py-10 text-neutral-950">
+      <section className="mx-auto max-w-[1180px]">
+        <section className="mb-6 rounded-[28px] bg-gradient-to-r from-orange-500 via-orange-700 to-[#19002f] p-8 text-white shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/75">
+            Suporte do super admin
+          </p>
+          <h1 className="mt-3 text-[40px] font-black leading-tight md:text-[48px]">
+            Central de suporte
+          </h1>
+          <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/82">
+            Um só lugar para suportes normais de administradores, impulsionamentos pagos e aprovação de contas que querem virar admin.
+          </p>
+        </section>
+
+        <section className="mb-6 grid gap-4 md:grid-cols-4">
+          <div className="rounded-[22px] bg-white p-5 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-neutral-400">
+              Suportes normais
+            </p>
+            <p className="mt-2 text-[34px] font-black">{tickets.length}</p>
+            <p className="text-sm font-bold text-neutral-500">{pendingTickets.length} em aberto</p>
+          </div>
+
+          <div className="rounded-[22px] bg-white p-5 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+              Impulsionamentos pendentes
+            </p>
+            <p className="mt-2 text-[34px] font-black">{pendingBoosts.length}</p>
+            <p className="text-sm font-bold text-neutral-500">
+              {formatMoneyFromCents(pendingBoostAmount)}
+            </p>
+          </div>
+
+          <div className="rounded-[22px] bg-white p-5 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-600">
+              Impulsionamentos aprovados
+            </p>
+            <p className="mt-2 text-[34px] font-black">{approvedBoosts.length}</p>
+            <p className="text-sm font-bold text-neutral-500">
+              {formatMoneyFromCents(approvedBoostAmount)}
+            </p>
+          </div>
+
+          <div className="rounded-[22px] bg-white p-5 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#19002f]">
+              Aprovação de admins
+            </p>
+            <p className="mt-2 text-[34px] font-black">{pendingAdminRequests.length}</p>
+            <p className="text-sm font-bold text-neutral-500">pendente(s)</p>
+          </div>
+        </section>
+
+        <section className="mb-6 rounded-[22px] bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap gap-3">
+            <TabButton
+              active={activeTab === "chats"}
+              count={tickets.length}
+              onClick={() => setActiveTab("chats")}
+            >
+              Suporte normal
+            </TabButton>
+
+            <TabButton
+              active={activeTab === "boosts"}
+              count={pendingBoosts.length}
+              onClick={() => setActiveTab("boosts")}
+            >
+              Suporte impulsionamentos
+            </TabButton>
+
+            <TabButton
+              active={activeTab === "admin-approvals"}
+              count={pendingAdminRequests.length}
+              onClick={() => setActiveTab("admin-approvals")}
+            >
+              Suporte aprovação de admins
+            </TabButton>
+
+            <button
+              type="button"
+              onClick={loadAllForSuperAdmin}
+              className="ml-auto rounded-xl bg-[#19002f] px-5 py-3 text-sm font-black text-white hover:bg-[#2a0648]"
+            >
+              Atualizar tudo
+            </button>
+          </div>
+        </section>
+
+        {error ? (
+          <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        {activeTab === "chats" ? (
+          <section>
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-[22px] bg-white p-4 shadow-sm">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+                  Suporte normal
+                </p>
+                <h2 className="mt-1 text-[24px] font-black text-neutral-950">
+                  Suportes de administradores
+                </h2>
+                <p className="mt-2 text-sm font-semibold text-neutral-500">
+                  Chamados abertos por admins, atrelados aos eventos deles.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={loadAllTickets}
+                className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-black text-white hover:bg-neutral-800"
+              >
+                Atualizar suportes
+              </button>
+            </div>
+
+            {loadingTickets ? (
+              <div className="rounded-2xl bg-white p-8 text-center text-sm font-bold text-neutral-600 shadow-sm">
+                Carregando suportes...
+              </div>
+            ) : tickets.length === 0 ? (
+              <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
+                <h2 className="text-[24px] font-black">Nenhum suporte aberto</h2>
+                <p className="mt-2 text-sm text-neutral-500">
+                  Quando um admin criar um suporte de evento, ele aparecerá aqui.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-5">
+                {tickets.map(renderAdminTicketCard)}
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        {activeTab === "boosts" ? (
+          <section>
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-[22px] bg-white p-4 shadow-sm">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+                  Suporte impulsionamentos
+                </p>
+                <h2 className="mt-1 text-[24px] font-black text-neutral-950">
+                  Pagamentos de impulsionamento
+                </h2>
+                <p className="mt-2 text-sm font-semibold text-neutral-500">
+                  Confira valores pagos e aprove ou reprove a exibição no site.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={loadBoosts}
+                className="rounded-xl bg-[#19002f] px-5 py-3 text-sm font-black text-white hover:bg-[#2a0648]"
+              >
+                Atualizar lista
+              </button>
+            </div>
+
+            {loadingBoosts ? (
+              <div className="rounded-2xl bg-white p-8 text-center text-sm font-bold text-neutral-600 shadow-sm">
+                Carregando impulsionamentos...
+              </div>
+            ) : boosts.length === 0 ? (
+              <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
+                <h2 className="text-[24px] font-black">Nenhum impulsionamento encontrado</h2>
+                <p className="mt-2 text-sm text-neutral-500">
+                  Quando um admin solicitar impulsionamento pago, ele aparecerá aqui.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-5">
+                {boosts.map((boost) => (
+                  <article key={boost.id} className="rounded-[24px] bg-white p-6 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-orange-600">
+                          {boost.protocol}
+                        </p>
+                        <h2 className="mt-2 text-[26px] font-black">{boost.eventTitle}</h2>
+                        <p className="mt-1 text-sm text-neutral-500">
+                          Solicitante: {boost.requesterName || "-"} • {boost.requesterEmail || "-"}
+                        </p>
+                      </div>
+
+                      <span className={`rounded-full px-3 py-2 text-xs font-black ring-1 ${getStatusClass(boost.status)}`}>
+                        {getBoostStatusLabel(boost.status)}
+                      </span>
+                    </div>
+
+                    <div className="mt-5 grid gap-4 md:grid-cols-4">
+                      <InfoBox label="Local no site" value={boost.placementLabel} />
+                      <InfoBox label="Valor por ciclo" value={formatMoneyFromCents(boost.unitPriceCents)} />
+                      <InfoBox label="Ciclos" value={`${boost.cycles}x de ${boost.periodDays} dias`} />
+                      <InfoBox label="Total pago" value={formatMoneyFromCents(boost.totalAmountCents)} />
+                      <InfoBox label="Data do evento" value={formatDate(boost.eventDate)} />
+                      <InfoBox label="Início" value={formatDate(boost.startsAt)} />
+                      <InfoBox label="Fim" value={formatDate(boost.endsAt)} />
+                      <InfoBox label="Forma de pagamento" value={boost.paymentMethod} />
+                      <InfoBox label="Referência" value={boost.paymentReference} />
+                      <InfoBox label="Comprovante" value={boost.paymentProofText} />
+                      <InfoBox label="Observações" value={boost.notes} />
+                      <InfoBox label="Enviado em" value={formatDate(boost.submittedAt)} />
+                    </div>
+
+                    {boost.status === "PAID_PENDING_REVIEW" ? (
+                      <div className="mt-5 border-t border-neutral-100 pt-5">
+                        <textarea
+                          value={boostModeratorNote[boost.id] || ""}
+                          onChange={(event) =>
+                            setBoostModeratorNote((current) => ({
+                              ...current,
+                              [boost.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Observação do super admin. Ex: pagamento conferido e aprovado para entrar no carrossel."
+                          rows={3}
+                          className="w-full resize-none rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-[#19002f]"
+                        />
+
+                        <div className="mt-4 flex flex-wrap gap-3">
+                          <button
+                            type="button"
+                            onClick={() => reviewBoost(boost.id, "APPROVED")}
+                            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+                          >
+                            Aprovar impulsionamento
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => reviewBoost(boost.id, "REJECTED")}
+                            className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-700"
+                          >
+                            Reprovar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-5 rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-600">
+                        Decisão registrada em {formatDate(boost.reviewedAt)} por{" "}
+                        {boost.moderatorName || boost.moderatorEmail || "super admin"}.
+                        {boost.moderatorNote ? (
+                          <p className="mt-2 font-semibold">{boost.moderatorNote}</p>
+                        ) : null}
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        {activeTab === "admin-approvals" ? (
+          <section>
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-[22px] bg-white p-4 shadow-sm">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+                  Suporte aprovação de admins
+                </p>
+                <h2 className="mt-1 text-[24px] font-black text-neutral-950">
+                  Transformar customer/operator em admin
+                </h2>
+                <p className="mt-2 text-sm font-semibold text-neutral-500">
+                  Aprove ou reprove contas que pediram liberação para criar eventos.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={loadAdminRequests}
+                className="rounded-xl bg-[#19002f] px-5 py-3 text-sm font-black text-white hover:bg-[#2a0648]"
+              >
+                Atualizar lista
+              </button>
+            </div>
+
+            {loadingAdminRequests ? (
+              <div className="rounded-2xl bg-white p-8 text-center text-sm font-bold text-neutral-600 shadow-sm">
+                Carregando solicitações...
+              </div>
+            ) : adminRequests.length === 0 ? (
+              <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
+                <h2 className="text-[24px] font-black">Nenhuma solicitação encontrada</h2>
+                <p className="mt-2 text-sm text-neutral-500">
+                  Quando um customer/operator pedir para virar admin, o chamado aparecerá aqui.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-5">
+                {adminRequests.map((request) => (
+                  <article key={request.id} className="rounded-[24px] bg-white p-6 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-orange-600">
+                          {request.protocol}
+                        </p>
+                        <h2 className="mt-2 text-[26px] font-black">
+                          {request.producerName || request.fullName || "Solicitação de admin"}
+                        </h2>
+                        <p className="mt-1 text-sm text-neutral-500">
+                          Solicitante: {request.fullName || request.requesterName || "-"} •{" "}
+                          {request.email || request.requesterEmail || "-"} • perfil atual{" "}
+                          {request.requesterRole || "-"}
+                        </p>
+                      </div>
+
+                      <span className={`rounded-full px-3 py-2 text-xs font-black ring-1 ${getStatusClass(request.status)}`}>
+                        {getAdminStatusLabel(request.status)}
+                      </span>
+                    </div>
+
+                    <div className="mt-5 grid gap-4 md:grid-cols-3">
+                      <InfoBox label="Telefone / WhatsApp" value={request.phone} />
+                      <InfoBox label="Cidade / estado" value={`${request.city || "-"} - ${request.state || "-"}`} />
+                      <InfoBox label="Enviado em" value={formatDate(request.submittedAt)} />
+                      <InfoBox label="CPF/CNPJ da conta" value={request.cpfCnpj} />
+                      <InfoBox label="Documento da produtora" value={request.producerDocument} />
+                      <InfoBox label="Site ou rede social" value={request.websiteOrSocial} />
+                      <InfoBox label="Tipos de evento" value={request.eventTypes} />
+                      <InfoBox label="Primeira data estimada" value={formatDate(request.estimatedEventDate)} />
+                      <InfoBox label="Público esperado" value={request.expectedAudience} />
+                    </div>
+
+                    <div className="mt-5 grid gap-4 md:grid-cols-2">
+                      <InfoBox label="Descrição do primeiro evento" value={request.firstEventDescription} />
+                      <InfoBox label="Experiência com eventos" value={request.experience} />
+                      <InfoBox label="Motivo da solicitação" value={request.reason} />
+                      <InfoBox label="Observações extras" value={request.extraNotes} />
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4 text-sm font-bold leading-6 text-[#19002f]">
+                      Prazo informado ao solicitante: até {request.reviewDeadlineBusinessDays || 15} dias úteis para aprovação ou reprovação por um moderador.
+                    </div>
+
+                    {request.status === "PENDING_REVIEW" ? (
+                      <div className="mt-5 border-t border-neutral-100 pt-5">
+                        <textarea
+                          value={adminModeratorNote[request.id] || ""}
+                          onChange={(event) =>
+                            setAdminModeratorNote((current) => ({
+                              ...current,
+                              [request.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Observação do super admin. Ex: aprovado após validação do documento e rede social."
+                          rows={3}
+                          className="w-full resize-none rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-[#19002f]"
+                        />
+
+                        <div className="mt-4 flex flex-wrap gap-3">
+                          <button
+                            type="button"
+                            onClick={() => reviewAdminRequest(request.id, "APPROVED")}
+                            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+                          >
+                            Aprovar e virar ADMIN
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => reviewAdminRequest(request.id, "REJECTED")}
+                            className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-700"
+                          >
+                            Reprovar solicitação
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-5 rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-600">
+                        Decisão registrada em {formatDate(request.reviewedAt)} por{" "}
+                        {request.moderatorName || request.moderatorEmail || "super admin"}.
+                        {request.moderatorNote ? (
+                          <p className="mt-2 font-semibold">{request.moderatorNote}</p>
+                        ) : null}
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
       </section>
     </main>
   );
 }
 
-function Metric({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: number;
-  tone?: "neutral" | "success" | "danger" | "warning";
-}) {
-  const valueClass =
-    tone === "success"
-      ? "text-emerald-300"
-      : tone === "danger"
-        ? "text-rose-300"
-        : tone === "warning"
-          ? "text-amber-300"
-          : "text-white";
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
-      <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/55">{label}</p>
-      <p className={`mt-1 text-2xl font-black ${valueClass}`}>{value}</p>
-    </div>
-  );
-}
-
-function SupportRow({ thread }: { thread: SupportThreadListItem }) {
-  const organizerName = thread.organizer?.tradeName || thread.organizer?.legalName || "Produtor";
-  const message = firstMessage(thread);
-
-  return (
-    <tr className="align-top transition hover:bg-slate-50/80">
-      <td className="px-5 py-4">
-        <div className="flex items-start gap-3">
-          {rowNeedsAttention(thread) ? <span className="mt-2 h-2.5 w-2.5 rounded-full bg-rose-500" /> : <span className="mt-2 h-2.5 w-2.5 rounded-full bg-slate-300" />}
-          <div className="min-w-0">
-            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${getStatusClasses(thread.status)}`}>
-              {getStatusLabel(thread.status)}
-            </span>
-            <p className="mt-2 max-w-[320px] truncate text-base font-black text-slate-950">
-              {thread.subject || "Atendimento sem assunto"}
-            </p>
-            <p className="mt-1 max-w-[360px] truncate text-xs text-slate-500">{message}</p>
-          </div>
-        </div>
-      </td>
-
-      <td className="px-5 py-4">
-        <p className="max-w-[180px] truncate font-bold text-slate-900">{thread.customerName || "-"}</p>
-        <p className="max-w-[180px] truncate text-xs text-slate-500">{thread.customerEmail || "-"}</p>
-      </td>
-
-      <td className="px-5 py-4">
-        <p className="max-w-[220px] truncate font-bold text-slate-900">{thread.event?.name || "-"}</p>
-        <p className="text-xs text-slate-500">{organizerName}</p>
-      </td>
-
-      <td className="px-5 py-4">
-        <p className="max-w-[170px] truncate font-bold text-slate-900">#{thread.order?.id || "-"}</p>
-        <p className="text-xs text-slate-500">
-          {thread.order?.status || "-"} · {formatMoney(thread.order?.totalAmount)}
-        </p>
-      </td>
-
-      <td className="px-5 py-4">
-        <p className="max-w-[170px] truncate font-bold text-slate-900">{thread.assignedUser?.name || "Não atribuído"}</p>
-        <p className="max-w-[170px] truncate text-xs text-slate-500">{thread.assignedUser?.email || "-"}</p>
-      </td>
-
-      <td className="px-5 py-4">
-        <p className="font-bold text-slate-900">{getAgeLabel(thread.lastMessageAt || thread.updatedAt || thread.createdAt)}</p>
-        <p className="text-xs text-slate-500">{formatDate(thread.lastMessageAt || thread.updatedAt || thread.createdAt)}</p>
-      </td>
-
-      <td className="px-5 py-4 text-right">
-        <div className="flex justify-end gap-2">
-          <Link href={`/admin/support/${thread.id}`} className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
-            Atender
-          </Link>
-          {thread.order?.id ? (
-            <Link href={`/orders/${thread.order.id}`} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-white">
-              Pedido
-            </Link>
-          ) : null}
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function SupportMobileCard({ thread }: { thread: SupportThreadListItem }) {
-  const organizerName = thread.organizer?.tradeName || thread.organizer?.legalName || "Produtor";
-
-  return (
-    <article className="p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${getStatusClasses(thread.status)}`}>
-            {getStatusLabel(thread.status)}
-          </span>
-          <h3 className="mt-3 text-lg font-black text-slate-950">{thread.subject || "Atendimento sem assunto"}</h3>
-          <p className="mt-1 line-clamp-2 text-sm text-slate-500">{firstMessage(thread)}</p>
-        </div>
-        <p className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
-          {getAgeLabel(thread.lastMessageAt || thread.updatedAt || thread.createdAt)}
-        </p>
-      </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <Info label="Cliente" value={thread.customerName || "-"} detail={thread.customerEmail || "-"} />
-        <Info label="Evento" value={thread.event?.name || "-"} detail={organizerName} />
-        <Info label="Pedido" value={`#${thread.order?.id || "-"}`} detail={`${thread.order?.status || "-"} · ${formatMoney(thread.order?.totalAmount)}`} />
-        <Info label="Responsável" value={thread.assignedUser?.name || "Não atribuído"} detail={thread.assignedUser?.email || "-"} />
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Link href={`/admin/support/${thread.id}`} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white">
-          Atender
-        </Link>
-        {thread.order?.id ? (
-          <Link href={`/orders/${thread.order.id}`} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700">
-            Ver pedido
-          </Link>
-        ) : null}
-        {thread.event?.id ? (
-          <Link href={`/events/${thread.event.id}`} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700">
-            Ver evento
-          </Link>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-function Info({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return (
-    <div className="rounded-2xl bg-slate-50 p-3">
-      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">{label}</p>
-      <p className="mt-1 truncate text-sm font-black text-slate-950">{value}</p>
-      {detail ? <p className="mt-0.5 truncate text-xs text-slate-500">{detail}</p> : null}
-    </div>
-  );
-}

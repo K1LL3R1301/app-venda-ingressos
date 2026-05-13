@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AiModule } from './ai/ai.module';
 import { AppController } from './app.controller';
@@ -18,8 +18,14 @@ import { TicketTypesModule } from './ticket-types/ticket-types.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
 
-@Module({
+
+import { AdminAccessRequestsModule } from './admin-access-requests/admin-access-requests.module';
+import { PromotionBoostsModule } from './promotion-boosts/promotion-boosts.module';
+import { AdminSupportTicketsModule } from './admin-support-tickets/admin-support-tickets.module';@Module({
   imports: [
+    AdminSupportTicketsModule,
+    PromotionBoostsModule,
+    AdminAccessRequestsModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),
@@ -43,3 +49,6 @@ import { UsersModule } from './users/users.module';
   providers: [AppService],
 })
 export class AppModule {}
+
+
+

@@ -1169,6 +1169,21 @@ function clampTicketsForCapacity(
   return sanitized;
 }
 export default function NewEventPage() {
+  // v60b-admin-create-event-guard
+  useEffect(() => {
+    try {
+      const rawUser = localStorage.getItem("user");
+      const storedUser = rawUser ? JSON.parse(rawUser) : null;
+      const role = String(storedUser?.role || "").toUpperCase();
+
+      if (role !== "ADMIN" && role !== "SUPER_ADMIN") {
+        window.location.replace("/support/admin-request");
+      }
+    } catch {
+      window.location.replace("/support/admin-request");
+    }
+  }, []);
+
   const [organizers, setOrganizers] = useState<Organizer[]>([]);
   const [loadingOrganizers, setLoadingOrganizers] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -5741,4 +5756,5 @@ export default function NewEventPage() {
     </main>
   );
 }
+
 

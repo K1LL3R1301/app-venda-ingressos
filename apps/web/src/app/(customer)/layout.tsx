@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
@@ -45,19 +45,21 @@ export default function CustomerLayout({
     return "dashboard";
   }
 
-  const shouldShowSearch =
-    pathname.startsWith("/dashboard") ||
-    pathname.startsWith("/events");
+  const isDashboard = pathname.startsWith("/dashboard");
+  const shouldShowSearch = pathname.startsWith("/events") || isDashboard;
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb] text-gray-900">
+    <div className="min-h-screen bg-white text-neutral-900">
       <CustomerHeader
         user={user}
         activeNav={getActiveNav()}
         showSearch={shouldShowSearch}
         searchPlaceholder="Buscar experiências"
+        searchAppearsOnScroll={isDashboard}
+        showLocationButton={isDashboard}
       />
       {children}
     </div>
   );
 }
+

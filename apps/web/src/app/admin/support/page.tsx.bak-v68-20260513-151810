@@ -1,0 +1,350 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type StoredUser = {
+  id?: string;
+  name?: string;
+  email?: string;
+  role?: string;
+};
+
+type BoostRequest = {
+  id: string;
+  protocol: string;
+  status: "PAID_PENDING_REVIEW" | "APPROVED" | "REJECTED";
+  requesterName?: string;
+  requesterEmail?: string;
+  requesterCpf?: string;
+  eventTitle: string;
+  eventId?: string | null;
+  eventDate: string;
+  placementLabel: string;
+  placementDescription?: string;
+  periodDays: number;
+  unitPriceCents: number;
+  cycles: number;
+  totalAmountCents: number;
+  startsAt?: string;
+  endsAt?: string;
+  paymentMethod?: string;
+  paymentReference?: string;
+  paymentProofText?: string;
+  notes?: string;
+  submittedAt?: string;
+  reviewedAt?: string;
+  moderatorName?: string;
+  moderatorEmail?: string;
+  moderatorNote?: string;
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+function formatMoneyFromCents(value?: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format((value || 0) / 100);
+}
+
+function formatDate(value?: string) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("pt-BR");
+}
+
+function getStatusLabel(status: string) {
+  if (status === "APPROVED") return "Aprovado";
+  if (status === "REJECTED") return "Reprovado";
+  if (status === "PAID_PENDING_REVIEW") return "Pago, aguardando aprovação";
+
+  return status;
+}
+
+function getStatusClass(status: string) {
+  if (status === "APPROVED") return "bg-emerald-50 text-emerald-700 ring-emerald-100";
+  if (status === "REJECTED") return "bg-red-50 text-red-700 ring-red-100";
+
+  return "bg-orange-50 text-[#19002f] ring-orange-100";
+}
+
+function InfoBox({ label, value }: { label: string; value?: string | number | null }) {
+  return (
+    <div className="rounded-2xl bg-neutral-50 p-4">
+      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-neutral-400">
+        {label}
+      </p>
+      <p className="mt-2 break-words text-sm font-bold text-neutral-800">
+        {value || "-"}
+      </p>
+    </div>
+  );
+}
+
+export default function AdminSupportPage() {
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [boosts, setBoosts] = useState<BoostRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [moderatorNote, setModeratorNote] = useState<Record<string, string>>({});
+
+  const isSuperAdmin = useMemo(
+    () => String(user?.role || "").toUpperCase() === "SUPER_ADMIN",
+    [user],
+  );
+
+  const pendingBoosts = boosts.filter((boost) => boost.status === "PAID_PENDING_REVIEW");
+  const approvedBoosts = boosts.filter((boost) => boost.status === "APPROVED");
+  const pendingAmount = pendingBoosts.reduce((sum, boost) => sum + (boost.totalAmountCents || 0), 0);
+  const approvedAmount = approvedBoosts.reduce((sum, boost) => sum + (boost.totalAmountCents || 0), 0);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const rawUser = localStorage.getItem("user");
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      setUser(rawUser ? (JSON.parse(rawUser) as StoredUser) : null);
+    } catch {
+      setUser(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user || !isSuperAdmin) return;
+
+    loadBoosts();
+  }, [user, isSuperAdmin]);
+
+  async function loadBoosts() {
+    const token = localStorage.getItem("token");
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/promotion-boosts`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(data?.message || "Não foi possível carregar os impulsionamentos.");
+      }
+
+      setBoosts(Array.isArray(data) ? data : []);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Não foi possível carregar os impulsionamentos.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function reviewBoost(id: string, status: "APPROVED" | "REJECTED") {
+    const token = localStorage.getItem("token");
+
+    const response = await fetch(`${API_BASE_URL}/promotion-boosts/${id}/review`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        status,
+        moderatorNote: moderatorNote[id] || "",
+      }),
+    });
+
+    const updated = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      alert(updated?.message || "Não foi possível atualizar o impulsionamento.");
+      return;
+    }
+
+    setBoosts((current) => current.map((item) => (item.id === id ? updated : item)));
+  }
+
+  if (user && !isSuperAdmin) {
+    return (
+      <main className="min-h-screen bg-[#f4f4f4] px-4 py-10 text-neutral-950">
+        <section className="mx-auto max-w-[900px] rounded-3xl bg-white p-8 shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+            Suporte
+          </p>
+          <h1 className="mt-3 text-[34px] font-black">Acesso restrito</h1>
+          <p className="mt-3 text-sm leading-7 text-neutral-500">
+            Apenas super administradores podem acessar a moderação de impulsionamentos.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f4f4f4] px-4 py-10 text-neutral-950">
+      <section className="mx-auto max-w-[1180px]">
+        <section className="mb-6 rounded-[28px] bg-gradient-to-r from-orange-500 via-orange-700 to-[#19002f] p-8 text-white shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/75">
+            Suporte do super admin
+          </p>
+          <h1 className="mt-3 text-[40px] font-black leading-tight md:text-[48px]">
+            Impulsionamentos pagos
+          </h1>
+          <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/82">
+            Aprove ou reprove os pagamentos de impulsionamento. Pedidos aprovados ficam disponíveis para aparecer no carrossel, banner e espaços de vitrine do site.
+          </p>
+        </section>
+
+        <section className="mb-6 grid gap-4 md:grid-cols-3">
+          <div className="rounded-[22px] bg-white p-5 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+              Pendentes
+            </p>
+            <p className="mt-2 text-[34px] font-black">{pendingBoosts.length}</p>
+            <p className="text-sm font-bold text-neutral-500">{formatMoneyFromCents(pendingAmount)}</p>
+          </div>
+
+          <div className="rounded-[22px] bg-white p-5 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-600">
+              Aprovados
+            </p>
+            <p className="mt-2 text-[34px] font-black">{approvedBoosts.length}</p>
+            <p className="text-sm font-bold text-neutral-500">{formatMoneyFromCents(approvedAmount)}</p>
+          </div>
+
+          <div className="rounded-[22px] bg-white p-5 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-neutral-400">
+              Endpoint público
+            </p>
+            <p className="mt-2 text-sm font-black text-[#19002f]">/promotion-boosts/public</p>
+            <p className="mt-2 text-xs font-semibold text-neutral-500">
+              Usado para exibir os aprovados no site.
+            </p>
+          </div>
+        </section>
+
+        <div className="mb-5 flex justify-end">
+          <button
+            type="button"
+            onClick={loadBoosts}
+            className="rounded-xl bg-[#19002f] px-5 py-3 text-sm font-black text-white hover:bg-[#2a0648]"
+          >
+            Atualizar lista
+          </button>
+        </div>
+
+        {error ? (
+          <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        {loading ? (
+          <div className="rounded-2xl bg-white p-8 text-center text-sm font-bold text-neutral-600 shadow-sm">
+            Carregando impulsionamentos...
+          </div>
+        ) : boosts.length === 0 ? (
+          <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
+            <h2 className="text-[24px] font-black">Nenhum impulsionamento encontrado</h2>
+            <p className="mt-2 text-sm text-neutral-500">
+              Quando um admin solicitar impulsionamento pago, ele aparecerá aqui.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-5">
+            {boosts.map((boost) => (
+              <article key={boost.id} className="rounded-[24px] bg-white p-6 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.16em] text-orange-600">
+                      {boost.protocol}
+                    </p>
+                    <h2 className="mt-2 text-[26px] font-black">{boost.eventTitle}</h2>
+                    <p className="mt-1 text-sm text-neutral-500">
+                      Solicitante: {boost.requesterName || "-"} • {boost.requesterEmail || "-"}
+                    </p>
+                  </div>
+
+                  <span className={`rounded-full px-3 py-2 text-xs font-black ring-1 ${getStatusClass(boost.status)}`}>
+                    {getStatusLabel(boost.status)}
+                  </span>
+                </div>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-4">
+                  <InfoBox label="Local no site" value={boost.placementLabel} />
+                  <InfoBox label="Valor por ciclo" value={formatMoneyFromCents(boost.unitPriceCents)} />
+                  <InfoBox label="Ciclos" value={`${boost.cycles}x de ${boost.periodDays} dias`} />
+                  <InfoBox label="Total pago" value={formatMoneyFromCents(boost.totalAmountCents)} />
+                  <InfoBox label="Data do evento" value={formatDate(boost.eventDate)} />
+                  <InfoBox label="Início" value={formatDate(boost.startsAt)} />
+                  <InfoBox label="Fim" value={formatDate(boost.endsAt)} />
+                  <InfoBox label="Forma de pagamento" value={boost.paymentMethod} />
+                  <InfoBox label="Referência" value={boost.paymentReference} />
+                  <InfoBox label="Comprovante" value={boost.paymentProofText} />
+                  <InfoBox label="Observações" value={boost.notes} />
+                  <InfoBox label="Enviado em" value={formatDate(boost.submittedAt)} />
+                </div>
+
+                {boost.status === "PAID_PENDING_REVIEW" ? (
+                  <div className="mt-5 border-t border-neutral-100 pt-5">
+                    <textarea
+                      value={moderatorNote[boost.id] || ""}
+                      onChange={(event) =>
+                        setModeratorNote((current) => ({
+                          ...current,
+                          [boost.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Observação do super admin. Ex: pagamento conferido e aprovado para entrar no carrossel."
+                      rows={3}
+                      className="w-full resize-none rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-[#19002f]"
+                    />
+
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => reviewBoost(boost.id, "APPROVED")}
+                        className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+                      >
+                        Aprovar impulsionamento
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reviewBoost(boost.id, "REJECTED")}
+                        className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-700"
+                      >
+                        Reprovar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-600">
+                    Decisão registrada em {formatDate(boost.reviewedAt)} por{" "}
+                    {boost.moderatorName || boost.moderatorEmail || "super admin"}.
+                    {boost.moderatorNote ? (
+                      <p className="mt-2 font-semibold">{boost.moderatorNote}</p>
+                    ) : null}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+

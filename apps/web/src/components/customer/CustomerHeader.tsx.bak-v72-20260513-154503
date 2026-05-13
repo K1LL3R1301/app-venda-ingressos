@@ -1,0 +1,423 @@
+﻿"use client";
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+
+export type CustomerHeaderUser = {
+  id?: string;
+  name?: string;
+  email?: string;
+  cpf?: string;
+  role?: string;
+};
+
+type CustomerHeaderProps = {
+  user: CustomerHeaderUser | null;
+  activeNav?: "dashboard" | "orders" | "wallet" | "support";
+  showSearch?: boolean;
+  searchPlaceholder?: string;
+  searchAppearsOnScroll?: boolean;
+  showLocationButton?: boolean;
+};
+
+type HeaderLink = {
+  label: string;
+  href: string;
+};
+
+function getInitials(name?: string | null, email?: string | null) {
+  const source = String(name || email || "A").trim();
+
+  if (!source) return "A";
+
+  const pieces = source.split(/\s+/).filter(Boolean);
+
+  if (pieces.length === 1) return pieces[0].slice(0, 1).toUpperCase();
+
+  return `${pieces[0].slice(0, 1)}${pieces[pieces.length - 1].slice(0, 1)}`.toUpperCase();
+}
+
+function normalizeRole(role?: string | null) {
+  return String(role || "").trim().toUpperCase();
+}
+
+function getStoredUser(): CustomerHeaderUser | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const rawUser = localStorage.getItem("user");
+
+    return rawUser ? (JSON.parse(rawUser) as CustomerHeaderUser) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCreateEventPath(role: string) {
+  if (role === "ADMIN" || role === "SUPER_ADMIN") return "/admin/events/new";
+
+  return "/support/admin-request";
+}
+
+function MenuLink({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      className={`flex w-full items-center justify-between rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+        active
+          ? "bg-neutral-950 text-white"
+          : "text-neutral-700 hover:bg-neutral-50 hover:text-neutral-950"
+      }`}
+    >
+      <span>{children}</span>
+    </a>
+  );
+}
+
+export default function CustomerHeader({
+  user,
+  activeNav = "dashboard",
+  showSearch = false,
+  searchPlaceholder = "Buscar experiências",
+  searchAppearsOnScroll = false,
+  showLocationButton = false,
+}: CustomerHeaderProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [localSearch, setLocalSearch] = useState("");
+  const [scrolled, setScrolled] = useState(false);
+  const [storedUser, setStoredUser] = useState<CustomerHeaderUser | null>(null);
+  const [pathname, setPathname] = useState("");
+
+  useEffect(() => {
+    setStoredUser(getStoredUser());
+    setPathname(window.location.pathname);
+
+    function handleStorageChange() {
+      setStoredUser(getStoredUser());
+    }
+
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("astro-user-updated", handleStorageChange as EventListener);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("astro-user-updated", handleStorageChange as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleExternalSearchSync(event: Event) {
+      const customEvent = event as CustomEvent<string>;
+      setLocalSearch(customEvent.detail || "");
+    }
+
+    window.addEventListener("customer-header-search-sync", handleExternalSearchSync as EventListener);
+
+    return () => {
+      window.removeEventListener("customer-header-search-sync", handleExternalSearchSync as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!searchAppearsOnScroll) {
+      setScrolled(false);
+      return;
+    }
+
+    function handleScroll() {
+      setScrolled(window.scrollY > 80);
+    }
+
+    handleScroll();
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [searchAppearsOnScroll]);
+
+  const currentUser = user || storedUser;
+  const role = normalizeRole(currentUser?.role);
+  const isSuperAdmin = role === "SUPER_ADMIN";
+  const isAdmin = role === "ADMIN" || isSuperAdmin;
+  const isOperator = role === "OPERATOR";
+  const isAdminArea = pathname.startsWith("/admin");
+  const isOperatorArea = pathname.startsWith("/operator");
+  const isCustomerArea = !isAdminArea && !isOperatorArea;
+
+  const shouldShowSearch = showSearch && (!searchAppearsOnScroll || scrolled);
+  const createEventPath = getCreateEventPath(role);
+
+  const topLinks: HeaderLink[] = useMemo(() => {
+    return [
+      { label: "Criar evento", href: createEventPath },
+      { label: "Meus ingressos", href: "/orders" },
+    ];
+  }, [createEventPath]);
+
+  const superAdminLinks: HeaderLink[] = [
+    { label: "Painel administrativo", href: "/admin/dashboard" },
+    { label: "Solicitações de criador", href: "/admin/support" },
+    { label: "Organizadores", href: "/admin/organizers" },
+    { label: "Eventos", href: "/admin/events" },
+    { label: "Criar evento", href: "/admin/events/new" },
+    { label: "Impulsionar evento", href: "/admin/boosts" },
+    { label: "Pedidos", href: "/admin/orders" },
+    { label: "Suporte", href: "/admin/support" },
+    { label: "Validação / Check-in", href: "/admin/validation" },
+    { label: "Tela principal", href: "/dashboard" },
+  ];
+
+  const adminLinks: HeaderLink[] = [
+    { label: "Painel administrativo", href: "/admin/dashboard" },
+    { label: "Criar evento", href: "/admin/events/new" },
+    { label: "Impulsionar evento", href: "/admin/boosts" },
+    { label: "Eventos", href: "/admin/events" },
+    { label: "Pedidos", href: "/admin/orders" },
+    { label: "Suporte", href: "/admin/support" },
+    { label: "Validação / Check-in", href: "/admin/validation" },
+    { label: "Tela principal", href: "/dashboard" },
+  ];
+
+  const operatorLinks: HeaderLink[] = [
+    { label: "Painel operador", href: "/operator/dashboard" },
+    { label: "Validação / Check-in", href: "/operator/validation" },
+    { label: "Tela principal", href: "/dashboard" },
+  ];
+
+  function isActivePath(href: string) {
+    const cleanHref = href.split("?")[0];
+
+    return pathname === cleanHref || pathname.startsWith(`${cleanHref}/`);
+  }
+
+  function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const term = localSearch.trim();
+
+    window.dispatchEvent(
+      new CustomEvent("customer-header-search", {
+        detail: term,
+      }),
+    );
+
+    if (term) {
+      window.location.assign(`/events?q=${encodeURIComponent(term)}`);
+      return;
+    }
+
+    if (!window.location.pathname.startsWith("/dashboard")) {
+      window.location.assign("/dashboard");
+    }
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("token");
+    localStorage.removeItem("refreshToken");
+    localStorage.removeItem("user");
+    window.location.assign("/login");
+  }
+
+  function renderSearch() {
+    if (!shouldShowSearch) return null;
+
+    return (
+      <form
+        onSubmit={handleSearchSubmit}
+        className="hidden h-11 min-w-[260px] flex-1 max-w-[520px] items-center rounded-xl bg-white px-4 shadow-sm ring-1 ring-black/10 md:flex"
+      >
+        <span className="mr-3 text-sm text-neutral-400">⌕</span>
+        <input
+          type="text"
+          value={localSearch}
+          onChange={(event) => setLocalSearch(event.target.value)}
+          placeholder={searchPlaceholder}
+          className="w-full bg-transparent text-sm font-semibold text-neutral-700 outline-none placeholder:text-neutral-400"
+        />
+      </form>
+    );
+  }
+
+  function renderAdminOnlyMenu() {
+    const links = isSuperAdmin ? superAdminLinks : adminLinks;
+    const title = isSuperAdmin ? "Super administração" : "Administração";
+
+    return (
+      <div className="px-2 pb-2 pt-1">
+        <p className="px-2 text-[10px] font-black uppercase tracking-[0.22em] text-neutral-400">
+          {title}
+        </p>
+
+        <div className="mt-2 space-y-1">
+          {links.map((item) => (
+            <MenuLink key={item.href} href={item.href} active={isActivePath(item.href)}>
+              {item.label}
+            </MenuLink>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderOperatorOnlyMenu() {
+    return (
+      <div className="px-2 pb-2 pt-1">
+        <p className="px-2 text-[10px] font-black uppercase tracking-[0.22em] text-neutral-400">
+          Operação
+        </p>
+
+        <div className="mt-2 space-y-1">
+          {operatorLinks.map((item) => (
+            <MenuLink key={item.href} href={item.href} active={isActivePath(item.href)}>
+              {item.label}
+            </MenuLink>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderCustomerMenu() {
+    return (
+      <div className="p-2">
+        <MenuLink href="/dashboard" active={activeNav === "dashboard"}>
+          Início
+        </MenuLink>
+
+        {isAdmin ? (
+          <MenuLink href="/admin/dashboard">Entrar no admin</MenuLink>
+        ) : null}
+
+        {isOperator ? (
+          <MenuLink href="/operator/dashboard">Entrar no painel operador</MenuLink>
+        ) : null}
+
+        <MenuLink href={createEventPath}>Criar evento</MenuLink>
+
+        <MenuLink href="/orders" active={activeNav === "orders"}>
+          Meus ingressos
+        </MenuLink>
+
+        <MenuLink href="/support" active={activeNav === "support"}>
+          Suporte
+        </MenuLink>
+
+        <MenuLink href="/wallet" active={activeNav === "wallet"}>
+          Wallet
+        </MenuLink>
+      </div>
+    );
+  }
+
+  function renderContextualMenu() {
+    if (isAdminArea && isAdmin) {
+      return renderAdminOnlyMenu();
+    }
+
+    if (isOperatorArea && isOperator) {
+      return renderOperatorOnlyMenu();
+    }
+
+    return renderCustomerMenu();
+  }
+
+  return (
+    <header className="sticky top-0 z-[9999] border-b border-[#ea5f00] bg-[#ff6900] shadow-sm">
+      <div className="mx-auto flex h-[82px] max-w-[1180px] items-center gap-5 px-4">
+        <a href={isAdminArea && isAdmin ? "/admin/dashboard" : "/dashboard"} className="flex shrink-0 items-center">
+          <img
+            src="/astro-ingressos-logo.png"
+            alt="Astro Ingressos"
+            className="h-[56px] w-auto object-contain"
+          />
+        </a>
+
+        {renderSearch()}
+
+        {shouldShowSearch && showLocationButton ? (
+          <a
+            href="/events"
+            className="hidden h-11 shrink-0 items-center rounded-xl bg-[#19002f] px-4 text-sm font-black text-white shadow-sm hover:bg-[#2a0648] lg:flex"
+          >
+            ✦ Qualquer lugar
+          </a>
+        ) : null}
+
+        <nav className="ml-auto hidden items-center gap-8 md:flex">
+          {isCustomerArea
+            ? topLinks.map((item) => (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  className="whitespace-nowrap text-sm font-black text-[#19002f]/85 transition hover:text-[#19002f]"
+                >
+                  {item.label}
+                </a>
+              ))
+            : null}
+        </nav>
+
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((value) => !value)}
+            className="flex h-11 items-center gap-2 rounded-full bg-white px-3 text-[#19002f] shadow-sm ring-1 ring-black/10"
+            aria-label="Abrir menu"
+          >
+            <span className="text-xl leading-none">☰</span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#19002f] text-sm font-black text-white">
+              {getInitials(currentUser?.name, currentUser?.email)}
+            </span>
+          </button>
+
+          {menuOpen ? (
+            <div className="absolute right-0 z-[10000] mt-3 w-80 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl">
+              <div className="border-b border-neutral-100 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black text-neutral-950">
+                      {currentUser?.name || "Usuário"}
+                    </p>
+                    <p className="mt-1 break-all text-xs font-semibold text-neutral-500">
+                      {currentUser?.email || "sem e-mail"}
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-400">
+                      CPF: {currentUser?.cpf || "não informado"}
+                    </p>
+                  </div>
+
+                  <span className="rounded-full bg-neutral-100 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-neutral-500">
+                    {role || "USER"}
+                  </span>
+                </div>
+              </div>
+
+              {renderContextualMenu()}
+
+              <div className="border-t border-neutral-100 p-2">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50"
+                >
+                  Sair
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+

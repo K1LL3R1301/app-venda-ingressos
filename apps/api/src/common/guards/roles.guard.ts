@@ -1,4 +1,4 @@
-import {
+﻿import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
@@ -25,11 +25,21 @@ export class RolesGuard implements CanActivate {
     const user = request.user;
 
     if (!user) {
-      throw new ForbiddenException('Usuário não autenticado');
+      throw new ForbiddenException('UsuÃ¡rio nÃ£o autenticado');
     }
 
-    if (!requiredRoles.includes(user.role)) {
-      throw new ForbiddenException('Você não tem permissão para acessar esta rota');
+    const userRole = String(user.role || '').toUpperCase();
+
+    if (userRole === 'SUPER_ADMIN') {
+      return true;
+    }
+
+    const normalizedRequiredRoles = requiredRoles.map((role) =>
+      String(role || '').toUpperCase(),
+    );
+
+    if (!normalizedRequiredRoles.includes(userRole)) {
+      throw new ForbiddenException('VocÃª nÃ£o tem permissÃ£o para acessar esta rota');
     }
 
     return true;

@@ -31,7 +31,7 @@ export default function AdminLayout({
       const parsedUser = JSON.parse(rawUser) as CustomerHeaderUser;
       const role = String(parsedUser.role || "").toUpperCase();
 
-      if (role !== "ADMIN" && role !== "OPERATOR") {
+      if (role !== "ADMIN" && role !== "SUPER_ADMIN" && role !== "OPERATOR") {
         window.location.href = "/dashboard";
         return;
       }

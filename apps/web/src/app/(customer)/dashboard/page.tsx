@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -22,8 +22,6 @@ type EventLocation = {
   venueName?: string;
   city?: string;
   state?: string;
-  addressLine1?: string;
-  neighborhood?: string;
 };
 
 type EventItem = {
@@ -56,250 +54,119 @@ type EventItem = {
 
 type OrderItem = {
   id: string;
-  customerName?: string;
-  customerEmail?: string;
-  totalAmount?: string | number;
   status?: string;
-  createdAt?: string;
-  expiresAt?: string | null;
-  event?: {
-    id?: string;
-    name?: string;
-    description?: string;
-    eventDate?: string;
-    startDate?: string;
-  };
-  items?: Array<{
-    id: string;
-    quantity?: number;
-    ticketType?: {
-      id?: string;
-      name?: string;
-    };
-    tickets?: Array<{
-      id: string;
-      code?: string;
-      status?: string;
-      currentOwnerUserId?: string | null;
-    }>;
-  }>;
-};
-
-type TransferUserInfo = {
-  id?: string;
-  name?: string;
-  email?: string;
-  cpf?: string;
-  cpfNormalized?: string;
-};
-
-type TicketTransferRequestItem = {
-  id: string;
-  status?: string;
-  responseReason?: string;
-  requestedAt?: string;
-  respondedAt?: string;
-  expiresAt?: string;
-  requestedByName?: string;
-  requestedByEmail?: string;
-  requestedByCpf?: string;
-  fromName?: string;
-  fromEmail?: string;
-  fromCpf?: string;
-  toName?: string;
-  toEmail?: string;
-  toCpf?: string;
-  mode?: string;
-  returnOfTransferRequestId?: string | null;
-  ticket?: {
-    id: string;
-    code?: string;
-    status?: string;
-    holderName?: string;
-    holderEmail?: string;
-    holderCpf?: string;
-    currentOwnerUserId?: string | null;
-    orderItem?: {
-      id?: string;
-      ticketType?: {
-        id?: string;
-        name?: string;
-      };
-      order?: {
-        id?: string;
-        event?: {
-          id?: string;
-          name?: string;
-          description?: string;
-          eventDate?: string;
-          startDate?: string;
-        };
-      };
-    };
-  };
-  order?: {
-    id?: string;
-    event?: {
-      id?: string;
-      name?: string;
-      description?: string;
-      eventDate?: string;
-      startDate?: string;
-    };
-  };
-  requestedByUser?: TransferUserInfo;
-  fromUser?: TransferUserInfo;
-  toUser?: TransferUserInfo;
 };
 
 type CategoryItem = {
   id: string;
   label: string;
+  shortLabel: string;
   icon: string;
-  image: string;
   keywords: string[];
-  targetId?: string;
 };
+
+type SectionDefinition = {
+  id: string;
+  title: string;
+  view: string;
+  events: EventItem[];
+  variant?: "cards" | "compact";
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+const PAGE_SIZE = 4;
+const MAX_SECTION_PAGE = 2;
 
 const categories: CategoryItem[] = [
   {
     id: "shows",
-    label: "Shows",
-    icon: "🎤",
-    targetId: "section-shows",
-    image:
-      "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=900&q=80",
-    keywords: ["show", "festa", "festival", "balada", "dj", "música", "musica"],
+    label: "Festas e Shows",
+    shortLabel: "Shows",
+    icon: "♪",
+    keywords: ["show", "shows", "festa", "festival", "balada", "dj", "música", "musica", "FESTAS_SHOWS"],
   },
   {
     id: "theater",
-    label: "Teatro",
-    icon: "🎭",
-    targetId: "section-culture",
-    image:
-      "https://images.unsplash.com/photo-1503095396549-807759245b35?auto=format&fit=crop&w=900&q=80",
-    keywords: ["teatro", "espetáculo", "espetaculo", "palco", "musical"],
+    label: "Teatros e Espetáculos",
+    shortLabel: "Teatro",
+    icon: "▣",
+    keywords: ["teatro", "espetáculo", "espetaculo", "palco", "musical", "TEATROS_ESPETACULOS"],
+  },
+  {
+    id: "party",
+    label: "Festas Juninas",
+    shortLabel: "Festas",
+    icon: "♨",
+    keywords: ["festa", "junina", "festival", "arraia", "arraiá", "FESTAS_SHOWS"],
   },
   {
     id: "comedy",
-    label: "Comedy",
-    icon: "😂",
-    targetId: "section-culture",
-    image:
-      "https://images.unsplash.com/photo-1527224857830-43a7acc85260?auto=format&fit=crop&w=900&q=80",
-    keywords: ["stand", "comedy", "humor", "comédia", "comedia"],
+    label: "Stand Up Comedy",
+    shortLabel: "Comedy",
+    icon: "〰",
+    keywords: ["stand", "stand-up", "comedy", "humor", "comédia", "comedia", "STAND_UP_COMEDY"],
   },
   {
     id: "sports",
     label: "Esportes",
-    icon: "⚽",
-    targetId: "section-sports",
-    image:
-      "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?auto=format&fit=crop&w=900&q=80",
-    keywords: ["esporte", "futebol", "corrida", "luta", "arena", "campeonato"],
+    shortLabel: "Esportes",
+    icon: "▰",
+    keywords: ["esporte", "esportes", "futebol", "corrida", "luta", "arena", "campeonato", "ESPORTES"],
+  },
+  {
+    id: "tours",
+    label: "Passeios e Tours",
+    shortLabel: "Passeios",
+    icon: "◌",
+    keywords: ["tour", "passeio", "passeios", "excursão", "excursao", "visita", "PASSEIOS_TOURS"],
+  },
+  {
+    id: "discounts",
+    label: "Descontos exclusivos",
+    shortLabel: "Descontos",
+    icon: "%",
+    keywords: ["desconto", "promo", "promoção", "promocao", "social", "meia"],
   },
   {
     id: "business",
-    label: "Congressos",
-    icon: "🏛️",
-    targetId: "section-business",
-    image:
-      "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=900&q=80",
-    keywords: ["congresso", "feira", "summit", "palestra", "corporativo"],
-  },
-  {
-    id: "food",
-    label: "Gastronomia",
-    icon: "🍔",
-    targetId: "section-food",
-    image:
-      "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=900&q=80",
-    keywords: [
-      "gastronomia",
-      "food",
-      "vinho",
-      "cerveja",
-      "hambúrguer",
-      "hamburguer",
-    ],
+    label: "Congressos e Palestras",
+    shortLabel: "Congressos",
+    icon: "☷",
+    keywords: ["congresso", "congressos", "feira", "summit", "palestra", "corporativo", "CONGRESSOS"],
   },
   {
     id: "kids",
     label: "Infantil",
-    icon: "🎈",
-    targetId: "section-kids",
-    image:
-      "https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&w=900&q=80",
-    keywords: ["infantil", "família", "familia", "criança", "crianca", "kids"],
-  },
-  {
-    id: "tours",
-    label: "Passeios",
-    icon: "🌎",
-    targetId: "section-culture",
-    image:
-      "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80",
-    keywords: ["tour", "passeio", "excursão", "excursao", "visita"],
-  },
-  {
-    id: "online",
-    label: "Online",
-    icon: "💻",
-    targetId: "section-most-bought",
-    image:
-      "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=80",
-    keywords: ["online", "digital", "remoto", "streaming"],
-  },
-  {
-    id: "my",
-    label: "Meus pedidos",
-    icon: "🎟️",
-    image:
-      "https://images.unsplash.com/photo-1519671482749-fd09be7ccebf?auto=format&fit=crop&w=900&q=80",
-    keywords: [],
+    shortLabel: "Infantil",
+    icon: "⌂",
+    keywords: ["infantil", "família", "familia", "criança", "crianca", "kids", "INFANTIL"],
   },
 ];
 
-const cityCards = [
-  {
-    city: "São Paulo",
-    gradient: "from-slate-800 via-slate-700 to-slate-950",
-  },
-  {
-    city: "Belo Horizonte",
-    gradient: "from-blue-700 via-sky-700 to-cyan-700",
-  },
-  {
-    city: "Salvador",
-    gradient: "from-cyan-700 via-teal-700 to-emerald-700",
-  },
-  {
-    city: "Rio de Janeiro",
-    gradient: "from-sky-700 via-blue-700 to-indigo-800",
-  },
+const cityTiles = [
+  { label: "São Paulo", hint: "Shows, teatro e experiências" },
+  { label: "Rio de Janeiro", hint: "Festas, tours e cultura" },
+  { label: "Belo Horizonte", hint: "Eventos e gastronomia" },
+  { label: "Curitiba", hint: "Passeios e congressos" },
 ];
 
 const faqItems = [
-  "Como eu cancelo ou peço reembolso de ingressos?",
-  "Como localizar meus ingressos?",
-  "Como trocar a titularidade do ingresso?",
-  "Como acessar minha wallet?",
+  "Como encontro um evento perto de mim?",
+  "Como funciona a compra de ingressos?",
+  "Como acessar meus ingressos?",
+  "Consigo transferir ou cancelar um ingresso?",
 ];
 
 function toNumber(value?: string | number) {
   if (value === undefined || value === null) return 0;
-
-  const numeric =
-    typeof value === "number" ? value : Number(String(value).replace(",", "."));
-
+  const numeric = typeof value === "number" ? value : Number(String(value).replace(",", "."));
   return Number.isNaN(numeric) ? 0 : numeric;
 }
 
 function formatMoney(value?: string | number) {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(toNumber(value));
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(toNumber(value));
 }
 
 function formatDate(value?: string | null) {
@@ -312,7 +179,6 @@ function formatDate(value?: string | null) {
   return date.toLocaleString("pt-BR", {
     day: "2-digit",
     month: "short",
-    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -330,11 +196,7 @@ function getEventDate(event?: EventItem | null) {
   return event?.startDate || event?.eventDate;
 }
 
-function getOrderEventDate(order?: OrderItem | null) {
-  return order?.event?.startDate || order?.event?.eventDate;
-}
-
-function getFutureTimestamp(value?: string | null) {
+function getTimestamp(value?: string | null) {
   if (!value) return Number.MAX_SAFE_INTEGER;
 
   const date = new Date(value);
@@ -342,82 +204,6 @@ function getFutureTimestamp(value?: string | null) {
   if (Number.isNaN(date.getTime())) return Number.MAX_SAFE_INTEGER;
 
   return date.getTime();
-}
-
-function getStatusLabel(status?: string) {
-  const normalized = String(status || "").toUpperCase();
-
-  if (normalized === "PAID") return "Pago";
-  if (normalized === "PENDING") return "Pendente";
-  if (normalized === "PENDING_PAYMENT") return "Aguardando pagamento";
-  if (normalized === "AVAILABLE") return "Disponível";
-  if (normalized === "ACTIVE") return "Ativo";
-  if (normalized === "PENDING_ACCEPTANCE") return "Aguardando aceite";
-  if (normalized === "TRANSFER_PENDING") return "Transferência pendente";
-  if (normalized === "ACCEPTED") return "Aceita";
-  if (normalized === "RETURNED") return "Devolvido";
-  if (normalized === "REJECTED") return "Recusada";
-  if (normalized === "TRANSFERRED") return "Transferido";
-  if (normalized === "USED") return "Utilizado";
-  if (normalized === "CANCELED") return "Cancelado";
-  if (normalized === "PUBLISHED") return "Publicado";
-  if (normalized === "DRAFT") return "Rascunho";
-
-  return status || "Disponível";
-}
-
-function getStatusClasses(status?: string) {
-  const normalized = String(status || "").toUpperCase();
-
-  if (
-    normalized === "PAID" ||
-    normalized === "AVAILABLE" ||
-    normalized === "ACTIVE" ||
-    normalized === "ACCEPTED" ||
-    normalized === "PUBLISHED"
-  ) {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-
-  if (
-    normalized === "PENDING" ||
-    normalized === "PENDING_ACCEPTANCE" ||
-    normalized === "TRANSFER_PENDING"
-  ) {
-    return "border-amber-200 bg-amber-50 text-amber-700";
-  }
-
-  if (normalized === "PENDING_PAYMENT") {
-    return "border-sky-200 bg-sky-50 text-sky-700";
-  }
-
-  if (normalized === "RETURNED" || normalized === "TRANSFERRED") {
-    return "border-violet-200 bg-violet-50 text-violet-700";
-  }
-
-  if (normalized === "REJECTED" || normalized === "CANCELED") {
-    return "border-rose-200 bg-rose-50 text-rose-700";
-  }
-
-  return "border-slate-200 bg-slate-50 text-slate-700";
-}
-
-function isPendingOrder(order?: OrderItem | null) {
-  return order?.status === "PENDING" || order?.status === "PENDING_PAYMENT";
-}
-
-function isVisibleTransfer(transfer?: TicketTransferRequestItem | null) {
-  if (!transfer) return false;
-
-  return String(transfer.status || "").toUpperCase() !== "RETURNED";
-}
-
-function getTransferEventName(transfer?: TicketTransferRequestItem | null) {
-  return (
-    transfer?.ticket?.orderItem?.order?.event?.name ||
-    transfer?.order?.event?.name ||
-    "Transferência recebida"
-  );
 }
 
 function getEventImage(event?: EventItem | null) {
@@ -432,31 +218,21 @@ function getEventImage(event?: EventItem | null) {
 }
 
 function getLocationLabel(event?: EventItem | null) {
-  const venue = event?.location?.venueName;
-  const cityState = [event?.location?.city, event?.location?.state]
-    .filter(Boolean)
-    .join(" - ");
-
-  return [venue, cityState].filter(Boolean).join(", ") || "Local a confirmar";
-}
-
-function getOrganizerName(event?: EventItem | null) {
-  return (
-    event?.organizer?.tradeName ||
-    event?.organizer?.legalName ||
-    "Organizador parceiro"
-  );
+  const cityState = [event?.location?.city, event?.location?.state].filter(Boolean).join(" - ");
+  return cityState || event?.location?.venueName || "Local a confirmar";
 }
 
 function getMinimumPrice(event?: EventItem | null) {
   const prices =
-    event?.ticketTypes
-      ?.map((ticketType) => toNumber(ticketType.price))
-      .filter((price) => price > 0) || [];
+    event?.ticketTypes?.map((ticketType) => toNumber(ticketType.price)).filter((price) => price > 0) || [];
 
   if (prices.length === 0) return null;
 
   return Math.min(...prices);
+}
+
+function getTotalTicketQuantity(event?: EventItem | null) {
+  return event?.ticketTypes?.reduce((sum, ticketType) => sum + Number(ticketType.quantity || 0), 0) || 0;
 }
 
 function eventMatchesSearch(event: EventItem, search: string) {
@@ -493,51 +269,43 @@ function eventMatchesCategory(event: EventItem, category: CategoryItem) {
       event.highlightTag,
       event.organizer?.tradeName,
       event.organizer?.legalName,
+      event.location?.venueName,
+      event.location?.city,
+      event.location?.state,
     ].join(" "),
   );
 
-  return category.keywords.some((keyword) =>
-    haystack.includes(normalizeText(keyword)),
-  );
+  return category.keywords.some((keyword) => haystack.includes(normalizeText(keyword)));
+}
+
+function getCategoryForEvent(event: EventItem) {
+  return categories.find((category) => eventMatchesCategory(event, category)) || categories[0];
 }
 
 function getEventGradient(index: number) {
   const gradients = [
-    "from-sky-600 via-blue-600 to-indigo-700",
-    "from-fuchsia-600 via-purple-600 to-indigo-700",
-    "from-emerald-500 via-teal-500 to-cyan-700",
-    "from-orange-500 via-amber-500 to-yellow-500",
-    "from-rose-500 via-pink-500 to-fuchsia-700",
-    "from-slate-800 via-slate-900 to-slate-950",
-    "from-cyan-500 via-sky-600 to-blue-800",
-    "from-lime-500 via-emerald-600 to-teal-800",
-    "from-violet-500 via-indigo-600 to-slate-950",
+    "from-orange-500 via-orange-600 to-[#19002f]",
+    "from-[#19002f] via-zinc-900 to-orange-600",
+    "from-neutral-950 via-neutral-800 to-orange-600",
+    "from-orange-400 via-orange-700 to-neutral-950",
+    "from-[#19002f] via-orange-700 to-orange-500",
   ];
 
   return gradients[index % gradients.length];
 }
 
-function getCategoryForEvent(event: EventItem) {
-  return (
-    categories.find(
-      (category) =>
-        category.id !== "my" &&
-        category.keywords.length > 0 &&
-        eventMatchesCategory(event, category),
-    ) || categories[0]
-  );
+function buildCollectionUrl(collection: string, title: string) {
+  const params = new URLSearchParams();
+  params.set("collection", collection);
+  params.set("title", title);
+  return `/events?${params.toString()}`;
 }
 
-function buildSection(events: EventItem[], start: number, count = 4) {
-  if (events.length === 0) return [];
-
-  const result: EventItem[] = [];
-
-  for (let index = 0; index < Math.min(count, events.length); index += 1) {
-    result.push(events[(start + index) % events.length]);
-  }
-
-  return result;
+function buildViewUrl(view: string, title: string) {
+  const params = new URLSearchParams();
+  params.set("view", view);
+  params.set("title", title);
+  return `/events?${params.toString()}`;
 }
 
 async function safeJson<T>(response: Response): Promise<T | null> {
@@ -548,41 +316,95 @@ async function safeJson<T>(response: Response): Promise<T | null> {
   }
 }
 
-function SectionTitle({
-  title,
-  actionLabel = "Ver tudo",
-  onAction,
+function SearchBar({
+  value,
+  onChange,
+  onLocation,
 }: {
-  title: string;
-  actionLabel?: string;
-  onAction?: () => void;
+  value: string;
+  onChange: (value: string) => void;
+  onLocation: () => void;
 }) {
   return (
-    <div className="mb-3 flex items-center justify-between gap-4">
-      <h2 className="text-[18px] font-bold text-slate-950">{title}</h2>
+    <div className="mx-auto mb-8 grid max-w-[830px] grid-cols-[1fr_170px] gap-4">
+      <div className="flex h-14 items-center rounded-[9px] border border-neutral-200 bg-white px-5 shadow-lg shadow-neutral-200/70">
+        <span className="mr-3 text-neutral-400">⌕</span>
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Buscar experiências"
+          className="w-full bg-transparent text-sm font-semibold text-neutral-700 outline-none placeholder:text-neutral-400"
+        />
+      </div>
 
-      {onAction && actionLabel ? (
-        <button
-          type="button"
-          onClick={onAction}
-          className="text-sm font-bold text-sky-600 hover:text-sky-700"
-        >
-          {actionLabel}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        onClick={onLocation}
+        className="flex h-14 items-center justify-center gap-2 rounded-[9px] bg-[#19002f] px-4 text-sm font-black text-white shadow-lg shadow-neutral-200/70 hover:bg-[#2a0648]"
+      >
+        <span>⌖</span>
+        <span>Qualquer lugar</span>
+      </button>
     </div>
+  );
+}
+
+function HeroCard({
+  event,
+  index,
+  position,
+  onClick,
+}: {
+  event: EventItem;
+  index: number;
+  position: -3 | -2 | -1 | 0 | 1 | 2 | 3;
+  onClick: () => void;
+}) {
+  const image = getEventImage(event);
+
+  const styleByPosition = {
+    [-3]: "z-0 -translate-x-[700px] scale-[0.62] opacity-70",
+    [-2]: "z-0 -translate-x-[530px] scale-[0.74] opacity-78",
+    [-1]: "z-10 -translate-x-[325px] scale-[0.86] opacity-88",
+    [0]: "z-30 translate-x-0 scale-100 opacity-100",
+    [1]: "z-10 translate-x-[325px] scale-[0.86] opacity-88",
+    [2]: "z-0 translate-x-[530px] scale-[0.74] opacity-78",
+    [3]: "z-0 translate-x-[700px] scale-[0.62] opacity-70",
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`absolute left-1/2 top-0 h-[344px] w-[690px] -translate-x-1/2 overflow-hidden rounded-[7px] bg-[#19002f] shadow-2xl transition-all duration-300 ${styleByPosition[position]}`}
+    >
+      {image ? (
+        <img src={image} alt={event.name || "Evento em destaque"} className="h-full w-full object-cover" />
+      ) : (
+        <div className={`h-full w-full bg-gradient-to-r ${getEventGradient(index)}`} />
+      )}
+
+      <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-transparent" />
+
+      {position === 0 ? (
+        <div className="absolute bottom-8 left-9 right-9 text-left">
+          <p className="text-[12px] font-black uppercase tracking-[0.22em] text-white/70">Destaque</p>
+          <h2 className="mt-2 line-clamp-2 text-[42px] font-black leading-none text-white">
+            {event.name}
+          </h2>
+        </div>
+      ) : null}
+    </button>
   );
 }
 
 function EventCard({
   event,
   index,
-  compact = false,
   onOpen,
 }: {
   event: EventItem;
   index: number;
-  compact?: boolean;
   onOpen: () => void;
 }) {
   const image = getEventImage(event);
@@ -593,13 +415,9 @@ function EventCard({
     <button
       type="button"
       onClick={onOpen}
-      className="group min-w-0 overflow-hidden rounded-[10px] bg-white text-left transition hover:-translate-y-0.5"
+      className="group min-w-0 bg-transparent text-left transition hover:-translate-y-0.5"
     >
-      <div
-        className={`relative overflow-hidden rounded-[10px] bg-gradient-to-r ${getEventGradient(
-          index,
-        )} ${compact ? "h-[92px]" : "h-[128px]"}`}
-      >
+      <div className={`relative h-[134px] overflow-hidden rounded-[7px] bg-gradient-to-r ${getEventGradient(index)}`}>
         {image ? (
           <img
             src={image}
@@ -608,27 +426,27 @@ function EventCard({
           />
         ) : null}
 
-        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/35 via-black/5 to-transparent" />
 
-        <span className="absolute left-2 top-2 rounded-full bg-white/95 px-2 py-1 text-[10px] font-bold text-slate-700 shadow-sm">
-          {category.label}
+        <span className="absolute left-2 top-2 rounded-full bg-white/95 px-2 py-1 text-[10px] font-black text-[#19002f] shadow-sm">
+          {category.shortLabel}
         </span>
       </div>
 
       <div className="pt-2">
-        <h3 className="line-clamp-2 text-[13px] font-bold leading-4 text-slate-950">
+        <h3 className="line-clamp-1 text-[14px] font-black text-neutral-950">
           {event.name || "Evento sem nome"}
         </h3>
 
-        <p className="mt-1 line-clamp-1 text-[11px] text-slate-500">
+        <p className="mt-1 line-clamp-1 text-[12px] text-neutral-500">
           {formatDate(getEventDate(event))}
         </p>
 
-        <p className="mt-1 line-clamp-1 text-[11px] text-slate-500">
+        <p className="mt-1 line-clamp-1 text-[12px] text-neutral-500">
           {getLocationLabel(event)}
         </p>
 
-        <p className="mt-1 text-[11px] font-bold text-slate-900">
+        <p className="mt-2 text-[12px] font-black text-neutral-950">
           {price === null ? "Consultar valores" : `A partir de ${formatMoney(price)}`}
         </p>
       </div>
@@ -636,7 +454,7 @@ function EventCard({
   );
 }
 
-function WideEventCard({
+function CompactEventCard({
   event,
   index,
   onOpen,
@@ -651,34 +469,218 @@ function WideEventCard({
     <button
       type="button"
       onClick={onOpen}
-      className="grid grid-cols-[112px_1fr] gap-3 rounded-[10px] bg-white p-2 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      className="grid min-w-0 grid-cols-[116px_1fr] gap-3 rounded-[8px] bg-white p-2 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
-      <div
-        className={`h-[64px] overflow-hidden rounded-[8px] bg-gradient-to-r ${getEventGradient(
-          index,
-        )}`}
-      >
-        {image ? (
-          <img
-            src={image}
-            alt={event.name || "Evento"}
-            className="h-full w-full object-cover"
-          />
-        ) : null}
+      <div className={`h-[74px] overflow-hidden rounded-[6px] bg-gradient-to-r ${getEventGradient(index)}`}>
+        {image ? <img src={image} alt={event.name || "Evento"} className="h-full w-full object-cover" /> : null}
       </div>
 
-      <div className="min-w-0">
-        <h3 className="line-clamp-1 text-[13px] font-bold text-slate-950">
+      <div className="min-w-0 py-1">
+        <h3 className="line-clamp-1 text-[13px] font-black text-neutral-950">
           {event.name || "Evento sem nome"}
         </h3>
-        <p className="mt-1 line-clamp-1 text-[11px] text-slate-500">
+        <p className="mt-1 line-clamp-1 text-[11px] font-semibold text-neutral-500">
           {formatDate(getEventDate(event))}
         </p>
-        <p className="mt-1 line-clamp-1 text-[11px] text-slate-500">
-          {getOrganizerName(event)}
+        <p className="mt-1 line-clamp-1 text-[11px] text-neutral-500">
+          {event.organizer?.tradeName || event.organizer?.legalName || getLocationLabel(event)}
         </p>
       </div>
     </button>
+  );
+}
+
+function SectionArrow({
+  direction,
+  disabled,
+  onClick,
+}: {
+  direction: "prev" | "next";
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`absolute top-[58px] z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl font-black text-[#19002f] shadow-xl ring-1 ring-neutral-100 transition ${
+        direction === "prev" ? "-left-5" : "-right-5"
+      } ${disabled ? "cursor-not-allowed opacity-20" : "hover:-translate-y-0.5 hover:bg-orange-50"}`}
+      aria-label={direction === "prev" ? "Voltar página" : "Avançar página"}
+    >
+      {direction === "prev" ? "‹" : "›"}
+    </button>
+  );
+}
+
+function EventCarouselSection({
+  section,
+  page,
+  onPrevious,
+  onNext,
+  onSeeAll,
+  onOpenEvent,
+}: {
+  section: SectionDefinition;
+  page: number;
+  onPrevious: () => void;
+  onNext: () => void;
+  onSeeAll: () => void;
+  onOpenEvent: (event: EventItem) => void;
+}) {
+  const maxPage = Math.min(MAX_SECTION_PAGE, Math.max(0, Math.ceil(section.events.length / PAGE_SIZE) - 1));
+  const safePage = Math.min(page, maxPage);
+  const visibleEvents = section.events.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+
+  if (section.events.length === 0) return null;
+
+  return (
+    <section id={section.id} className="mb-10">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <h2 className="text-[22px] font-black text-neutral-900">{section.title}</h2>
+
+        <button
+          type="button"
+          onClick={onSeeAll}
+          className="text-[14px] font-black text-[#19002f] hover:text-orange-700"
+        >
+          Ver tudo
+        </button>
+      </div>
+
+      <div className="relative">
+        <SectionArrow direction="prev" disabled={safePage <= 0} onClick={onPrevious} />
+
+        {section.variant === "compact" ? (
+          <div className="grid grid-cols-2 gap-4">
+            {visibleEvents.map((event, index) => (
+              <CompactEventCard
+                key={`${section.id}-${event.id}`}
+                event={event}
+                index={safePage * PAGE_SIZE + index}
+                onOpen={() => onOpenEvent(event)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-4 gap-5">
+            {visibleEvents.map((event, index) => (
+              <EventCard
+                key={`${section.id}-${event.id}`}
+                event={event}
+                index={safePage * PAGE_SIZE + index}
+                onOpen={() => onOpenEvent(event)}
+              />
+            ))}
+          </div>
+        )}
+
+        <SectionArrow direction="next" disabled={safePage >= maxPage} onClick={onNext} />
+      </div>
+
+      <div className="mt-4 flex justify-center gap-1.5">
+        {Array.from({ length: maxPage + 1 }).map((_, index) => (
+          <span
+            key={`${section.id}-dot-${index}`}
+            className={`h-1.5 rounded-full transition ${index === safePage ? "w-7 bg-[#19002f]" : "w-1.5 bg-neutral-300"}`}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PromoBanner({
+  title,
+  subtitle,
+  cta,
+  variant = "dark",
+}: {
+  title: string;
+  subtitle: string;
+  cta: string;
+  variant?: "dark" | "light";
+}) {
+  return (
+    <button
+      type="button"
+      className={`mb-10 grid min-h-[142px] w-full grid-cols-[1fr_220px] overflow-hidden rounded-[12px] border text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+        variant === "dark"
+          ? "border-[#19002f]/10 bg-gradient-to-r from-[#19002f] via-neutral-900 to-orange-600 text-white"
+          : "border-orange-100 bg-gradient-to-r from-orange-50 via-white to-orange-100 text-[#19002f]"
+      }`}
+    >
+      <div className="p-7">
+        <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${variant === "dark" ? "bg-white/15 text-white" : "bg-[#19002f] text-white"}`}>
+          Publicidade
+        </span>
+        <h3 className="mt-4 text-[30px] font-black leading-none">{title}</h3>
+        <p className={`mt-2 text-sm font-semibold ${variant === "dark" ? "text-white/75" : "text-[#19002f]/65"}`}>{subtitle}</p>
+      </div>
+
+      <div className="flex items-center justify-center p-7">
+        <span className={`rounded-[9px] px-5 py-3 text-sm font-black ${variant === "dark" ? "bg-orange-500 text-white" : "bg-[#19002f] text-white"}`}>
+          {cta}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function CitySection({ onOpenCity }: { onOpenCity: (city: string) => void }) {
+  return (
+    <section className="mb-10">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <h2 className="text-[22px] font-black text-neutral-900">Descubra o que fazer na sua cidade</h2>
+        <button
+          type="button"
+          onClick={() => onOpenCity("")}
+          className="text-[14px] font-black text-[#19002f] hover:text-orange-700"
+        >
+          Ver tudo
+        </button>
+      </div>
+
+      <div className="grid grid-cols-4 gap-5">
+        {cityTiles.map((city, index) => (
+          <button
+            type="button"
+            key={city.label}
+            onClick={() => onOpenCity(city.label)}
+            className={`relative h-[150px] overflow-hidden rounded-[9px] bg-gradient-to-r ${getEventGradient(index)} p-4 text-left text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md`}
+          >
+            <div className="absolute inset-0 bg-black/25" />
+            <div className="relative z-10 flex h-full flex-col justify-end">
+              <h3 className="text-[19px] font-black">{city.label}</h3>
+              <p className="mt-1 text-xs font-semibold text-white/80">{city.hint}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FaqSection() {
+  return (
+    <section className="mb-10 rounded-[12px] bg-white p-6 shadow-sm">
+      <h2 className="text-[22px] font-black text-neutral-900">Tire suas dúvidas aqui</h2>
+
+      <div className="mt-5 divide-y divide-neutral-100">
+        {faqItems.map((item) => (
+          <details key={item} className="group py-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-black text-neutral-800">
+              {item}
+              <span className="text-lg text-[#19002f] transition group-open:rotate-45">+</span>
+            </summary>
+            <p className="mt-3 text-sm leading-6 text-neutral-500">
+              Esta área pode ser ligada depois às regras reais de compra, pedidos, cancelamentos e suporte da Astro Ingressos.
+            </p>
+          </details>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -686,14 +688,11 @@ export default function CustomerDashboardPage() {
   const [user, setUser] = useState<StoredUser | null>(null);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [orders, setOrders] = useState<OrderItem[]>([]);
-  const [incomingTransfers, setIncomingTransfers] = useState<
-    TicketTransferRequestItem[]
-  >([]);
   const [loading, setLoading] = useState(true);
   const [pageWarning, setPageWarning] = useState("");
   const [search, setSearch] = useState("");
-  const [activeFaq, setActiveFaq] = useState<number | null>(null);
   const [activeHeroIndex, setActiveHeroIndex] = useState(0);
+  const [sectionPages, setSectionPages] = useState<Record<string, number>>({});
 
   useEffect(() => {
     function handleHeaderSearch(event: Event) {
@@ -701,16 +700,10 @@ export default function CustomerDashboardPage() {
       setSearch(customEvent.detail || "");
     }
 
-    window.addEventListener(
-      "customer-header-search",
-      handleHeaderSearch as EventListener,
-    );
+    window.addEventListener("customer-header-search", handleHeaderSearch as EventListener);
 
     return () => {
-      window.removeEventListener(
-        "customer-header-search",
-        handleHeaderSearch as EventListener,
-      );
+      window.removeEventListener("customer-header-search", handleHeaderSearch as EventListener);
     };
   }, []);
 
@@ -733,22 +726,15 @@ export default function CustomerDashboardPage() {
       }
 
       try {
-        const [eventsRes, ordersRes, transfersRes] = await Promise.allSettled([
-          fetch("http://localhost:3001/v1/events", {
+        const [eventsRes, ordersRes] = await Promise.allSettled([
+          fetch(`${API_BASE_URL}/events`, {
             method: "GET",
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
             },
           }),
-          fetch("http://localhost:3001/v1/orders/customer", {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-          }),
-          fetch("http://localhost:3001/v1/tickets/customer/transfers/incoming", {
+          fetch(`${API_BASE_URL}/orders/customer`, {
             method: "GET",
             headers: {
               "Content-Type": "application/json",
@@ -793,29 +779,7 @@ export default function CustomerDashboardPage() {
           warningParts.push("pedidos");
         }
 
-        if (transfersRes.status === "fulfilled") {
-          const data = await safeJson<any>(transfersRes.value);
-
-          if (transfersRes.value.ok) {
-            setIncomingTransfers(Array.isArray(data) ? data : []);
-          } else {
-            setIncomingTransfers([]);
-            warningParts.push("transferências");
-          }
-        } else {
-          setIncomingTransfers([]);
-          warningParts.push("transferências");
-        }
-
-        if (warningParts.length > 0) {
-          setPageWarning(
-            `Parte da página não carregou agora: ${warningParts.join(
-              ", ",
-            )}. O restante segue disponível.`,
-          );
-        } else {
-          setPageWarning("");
-        }
+        setPageWarning(warningParts.length ? `Parte da página não carregou agora: ${warningParts.join(", ")}.` : "");
       } catch (error) {
         console.error("CUSTOMER DASHBOARD ERROR:", error);
         alert("Erro ao conectar com a API");
@@ -833,7 +797,6 @@ export default function CustomerDashboardPage() {
 
   function updateSearch(value: string) {
     setSearch(value);
-
     window.dispatchEvent(
       new CustomEvent("customer-header-search-sync", {
         detail: value,
@@ -841,24 +804,24 @@ export default function CustomerDashboardPage() {
     );
   }
 
+  function openEvent(event: EventItem) {
+    goTo(`/events/${event.id}`);
+  }
+
   function handleCategoryClick(category: CategoryItem) {
-    if (category.id === "my") {
-      goTo("/orders");
-      return;
-    }
+    goTo(buildCollectionUrl(category.id, category.label));
+  }
 
-    const params = new URLSearchParams({
-      collection: category.id,
-    });
-
-    goTo(`/events?${params.toString()}`);
+  function setSectionPage(sectionId: string, nextPage: number) {
+    setSectionPages((current) => ({
+      ...current,
+      [sectionId]: Math.max(0, Math.min(MAX_SECTION_PAGE, nextPage)),
+    }));
   }
 
   const sortedEvents = useMemo(() => {
     return [...events].sort(
-      (first, second) =>
-        getFutureTimestamp(getEventDate(first)) -
-        getFutureTimestamp(getEventDate(second)),
+      (first, second) => getTimestamp(getEventDate(first)) - getTimestamp(getEventDate(second)),
     );
   }, [events]);
 
@@ -866,25 +829,8 @@ export default function CustomerDashboardPage() {
     return sortedEvents.filter((event) => eventMatchesSearch(event, search));
   }, [sortedEvents, search]);
 
-  const pendingOrders = useMemo(() => {
-    return orders.filter((order) => isPendingOrder(order));
-  }, [orders]);
-
-  const visibleTransfers = useMemo(() => {
-    return incomingTransfers.filter((transfer) => isVisibleTransfer(transfer));
-  }, [incomingTransfers]);
-
-  const pendingTransfers = useMemo(() => {
-    return visibleTransfers.filter(
-      (transfer) => transfer.status === "PENDING_ACCEPTANCE",
-    );
-  }, [visibleTransfers]);
-
   const heroEvents = searchedEvents.slice(0, 9);
-  const activeHero =
-    heroEvents.length > 0
-      ? heroEvents[activeHeroIndex % heroEvents.length]
-      : undefined;
+  const activeHero = heroEvents.length > 0 ? heroEvents[activeHeroIndex % heroEvents.length] : undefined;
 
   useEffect(() => {
     if (heroEvents.length <= 1) return;
@@ -904,52 +850,138 @@ export default function CustomerDashboardPage() {
 
   function previousHero() {
     if (heroEvents.length === 0) return;
-
-    setActiveHeroIndex((current) =>
-      current === 0 ? heroEvents.length - 1 : current - 1,
-    );
+    setActiveHeroIndex((current) => (current === 0 ? heroEvents.length - 1 : current - 1));
   }
 
   function nextHero() {
     if (heroEvents.length === 0) return;
-
     setActiveHeroIndex((current) => (current + 1) % heroEvents.length);
   }
 
-  const mostBought = buildSection(searchedEvents, 0, 4);
-  const todayEvents = buildSection(searchedEvents, 2, 4);
-  const lastCall = buildSection(searchedEvents, 4, 6);
+  function getHeroEvent(offset: -3 | -2 | -1 | 0 | 1 | 2 | 3) {
+    if (heroEvents.length === 0) return null;
+    const nextIndex = (activeHeroIndex + offset + heroEvents.length) % heroEvents.length;
+    return { event: heroEvents[nextIndex], index: nextIndex };
+  }
 
-  const shows = searchedEvents.filter((event) =>
-    eventMatchesCategory(event, categories[0]),
-  );
-  const business = searchedEvents.filter((event) =>
-    eventMatchesCategory(event, categories[4]),
-  );
-  const sports = searchedEvents.filter((event) =>
-    eventMatchesCategory(event, categories[3]),
-  );
-  const kids = searchedEvents.filter((event) =>
-    eventMatchesCategory(event, categories[6]),
-  );
-  const food = searchedEvents.filter((event) =>
-    eventMatchesCategory(event, categories[5]),
-  );
-  const culture = searchedEvents.filter(
-    (event) =>
-      eventMatchesCategory(event, categories[1]) ||
-      eventMatchesCategory(event, categories[2]) ||
-      eventMatchesCategory(event, categories[7]),
-  );
+  const byCategory = useMemo(() => {
+    return categories.reduce<Record<string, EventItem[]>>((acc, category) => {
+      acc[category.id] = searchedEvents.filter((event) => eventMatchesCategory(event, category));
+      return acc;
+    }, {});
+  }, [searchedEvents]);
+
+  const sections = useMemo<SectionDefinition[]>(() => {
+    const mostBought = [...searchedEvents]
+      .sort((first, second) => getTotalTicketQuantity(second) - getTotalTicketQuantity(first))
+      .slice(0, 36);
+
+    const todayOrSoon = searchedEvents.filter((event) => {
+      const timestamp = getTimestamp(getEventDate(event));
+      const diffDays = (timestamp - Date.now()) / (1000 * 60 * 60 * 24);
+      return diffDays >= 0 && diffDays <= 7;
+    });
+
+    const lastCall = [...searchedEvents]
+      .filter((event) => getTimestamp(getEventDate(event)) >= Date.now())
+      .sort((first, second) => getTimestamp(getEventDate(first)) - getTimestamp(getEventDate(second)))
+      .slice(0, 36);
+
+    const culturalEvents = [...(byCategory.tours || []), ...(byCategory.theater || [])].slice(0, 36);
+    const kidsEvents = byCategory.kids || [];
+    const sportsEvents = byCategory.sports || [];
+    const comedyEvents = byCategory.comedy || [];
+    const showsEvents = byCategory.shows || [];
+    const businessEvents = byCategory.business || [];
+    const foodLikeEvents = searchedEvents.filter((event) => normalizeText(event.name).includes("gastronomia") || normalizeText(event.category).includes("gastronomia"));
+
+    return [
+      {
+        id: "section-recent",
+        title: "Vistos recentemente",
+        view: "recent",
+        events: searchedEvents.slice(0, 36),
+      },
+      {
+        id: "section-most-bought",
+        title: "Eventos mais comprados nas últimas 24h",
+        view: "most-bought",
+        events: mostBought,
+      },
+      {
+        id: "section-today",
+        title: "O que fazer hoje",
+        view: "today",
+        events: todayOrSoon.length > 0 ? todayOrSoon : searchedEvents.slice(0, 36),
+      },
+      {
+        id: "section-last-call",
+        title: "Última chamada",
+        view: "last-call",
+        variant: "compact",
+        events: lastCall,
+      },
+      {
+        id: "section-shows",
+        title: "Festas, shows e festivais",
+        view: "shows",
+        events: showsEvents,
+      },
+      {
+        id: "section-business",
+        title: "Eventos corporativos",
+        view: "business",
+        events: businessEvents,
+      },
+      {
+        id: "section-culture",
+        title: "Passeios e eventos culturais",
+        view: "culture",
+        events: culturalEvents,
+      },
+      {
+        id: "section-comedy",
+        title: "Peças de teatro e stand-up comedy",
+        view: "comedy",
+        events: comedyEvents,
+      },
+      {
+        id: "section-sports",
+        title: "Eventos esportivos",
+        view: "sports",
+        events: sportsEvents,
+      },
+      {
+        id: "section-kids",
+        title: "Eventos e atividades para crianças",
+        view: "kids",
+        events: kidsEvents,
+      },
+      {
+        id: "section-gastro",
+        title: "Eventos gastronômicos",
+        view: "gastronomy",
+        events: foodLikeEvents.length ? foodLikeEvents : searchedEvents.slice(7, 43),
+      },
+      {
+        id: "section-courses",
+        title: "Cursos e workshops",
+        view: "courses",
+        events: searchedEvents.slice(12, 48),
+      },
+    ].filter((section) => section.events.length > 0);
+  }, [searchedEvents, byCategory]);
+
+  const pendingOrders = useMemo(() => {
+    return orders.filter((order) => order.status === "PENDING" || order.status === "PENDING_PAYMENT");
+  }, [orders]);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f7f7f7]">
-        <div className="mx-auto max-w-[980px] px-4 py-10">
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm font-semibold text-slate-700">
-              Carregando sua página...
-            </p>
+      <div className="min-h-screen bg-white">
+        <div className="mx-auto max-w-[1180px] px-4 py-10">
+          <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+            <p className="text-sm font-semibold text-neutral-700">Carregando sua página...</p>
           </div>
         </div>
       </div>
@@ -957,651 +989,288 @@ export default function CustomerDashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f7f7] text-slate-950">
-      <div className="mx-auto max-w-[980px] px-4 pb-14 pt-6">
-        {pageWarning ? (
-          <section className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {pageWarning}
-          </section>
-        ) : null}
+    <main className="min-h-screen bg-[#f4f4f4] text-neutral-950">
+      <section className="bg-white">
+        <div className="mx-auto max-w-[1180px] px-4 pb-9 pt-9">
+          {pageWarning ? (
+            <section className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {pageWarning}
+            </section>
+          ) : null}
 
-        <section className="mb-12">
-          <div className="mb-4">
-            <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-slate-400">
-              Olá, {user?.name || "cliente"}
-            </p>
-            <h1 className="mt-1 text-[28px] font-black text-slate-950 md:text-[34px]">
-              Encontre sua próxima experiência
-            </h1>
-          </div>
+          <SearchBar value={search} onChange={updateSearch} onLocation={() => goTo("/events")} />
 
-          <div className="relative mx-auto h-[390px] max-w-[980px] overflow-visible">
-            {heroEvents.map((event, index) => {
-              const normalizedIndex =
-                (index - activeHeroIndex + heroEvents.length) % heroEvents.length;
-
-              if (normalizedIndex > 8) return null;
-
-              const positions = [
-                "left-1/2 top-8 z-30 h-[250px] w-[520px] -translate-x-1/2 rotate-0 opacity-100",
-                "left-[170px] top-[72px] z-20 h-[220px] w-[330px] rotate-[-5deg] opacity-90",
-                "right-[170px] top-[72px] z-20 h-[220px] w-[330px] rotate-[5deg] opacity-90",
-                "left-[58px] top-[96px] z-10 h-[190px] w-[285px] rotate-[-8deg] opacity-78",
-                "right-[58px] top-[96px] z-10 h-[190px] w-[285px] rotate-[8deg] opacity-78",
-                "left-[250px] top-0 z-0 h-[150px] w-[230px] rotate-[-3deg] opacity-55",
-                "right-[250px] top-0 z-0 h-[150px] w-[230px] rotate-[3deg] opacity-55",
-                "left-[248px] bottom-[46px] z-0 h-[145px] w-[225px] rotate-[4deg] opacity-50",
-                "right-[248px] bottom-[46px] z-0 h-[145px] w-[225px] rotate-[-4deg] opacity-50",
-              ];
+          <div className="relative mx-auto h-[368px] max-w-[1180px] overflow-hidden">
+            {([-3, -2, -1, 0, 1, 2, 3] as const).map((position) => {
+              const item = getHeroEvent(position);
+              if (!item) return null;
 
               return (
-                <button
-                  key={`${event.id}-${index}`}
-                  type="button"
-                  onClick={() => goTo(`/events/${event.id}`)}
-                  className={`absolute hidden overflow-hidden rounded-2xl bg-gradient-to-r ${getEventGradient(
-                    index,
-                  )} text-left shadow-xl transition-all duration-500 md:block ${positions[normalizedIndex]}`}
-                >
-                  {getEventImage(event) ? (
-                    <img
-                      src={getEventImage(event)}
-                      alt={event.name || "Evento"}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : null}
-
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-transparent" />
-
-                  {normalizedIndex === 0 ? (
-                    <div className="absolute bottom-0 left-0 right-0 p-7 text-white">
-                      <p className="text-[12px] font-bold uppercase tracking-[0.22em] text-white/80">
-                        Destaque
-                      </p>
-                      <h2 className="mt-2 line-clamp-2 text-[34px] font-black leading-[38px]">
-                        {event.name || "Evento sem nome"}
-                      </h2>
-                      <p className="mt-3 text-[13px] font-semibold text-white/85">
-                        {formatDate(getEventDate(event))}
-                      </p>
-                    </div>
-                  ) : null}
-                </button>
+                <HeroCard
+                  key={`${position}-${item.event.id}`}
+                  event={item.event}
+                  index={item.index}
+                  position={position}
+                  onClick={() => openEvent(item.event)}
+                />
               );
             })}
 
-            {activeHero ? (
-              <button
-                type="button"
-                onClick={() => goTo(`/events/${activeHero.id}`)}
-                className={`absolute left-1/2 top-8 z-30 h-[245px] w-[350px] -translate-x-1/2 overflow-hidden rounded-2xl bg-gradient-to-r ${getEventGradient(
-                  activeHeroIndex,
-                )} text-left shadow-xl md:hidden`}
-              >
-                {getEventImage(activeHero) ? (
-                  <img
-                    src={getEventImage(activeHero)}
-                    alt={activeHero.name || "Evento"}
-                    className="h-full w-full object-cover"
-                  />
-                ) : null}
+            <button
+              type="button"
+              onClick={previousHero}
+              className="absolute left-[188px] top-[145px] z-40 flex h-12 w-12 items-center justify-center rounded-full bg-white text-2xl font-black text-[#19002f] shadow-xl ring-1 ring-neutral-100 transition hover:-translate-y-0.5"
+              aria-label="Voltar destaque"
+            >
+              ‹
+            </button>
 
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-transparent" />
-
-                <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/80">
-                    Destaque
-                  </p>
-                  <h2 className="mt-2 line-clamp-2 text-[28px] font-black leading-[32px]">
-                    {activeHero.name || "Evento sem nome"}
-                  </h2>
-                  <p className="mt-2 text-[12px] text-white/85">
-                    {formatDate(getEventDate(activeHero))}
-                  </p>
-                </div>
-              </button>
-            ) : (
-              <div className="absolute left-1/2 top-8 z-30 flex h-[245px] w-[350px] -translate-x-1/2 items-center justify-center rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-700 text-center text-white shadow-xl md:w-[520px]">
-                <div>
-                  <p className="text-[42px] font-black">🎟️</p>
-                  <p className="mt-2 text-xl font-black">Eventos em breve</p>
-                </div>
-              </div>
-            )}
-
-            {heroEvents.length > 1 ? (
-              <>
-                <button
-                  type="button"
-                  onClick={previousHero}
-                  className="absolute left-0 top-[160px] z-40 flex h-11 w-11 items-center justify-center rounded-full bg-white text-2xl font-black text-slate-600 shadow-lg hover:bg-slate-50"
-                >
-                  ‹
-                </button>
-
-                <button
-                  type="button"
-                  onClick={nextHero}
-                  className="absolute right-0 top-[160px] z-40 flex h-11 w-11 items-center justify-center rounded-full bg-white text-2xl font-black text-slate-600 shadow-lg hover:bg-slate-50"
-                >
-                  ›
-                </button>
-              </>
-            ) : null}
+            <button
+              type="button"
+              onClick={nextHero}
+              className="absolute right-[188px] top-[145px] z-40 flex h-12 w-12 items-center justify-center rounded-full bg-white text-2xl font-black text-[#19002f] shadow-xl ring-1 ring-neutral-100 transition hover:-translate-y-0.5"
+              aria-label="Avançar destaque"
+            >
+              ›
+            </button>
           </div>
 
           {activeHero ? (
-            <div className="-mt-8 text-center md:-mt-12">
-              <h3 className="text-[18px] font-black text-slate-950">
+            <div className="mt-2 text-center">
+              <h1 className="text-[24px] font-black uppercase tracking-tight text-neutral-800">
                 {activeHero.name}
-              </h3>
-              <p className="mt-1 text-[13px] text-slate-500">
-                {getLocationLabel(activeHero)}
+              </h1>
+              <p className="mt-2 text-sm font-semibold text-neutral-500">
+                {getLocationLabel(activeHero)} • {formatDate(getEventDate(activeHero))}
               </p>
 
-              {heroEvents.length > 1 ? (
-                <div className="mt-3 flex justify-center gap-1.5">
-                  {heroEvents.map((event, index) => (
-                    <button
-                      key={event.id}
-                      type="button"
-                      onClick={() => setActiveHeroIndex(index)}
-                      className={`h-1.5 rounded-full transition-all ${
-                        index === activeHeroIndex
-                          ? "w-7 bg-[#006bff]"
-                          : "w-1.5 bg-slate-300"
-                      }`}
-                    />
-                  ))}
-                </div>
-              ) : null}
+              <div className="mt-5 flex justify-center gap-2">
+                {heroEvents.map((event, index) => (
+                  <button
+                    key={event.id}
+                    type="button"
+                    onClick={() => setActiveHeroIndex(index)}
+                    className={`h-2 rounded-full transition ${index === activeHeroIndex ? "w-7 bg-[#19002f]" : "w-2 bg-neutral-300"}`}
+                    aria-label={`Selecionar destaque ${index + 1}`}
+                  />
+                ))}
+              </div>
             </div>
           ) : null}
-        </section>
+        </div>
+      </section>
 
-        <section className="mb-8">
-          <SectionTitle title="Explore nossas coleções" />
+      <section className="bg-[#f4f4f4]">
+        <div className="mx-auto max-w-[940px] px-4 pb-16 pt-9">
+          <section className="mb-10">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <h2 className="text-[24px] font-black text-neutral-900">Explore nossas coleções</h2>
 
-          <div className="grid gap-3 md:grid-cols-5">
-            {categories.map((category) => (
               <button
-                key={category.id}
                 type="button"
-                onClick={() => handleCategoryClick(category)}
-                className="group relative h-[126px] overflow-hidden rounded-[18px] bg-slate-900 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+                onClick={() => goTo("/events")}
+                className="text-sm font-black text-[#19002f] hover:text-orange-700"
               >
-                <img
-                  src={category.image}
-                  alt={category.label}
-                  className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105"
-                />
-
-                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/30 to-black/5" />
-
-                <div className="absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/95 text-lg shadow-sm">
-                  {category.icon}
-                </div>
-
-                <div className="absolute bottom-3 left-3 right-3 text-white">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
-                    Coleção
-                  </p>
-                  <p className="mt-1 text-base font-black leading-tight">
-                    {category.label}
-                  </p>
-                </div>
+                Ver tudo
               </button>
-            ))}
-          </div>
-        </section>
+            </div>
 
-        {pendingOrders.length > 0 || pendingTransfers.length > 0 ? (
-          <section className="mb-8 rounded-[14px] border border-sky-100 bg-white p-4 shadow-sm">
-            <SectionTitle
-              title="Sua área"
-              actionLabel="Abrir pedidos"
-              onAction={() => goTo("/orders")}
-            />
-
-            <div className="grid gap-3 md:grid-cols-2">
-              {pendingOrders.slice(0, 2).map((order) => (
+            <div className="grid grid-cols-9 gap-3">
+              {categories.map((category) => (
                 <button
-                  key={order.id}
+                  key={category.id}
                   type="button"
-                  onClick={() => goTo(`/orders/${order.id}`)}
-                  className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-left"
+                  onClick={() => handleCategoryClick(category)}
+                  className="group flex h-[98px] flex-col items-center justify-center rounded-[8px] border border-neutral-200 bg-white px-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-orange-300 hover:shadow-md"
                 >
-                  <span
-                    className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold ${getStatusClasses(
-                      order.status,
-                    )}`}
-                  >
-                    {getStatusLabel(order.status)}
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-50 text-[14px] font-black text-neutral-500 ring-1 ring-neutral-200 group-hover:bg-[#19002f] group-hover:text-white">
+                    {category.icon}
                   </span>
-                  <p className="mt-2 line-clamp-1 text-sm font-black text-slate-950">
-                    {order.event?.name || "Pedido pendente"}
-                  </p>
-                  <p className="mt-1 text-[12px] text-slate-500">
-                    {formatMoney(order.totalAmount)} ·{" "}
-                    {formatDate(getOrderEventDate(order))}
-                  </p>
-                </button>
-              ))}
 
-              {pendingTransfers.slice(0, 2).map((transfer) => (
-                <button
-                  key={transfer.id}
-                  type="button"
-                  onClick={() => goTo(`/orders/transfer_${transfer.id}`)}
-                  className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-left"
-                >
-                  <span
-                    className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold ${getStatusClasses(
-                      transfer.status,
-                    )}`}
-                  >
-                    {getStatusLabel(transfer.status)}
+                  <span className="mt-2 line-clamp-2 text-[11px] font-black leading-4 text-neutral-500 group-hover:text-neutral-950">
+                    {category.label}
                   </span>
-                  <p className="mt-2 line-clamp-1 text-sm font-black text-slate-950">
-                    {getTransferEventName(transfer)}
-                  </p>
-                  <p className="mt-1 text-[12px] text-slate-500">
-                    Transferência recebida
-                  </p>
                 </button>
               ))}
             </div>
           </section>
-        ) : null}
 
-        {search.trim() ? (
-          <section className="mb-8">
-            <SectionTitle
-              title={`Resultados para "${search}"`}
-              actionLabel="Limpar"
-              onAction={() => updateSearch("")}
-            />
+          {sections.slice(0, 1).map((section) => {
+            const page = sectionPages[section.id] || 0;
+            const maxPage = Math.min(MAX_SECTION_PAGE, Math.max(0, Math.ceil(section.events.length / PAGE_SIZE) - 1));
 
-            {searchedEvents.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-                Nenhum resultado encontrado.
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-4">
-                {searchedEvents.slice(0, 8).map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        ) : null}
-
-        {!search.trim() ? (
-          <>
-            <section id="section-most-bought" className="scroll-mt-20 mb-8">
-              <SectionTitle
-                title="Eventos mais comprados nas últimas 24h"
-                onAction={() => goTo("/events")}
+            return (
+              <EventCarouselSection
+                key={section.id}
+                section={section}
+                page={Math.min(page, maxPage)}
+                onPrevious={() => setSectionPage(section.id, page - 1)}
+                onNext={() => setSectionPage(section.id, page + 1)}
+                onSeeAll={() => goTo(buildViewUrl(section.view, section.title))}
+                onOpenEvent={openEvent}
               />
+            );
+          })}
 
-              <div className="grid gap-4 md:grid-cols-4">
-                {mostBought.map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
+          <PromoBanner
+            title="Hoje é dia de festa"
+            subtitle="Encontre eventos para sair agora, comprar com segurança e aproveitar melhor sua noite."
+            cta="Descubra a sua"
+          />
 
-            <section className="scroll-mt-20 mb-8">
-              <SectionTitle
-                title="O que fazer hoje"
-                onAction={() => goTo("/events")}
+          {sections.slice(1, 4).map((section) => {
+            const page = sectionPages[section.id] || 0;
+            const maxPage = Math.min(MAX_SECTION_PAGE, Math.max(0, Math.ceil(section.events.length / PAGE_SIZE) - 1));
+
+            return (
+              <EventCarouselSection
+                key={section.id}
+                section={section}
+                page={Math.min(page, maxPage)}
+                onPrevious={() => setSectionPage(section.id, page - 1)}
+                onNext={() => setSectionPage(section.id, page + 1)}
+                onSeeAll={() => goTo(buildViewUrl(section.view, section.title))}
+                onOpenEvent={openEvent}
               />
+            );
+          })}
 
-              <div className="grid gap-4 md:grid-cols-4">
-                {todayEvents.map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 2}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
+          <PromoBanner
+            title="Qual vai ser seu próximo evento?"
+            subtitle="Use os filtros por coleção, cidade e data para encontrar experiências sob medida."
+            cta="Explorar eventos"
+            variant="light"
+          />
 
-            <section className="mb-8">
-              <SectionTitle
-                title="Última chamada"
-                onAction={() => goTo("/events")}
+          {sections.slice(4, 7).map((section) => {
+            const page = sectionPages[section.id] || 0;
+            const maxPage = Math.min(MAX_SECTION_PAGE, Math.max(0, Math.ceil(section.events.length / PAGE_SIZE) - 1));
+
+            return (
+              <EventCarouselSection
+                key={section.id}
+                section={section}
+                page={Math.min(page, maxPage)}
+                onPrevious={() => setSectionPage(section.id, page - 1)}
+                onNext={() => setSectionPage(section.id, page + 1)}
+                onSeeAll={() => goTo(buildViewUrl(section.view, section.title))}
+                onOpenEvent={openEvent}
               />
+            );
+          })}
 
-              <div className="grid gap-3 md:grid-cols-2">
-                {lastCall.map((event, index) => (
-                  <WideEventCard
-                    key={event.id}
-                    event={event}
-                    index={index}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
+          <CitySection onOpenCity={(city) => goTo(city ? `/events?city=${encodeURIComponent(city)}` : "/events")} />
 
-            <section id="section-shows" className="scroll-mt-20 mb-8">
-              <SectionTitle
-                title="Festas, shows e festivais"
-                onAction={() => goTo("/events")}
+          {sections.slice(7).map((section) => {
+            const page = sectionPages[section.id] || 0;
+            const maxPage = Math.min(MAX_SECTION_PAGE, Math.max(0, Math.ceil(section.events.length / PAGE_SIZE) - 1));
+
+            return (
+              <EventCarouselSection
+                key={section.id}
+                section={section}
+                page={Math.min(page, maxPage)}
+                onPrevious={() => setSectionPage(section.id, page - 1)}
+                onNext={() => setSectionPage(section.id, page + 1)}
+                onSeeAll={() => goTo(buildViewUrl(section.view, section.title))}
+                onOpenEvent={openEvent}
               />
+            );
+          })}
 
-              <div className="grid gap-4 md:grid-cols-4">
-                {buildSection(shows.length > 0 ? shows : searchedEvents, 0, 4).map(
-                  (event, index) => (
-                    <EventCard
-                      key={event.id}
-                      event={event}
-                      index={index + 4}
-                      onOpen={() => goTo(`/events/${event.id}`)}
-                    />
-                  ),
-                )}
-              </div>
-            </section>
-
-            <section id="section-business" className="scroll-mt-20 mb-8">
-              <SectionTitle
-                title="Eventos corporativos"
-                onAction={() => goTo("/events")}
-              />
-
-              <div className="grid gap-4 md:grid-cols-4">
-                {buildSection(
-                  business.length > 0 ? business : searchedEvents,
-                  0,
-                  4,
-                ).map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 7}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section id="section-culture" className="scroll-mt-20 mb-8">
-              <SectionTitle
-                title="Passeios e eventos culturais"
-                onAction={() => goTo("/events")}
-              />
-
-              <div className="grid gap-4 md:grid-cols-4">
-                {buildSection(
-                  culture.length > 0 ? culture : searchedEvents,
-                  1,
-                  4,
-                ).map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 10}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section id="section-sports" className="scroll-mt-20 mb-8">
-              <SectionTitle
-                title="Eventos esportivos"
-                onAction={() => goTo("/events")}
-              />
-
-              <div className="grid gap-4 md:grid-cols-4">
-                {buildSection(
-                  sports.length > 0 ? sports : searchedEvents,
-                  2,
-                  4,
-                ).map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 13}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section id="section-kids" className="scroll-mt-20 mb-8">
-              <SectionTitle
-                title="Eventos e atividades para crianças"
-                onAction={() => goTo("/events")}
-              />
-
-              <div className="grid gap-4 md:grid-cols-4">
-                {buildSection(
-                  kids.length > 0 ? kids : searchedEvents,
-                  2,
-                  4,
-                ).map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 15}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section id="section-food" className="scroll-mt-20 mb-8">
-              <SectionTitle
-                title="Eventos gastronômicos"
-                onAction={() => goTo("/events")}
-              />
-
-              <div className="grid gap-4 md:grid-cols-4">
-                {buildSection(
-                  food.length > 0 ? food : searchedEvents,
-                  3,
-                  4,
-                ).map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 16}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-          </>
-        ) : null}
-
-        <section className="mb-8">
-          <SectionTitle title="Descubra o que fazer na sua cidade" />
-
-          <div className="grid gap-4 md:grid-cols-4">
-            {cityCards.map((city) => (
-              <button
-                key={city.city}
-                type="button"
-                onClick={() => updateSearch(city.city)}
-                className={`h-[132px] overflow-hidden rounded-xl bg-gradient-to-br ${city.gradient} p-4 text-left text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md`}
-              >
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/70">
-                  Cidade
-                </p>
-                <p className="mt-12 text-xl font-black">{city.city}</p>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="mb-8 rounded-xl bg-[#ebe5ff] p-6">
-          <div className="grid gap-6 md:grid-cols-[1fr_0.75fr] md:items-center">
+          <section className="mb-10 grid grid-cols-[1fr_320px] gap-6 rounded-[12px] bg-[#f1e7ff] p-7 shadow-sm">
             <div>
-              <span className="rounded-full bg-slate-950 px-3 py-1 text-[11px] font-bold text-white">
-                Para produtores
-              </span>
-              <h2 className="mt-5 max-w-md text-3xl font-black leading-tight text-[#5b35ff]">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#19002f]/60">Para produtores</p>
+              <h2 className="mt-2 text-[26px] font-black leading-tight text-[#19002f]">
                 Crie eventos, divulgue e venda ingressos com facilidade
               </h2>
-
-              <div className="mt-5 grid gap-3 md:grid-cols-2">
-                <div>
-                  <p className="text-lg font-black text-[#5b35ff]">✦</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-700">
-                    Publique e acompanhe suas vendas.
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-lg font-black text-[#5b35ff]">✧</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-700">
-                    Controle pedidos, check-in e operação.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 flex flex-wrap gap-3">
+              <p className="mt-3 text-sm leading-6 text-[#19002f]/70">
+                Página pública, setores, lotes, mapa, pedidos e validação em um fluxo só.
+              </p>
+              <div className="mt-5 flex gap-3">
                 <button
                   type="button"
-                  onClick={() => goTo("/admin/events")}
-                  className="rounded-lg bg-[#006bff] px-5 py-3 text-sm font-bold text-white hover:bg-blue-700"
+                  onClick={() => goTo("/admin/events/new")}
+                  className="rounded-[8px] bg-[#19002f] px-5 py-3 text-sm font-black text-white hover:bg-[#2a0648]"
                 >
                   Criar evento
                 </button>
-
                 <button
                   type="button"
-                  onClick={() => goTo("/admin/dashboard")}
-                  className="rounded-lg border border-[#006bff] bg-white px-5 py-3 text-sm font-bold text-[#006bff] hover:bg-blue-50"
+                  onClick={() => goTo("/admin/events")}
+                  className="rounded-[8px] bg-white px-5 py-3 text-sm font-black text-[#19002f] hover:bg-orange-50"
                 >
-                  Ver minha dashboard
+                  Meus eventos
                 </button>
               </div>
             </div>
 
-            <div className="rounded-xl bg-white p-5 shadow-sm">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <div className="mb-3 h-3 w-28 rounded-full bg-slate-200" />
-                <div className="grid h-28 grid-cols-6 items-end gap-2">
-                  {[30, 70, 45, 88, 55, 100].map((height, index) => (
-                    <div
-                      key={index}
-                      className="rounded-t bg-[#006bff]"
-                      style={{ height: `${height}%` }}
-                    />
-                  ))}
+            <div className="rounded-[10px] bg-white p-4 shadow-sm">
+              <div className="h-36 rounded-[8px] bg-gradient-to-r from-orange-500 to-[#19002f]" />
+              <div className="mt-3 h-3 w-2/3 rounded-full bg-neutral-200" />
+              <div className="mt-2 h-3 w-1/2 rounded-full bg-neutral-100" />
+            </div>
+          </section>
+
+          <FaqSection />
+
+          {pendingOrders.length > 0 ? (
+            <section className="mt-10 rounded-[18px] border border-neutral-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-neutral-500">
+                    Atenção
+                  </p>
+                  <h2 className="mt-1 text-[20px] font-black text-neutral-950">
+                    Você tem pedidos pendentes
+                  </h2>
+                  <p className="mt-1 text-sm font-semibold text-neutral-600">
+                    Existem {pendingOrders.length} pedido(s) aguardando ação.
+                  </p>
                 </div>
-              </div>
-            </div>
-          </div>
-        </section>
 
-        <section className="mb-8">
-          <SectionTitle title="Tire suas dúvidas aqui" actionLabel="" />
-
-          <div className="space-y-2">
-            {faqItems.map((item, index) => {
-              const active = activeFaq === index;
-
-              return (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setActiveFaq(active ? null : index)}
-                  className="w-full rounded-lg bg-white px-4 py-4 text-left shadow-sm"
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm font-bold text-slate-800">{item}</p>
-                    <span className="text-lg font-black text-[#006bff]">
-                      {active ? "−" : "+"}
-                    </span>
-                  </div>
-
-                  {active ? (
-                    <p className="mt-3 text-sm leading-6 text-slate-500">
-                      Acesse sua área do cliente em Meus pedidos para acompanhar
-                      status, ingressos, transferências, cancelamentos e wallet.
-                    </p>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <footer className="border-t border-slate-200 py-8">
-          <div className="grid gap-6 md:grid-cols-[1fr_2fr]">
-            <div>
-              <p className="text-xl font-black text-[#006bff]">Sympla</p>
-              <p className="mt-2 text-sm text-slate-500">
-                Plataforma de eventos e ingressos.
-              </p>
-            </div>
-
-            <div className="grid gap-4 text-sm text-slate-500 md:grid-cols-4">
-              <div>
-                <p className="font-bold text-slate-800">Cliente</p>
                 <button
                   type="button"
                   onClick={() => goTo("/orders")}
-                  className="mt-2 block hover:text-slate-900"
+                  className="rounded-full bg-[#19002f] px-5 py-3 text-sm font-bold text-white hover:bg-[#2a0648]"
                 >
-                  Meus pedidos
+                  Ver pedidos
                 </button>
-                <button
-                  type="button"
-                  onClick={() => goTo("/wallet")}
-                  className="mt-2 block hover:text-slate-900"
-                >
-                  Wallet
-                </button>
+              </div>
+            </section>
+          ) : null}
+
+          <footer className="mt-12 border-t border-neutral-200 pt-8">
+            <div className="grid grid-cols-4 gap-8 text-sm">
+              <div>
+                <h3 className="font-black text-[#19002f]">Astro Ingressos</h3>
+                <p className="mt-3 leading-6 text-neutral-500">
+                  Eventos, ingressos e experiências em uma plataforma preparada para crescer.
+                </p>
               </div>
 
-              <div>
-                <p className="font-bold text-slate-800">Eventos</p>
-                <button
-                  type="button"
-                  onClick={() => goTo("/events")}
-                  className="mt-2 block hover:text-slate-900"
-                >
-                  Explorar
-                </button>
-              </div>
-
-              <div>
-                <p className="font-bold text-slate-800">Produtor</p>
-                <button
-                  type="button"
-                  onClick={() => goTo("/admin/dashboard")}
-                  className="mt-2 block hover:text-slate-900"
-                >
-                  Dashboard
-                </button>
-              </div>
-
-              <div>
-                <p className="font-bold text-slate-800">Conta</p>
-                <p className="mt-2 break-all">{user?.email || "-"}</p>
-              </div>
+              {["Comprar", "Organizar", "Suporte"].map((title) => (
+                <div key={title}>
+                  <h3 className="font-black text-neutral-900">{title}</h3>
+                  <div className="mt-3 space-y-2 text-neutral-500">
+                    <p>Eventos</p>
+                    <p>Ingressos</p>
+                    <p>Ajuda</p>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
-        </footer>
-      </div>
+          </footer>
+        </div>
+      </section>
+
+      <button
+        type="button"
+        onClick={() => goTo("/support")}
+        className="fixed bottom-6 right-6 z-40 rounded-full bg-[#22e45f] px-5 py-3 text-sm font-black text-[#063b16] shadow-xl hover:brightness-95"
+      >
+        ? Ajuda
+      </button>
     </main>
   );
 }

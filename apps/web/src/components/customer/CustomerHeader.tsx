@@ -1,7 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 export type CustomerHeaderUser = {
   id?: string;
@@ -16,34 +15,70 @@ type CustomerHeaderProps = {
   activeNav?: "dashboard" | "orders" | "wallet" | "support";
   showSearch?: boolean;
   searchPlaceholder?: string;
-  searchValue?: string;
-  onSearchChange?: (value: string) => void;
+  searchAppearsOnScroll?: boolean;
+  showLocationButton?: boolean;
 };
 
-type HeaderMenuItem = {
+type HeaderLink = {
   label: string;
   href: string;
-  emoji?: string;
 };
 
-function getInitial(user: CustomerHeaderUser | null) {
-  return (user?.name?.[0] || "U").toUpperCase();
+function getInitials(name?: string | null, email?: string | null) {
+  const source = String(name || email || "A").trim();
+
+  if (!source) return "A";
+
+  const pieces = source.split(/\s+/).filter(Boolean);
+
+  if (pieces.length === 1) return pieces[0].slice(0, 1).toUpperCase();
+
+  return `${pieces[0].slice(0, 1)}${pieces[pieces.length - 1].slice(0, 1)}`.toUpperCase();
 }
 
-function goTo(path: string) {
-  window.location.href = path;
+function normalizeRole(role?: string | null) {
+  return String(role || "").trim().toUpperCase();
 }
 
-function getTopNavClasses(isActive: boolean) {
-  return isActive
-    ? "text-sm font-black text-sky-600"
-    : "text-sm font-semibold text-gray-600 hover:text-gray-900";
+function getStoredUser(): CustomerHeaderUser | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const rawUser = localStorage.getItem("user");
+
+    return rawUser ? (JSON.parse(rawUser) as CustomerHeaderUser) : null;
+  } catch {
+    return null;
+  }
 }
 
-function getMenuItemClasses(isActive: boolean) {
-  return isActive
-    ? "flex w-full items-center gap-3 rounded-xl bg-sky-50 px-3 py-3 text-left text-sm font-black text-sky-700"
-    : "flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50";
+function getCreateEventPath(role: string) {
+  if (role === "ADMIN" || role === "SUPER_ADMIN") return "/admin/events/new";
+
+  return "/support/admin-request";
+}
+
+function MenuLink({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      className={`flex w-full items-center justify-between rounded-xl px-3 py-3 text-left text-sm font-semibold transition ${
+        active
+          ? "bg-neutral-950 text-white"
+          : "text-neutral-700 hover:bg-neutral-50 hover:text-neutral-950"
+      }`}
+    >
+      <span>{children}</span>
+    </a>
+  );
 }
 
 export default function CustomerHeader({
@@ -51,64 +86,31 @@ export default function CustomerHeader({
   activeNav = "dashboard",
   showSearch = false,
   searchPlaceholder = "Buscar experiências",
-  searchValue = "",
-  onSearchChange,
+  searchAppearsOnScroll = false,
+  showLocationButton = false,
 }: CustomerHeaderProps) {
-  const pathname = usePathname();
-
   const [menuOpen, setMenuOpen] = useState(false);
-  const [localSearch, setLocalSearch] = useState(searchValue);
-
-  const role = String(user?.role || "").toUpperCase();
-  const canAccessAdmin = role === "ADMIN";
-  const canAccessOperator = role === "OPERATOR";
-
-  const isAdminArea = pathname.startsWith("/admin");
-  const isOperatorArea = pathname.startsWith("/operator");
-
-  const adminTopItems: HeaderMenuItem[] = [
-  { label: "Dashboard", href: "/admin/dashboard" },
-  { label: "Validação", href: "/admin/validation" },
-  ];
-  
-  const adminMenuItems: HeaderMenuItem[] = [
-    { label: "Dashboard", href: "/admin/dashboard", emoji: "🎟️" },
-    { label: "Organizadores", href: "/admin/organizers", emoji: "🏢" },
-    { label: "Eventos", href: "/admin/events", emoji: "🎫" },
-    { label: "Pedidos", href: "/admin/orders", emoji: "🧾" },
-    { label: "Atendimentos", href: "/admin/support", emoji: "💬" },
-    { label: "Validação / Check-in", href: "/admin/validation", emoji: "✅" },
-  ];
-
-  const operatorTopItems: HeaderMenuItem[] = [
-    { label: "Dashboard", href: "/operator/dashboard" },
-    { label: "Eventos", href: "/operator/events" },
-    { label: "Pedidos", href: "/operator/orders" },
-    { label: "Check-in", href: "/operator/checkin" },
-  ];
-
-  const operatorMenuItems: HeaderMenuItem[] = [
-    { label: "Dashboard", href: "/operator/dashboard", emoji: "🎟️" },
-    { label: "Eventos", href: "/operator/events", emoji: "🎫" },
-    { label: "Pedidos", href: "/operator/orders", emoji: "🧾" },
-    { label: "Check-in", href: "/operator/checkin", emoji: "✅" },
-  ];
-
-  const customerTopItems: HeaderMenuItem[] = [
-    { label: "Meus ingressos", href: "/orders" },
-    { label: "Wallet", href: "/wallet" },
-  ];
-
-  const topItems = useMemo(() => {
-    if (isAdminArea) return adminTopItems;
-    if (isOperatorArea) return operatorTopItems;
-
-    return customerTopItems;
-  }, [isAdminArea, isOperatorArea]);
+  const [localSearch, setLocalSearch] = useState("");
+  const [scrolled, setScrolled] = useState(false);
+  const [storedUser, setStoredUser] = useState<CustomerHeaderUser | null>(null);
+  const [pathname, setPathname] = useState("");
 
   useEffect(() => {
-    setLocalSearch(searchValue);
-  }, [searchValue]);
+    setStoredUser(getStoredUser());
+    setPathname(window.location.pathname);
+
+    function handleStorageChange() {
+      setStoredUser(getStoredUser());
+    }
+
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("astro-user-updated", handleStorageChange as EventListener);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("astro-user-updated", handleStorageChange as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     function handleExternalSearchSync(event: Event) {
@@ -116,327 +118,309 @@ export default function CustomerHeader({
       setLocalSearch(customEvent.detail || "");
     }
 
-    window.addEventListener(
-      "customer-header-search-sync",
-      handleExternalSearchSync as EventListener,
-    );
+    window.addEventListener("customer-header-search-sync", handleExternalSearchSync as EventListener);
 
     return () => {
-      window.removeEventListener(
-        "customer-header-search-sync",
-        handleExternalSearchSync as EventListener,
-      );
+      window.removeEventListener("customer-header-search-sync", handleExternalSearchSync as EventListener);
     };
   }, []);
 
+  useEffect(() => {
+    if (!searchAppearsOnScroll) {
+      setScrolled(false);
+      return;
+    }
+
+    function handleScroll() {
+      setScrolled(window.scrollY > 80);
+    }
+
+    handleScroll();
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [searchAppearsOnScroll]);
+
+  const currentUser = user || storedUser;
+  const role = normalizeRole(currentUser?.role);
+  const isSuperAdmin = role === "SUPER_ADMIN";
+  const isAdmin = role === "ADMIN" || isSuperAdmin;
+  const isOperator = role === "OPERATOR";
+  const isAdminArea = pathname.startsWith("/admin");
+  const isOperatorArea = pathname.startsWith("/operator");
+  const isCustomerArea = !isAdminArea && !isOperatorArea;
+
+  const shouldShowSearch = showSearch && (!searchAppearsOnScroll || scrolled);
+  const createEventPath = getCreateEventPath(role);
+
+  const topLinks: HeaderLink[] = useMemo(() => {
+    return [
+      { label: "Criar evento", href: createEventPath },
+      { label: "Meus ingressos", href: "/orders" },
+    ];
+  }, [createEventPath]);
+
+  const superAdminLinks: HeaderLink[] = [
+    { label: "Painel administrativo", href: "/admin/dashboard" },
+    { label: "Solicitações de criador", href: "/admin/support" },
+    { label: "Organizadores", href: "/admin/organizers" },
+    { label: "Eventos", href: "/admin/events" },
+    { label: "Criar evento", href: "/admin/events/new" },
+    { label: "Impulsionar evento", href: "/admin/boosts" },
+    { label: "Pedidos", href: "/admin/orders" },
+    { label: "Financeiro", href: "/admin/finance" },
+    { label: "Suporte", href: "/admin/support" },
+    { label: "Validação / Check-in", href: "/admin/validation" },
+    { label: "Tela principal", href: "/dashboard" },
+  ];
+
+  const adminLinks: HeaderLink[] = [
+    { label: "Painel administrativo", href: "/admin/dashboard" },
+    { label: "Criar evento", href: "/admin/events/new" },
+    { label: "Impulsionar evento", href: "/admin/boosts" },
+    { label: "Eventos", href: "/admin/events" },
+    { label: "Pedidos", href: "/admin/orders" },
+    { label: "Financeiro", href: "/admin/finance" },
+    { label: "Suporte", href: "/admin/support" },
+    { label: "Validação / Check-in", href: "/admin/validation" },
+    { label: "Tela principal", href: "/dashboard" },
+  ];
+
+  const operatorLinks: HeaderLink[] = [
+    { label: "Painel operador", href: "/operator/dashboard" },
+    { label: "Validação / Check-in", href: "/operator/validation" },
+    { label: "Tela principal", href: "/dashboard" },
+  ];
+
   function isActivePath(href: string) {
-    if (pathname === href) return true;
-    return pathname.startsWith(`${href}/`);
+    const cleanHref = href.split("?")[0];
+
+    return pathname === cleanHref || pathname.startsWith(`${cleanHref}/`);
   }
 
-  function getCustomerActiveState(href: string) {
-    if (href === "/orders") return activeNav === "orders";
-    if (href === "/wallet") return activeNav === "wallet";
-    if (href === "/support") return activeNav === "support";
-    if (href === "/dashboard") return activeNav === "dashboard";
+  function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-    return isActivePath(href);
+    const term = localSearch.trim();
+
+    window.dispatchEvent(
+      new CustomEvent("customer-header-search", {
+        detail: term,
+      }),
+    );
+
+    if (term) {
+      window.location.assign(`/events?q=${encodeURIComponent(term)}`);
+      return;
+    }
+
+    if (!window.location.pathname.startsWith("/dashboard")) {
+      window.location.assign("/dashboard");
+    }
   }
 
   function handleLogout() {
     localStorage.removeItem("token");
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("user");
-    window.location.href = "/login";
+    window.location.assign("/login");
   }
 
-  function handleGo(path: string) {
-    setMenuOpen(false);
-    goTo(path);
-  }
+  function renderSearch() {
+    if (!shouldShowSearch) return null;
 
-  function handleSearchChange(value: string) {
-    setLocalSearch(value);
-    onSearchChange?.(value);
-
-    window.dispatchEvent(
-      new CustomEvent("customer-header-search", {
-        detail: value,
-      }),
-    );
-  }
-
-  function handleSearchSubmit() {
-    window.dispatchEvent(
-      new CustomEvent("customer-header-search", {
-        detail: localSearch,
-      }),
-    );
-
-    if (!window.location.pathname.startsWith("/dashboard")) {
-      window.location.href = "/dashboard";
-    }
-  }
-
-  function renderAdminMenu() {
     return (
-      <>
-        <div className="px-2 pb-2 pt-1">
-          <p className="px-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
-            Administração
-          </p>
-
-          <div className="mt-2 space-y-1">
-            {adminMenuItems.map((item) => (
-              <button
-                key={item.href}
-                type="button"
-                onClick={() => handleGo(item.href)}
-                className={getMenuItemClasses(isActivePath(item.href))}
-              >
-                <span className="w-5 text-center">{item.emoji}</span>
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="border-t border-gray-100 px-2 pb-2 pt-2">
-          <button
-            type="button"
-            onClick={() => handleGo("/dashboard")}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
-          >
-            <span className="w-5 text-center">🏠</span>
-            <span>Tela principal</span>
-          </button>
-        </div>
-      </>
+      <form
+        onSubmit={handleSearchSubmit}
+        className="hidden h-11 min-w-[260px] flex-1 max-w-[520px] items-center rounded-xl bg-white px-4 shadow-sm ring-1 ring-black/10 md:flex"
+      >
+        <span className="mr-3 text-sm text-neutral-400">⌕</span>
+        <input
+          type="text"
+          value={localSearch}
+          onChange={(event) => setLocalSearch(event.target.value)}
+          placeholder={searchPlaceholder}
+          className="w-full bg-transparent text-sm font-semibold text-neutral-700 outline-none placeholder:text-neutral-400"
+        />
+      </form>
     );
   }
 
-  function renderOperatorMenu() {
+  function renderAdminOnlyMenu() {
+    const links = isSuperAdmin ? superAdminLinks : adminLinks;
+    const title = isSuperAdmin ? "Super administração" : "Administração";
+
     return (
-      <>
-        <div className="px-2 pb-2 pt-1">
-          <p className="px-2 text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
-            Operador
-          </p>
+      <div className="px-2 pb-2 pt-1">
+        <p className="px-2 text-[10px] font-black uppercase tracking-[0.22em] text-neutral-400">
+          {title}
+        </p>
 
-          <div className="mt-2 space-y-1">
-            {operatorMenuItems.map((item) => (
-              <button
-                key={item.href}
-                type="button"
-                onClick={() => handleGo(item.href)}
-                className={getMenuItemClasses(isActivePath(item.href))}
-              >
-                <span className="w-5 text-center">{item.emoji}</span>
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </div>
+        <div className="mt-2 space-y-1">
+          {links.map((item) => (
+            <MenuLink key={item.href} href={item.href} active={isActivePath(item.href)}>
+              {item.label}
+            </MenuLink>
+          ))}
         </div>
+      </div>
+    );
+  }
 
-        <div className="border-t border-gray-100 px-2 pb-2 pt-2">
-          <button
-            type="button"
-            onClick={() => handleGo("/dashboard")}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
-          >
-            <span className="w-5 text-center">🏠</span>
-            <span>Tela principal</span>
-          </button>
+  function renderOperatorOnlyMenu() {
+    return (
+      <div className="px-2 pb-2 pt-1">
+        <p className="px-2 text-[10px] font-black uppercase tracking-[0.22em] text-neutral-400">
+          Operação
+        </p>
+
+        <div className="mt-2 space-y-1">
+          {operatorLinks.map((item) => (
+            <MenuLink key={item.href} href={item.href} active={isActivePath(item.href)}>
+              {item.label}
+            </MenuLink>
+          ))}
         </div>
-      </>
+      </div>
     );
   }
 
   function renderCustomerMenu() {
     return (
       <div className="p-2">
-        <button
-          type="button"
-          onClick={() => handleGo("/dashboard")}
-          className={getMenuItemClasses(activeNav === "dashboard")}
-        >
-          <span className="w-5 text-center">🏠</span>
-          <span>Início</span>
-        </button>
+        <MenuLink href="/dashboard" active={activeNav === "dashboard"}>
+          Início
+        </MenuLink>
 
-        <button
-          type="button"
-          onClick={() => handleGo("/support")}
-          className={getMenuItemClasses(activeNav === "support")}
-        >
-          <span className="w-5 text-center">💬</span>
-          <span>Suporte</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleGo("/wallet")}
-          className={getMenuItemClasses(activeNav === "wallet")}
-        >
-          <span className="w-5 text-center">👛</span>
-          <span>Wallet</span>
-        </button>
-
-        {canAccessAdmin ? (
-          <button
-            type="button"
-            onClick={() => handleGo("/admin/dashboard")}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
-          >
-            <span className="w-5 text-center">🛠️</span>
-            <span>Painel Admin</span>
-          </button>
+        {isAdmin ? (
+          <MenuLink href="/admin/dashboard">Entrar no admin</MenuLink>
         ) : null}
 
-        {canAccessOperator ? (
-          <button
-            type="button"
-            onClick={() => handleGo("/operator/dashboard")}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50"
-          >
-            <span className="w-5 text-center">🎧</span>
-            <span>Painel Operador</span>
-          </button>
+        {isOperator ? (
+          <MenuLink href="/operator/dashboard">Entrar no painel operador</MenuLink>
         ) : null}
+
+        <MenuLink href={createEventPath}>Criar evento</MenuLink>
+
+        <MenuLink href="/orders" active={activeNav === "orders"}>
+          Meus ingressos
+        </MenuLink>
+
+        <MenuLink href="/support" active={activeNav === "support"}>
+          Suporte
+        </MenuLink>
+
+        <MenuLink href="/wallet" active={activeNav === "wallet"}>
+          Wallet
+        </MenuLink>
       </div>
     );
   }
 
+  function renderContextualMenu() {
+    if (isAdminArea && isAdmin) {
+      return renderAdminOnlyMenu();
+    }
+
+    if (isOperatorArea && isOperator) {
+      return renderOperatorOnlyMenu();
+    }
+
+    return renderCustomerMenu();
+  }
+
   return (
-    <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-4">
-        <button
-          type="button"
-          onClick={() => goTo(isAdminArea ? "/admin/dashboard" : "/dashboard")}
-          className="shrink-0 text-3xl font-black tracking-tight text-sky-600"
-        >
-          Sympla
-        </button>
+    <header className="sticky top-0 z-[9999] border-b border-[#ea5f00] bg-[#ff6900] shadow-sm">
+      <div className="mx-auto flex h-[82px] max-w-[1180px] items-center gap-5 px-4">
+        <a href={isAdminArea && isAdmin ? "/admin/dashboard" : "/dashboard"} className="flex shrink-0 items-center">
+          <img
+            src="/astro-ingressos-logo.png"
+            alt="Astro Ingressos"
+            className="h-[56px] w-auto object-contain"
+          />
+        </a>
 
-        {showSearch ? (
-          <div className="hidden flex-1 items-center gap-3 md:flex">
-            <div className="mx-auto flex h-12 w-full max-w-xl items-center rounded-2xl border border-gray-200 bg-white px-4 shadow-sm">
-              <span className="mr-3 text-gray-400">🔎</span>
+        {renderSearch()}
 
-              <input
-                type="text"
-                placeholder={searchPlaceholder}
-                value={localSearch}
-                onChange={(event) => handleSearchChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    handleSearchSubmit();
-                  }
-                }}
-                className="w-full bg-transparent text-sm outline-none placeholder:text-gray-400"
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1" />
-        )}
+        {shouldShowSearch && showLocationButton ? (
+          <a
+            href="/events"
+            className="hidden h-11 shrink-0 items-center rounded-xl bg-[#19002f] px-4 text-sm font-black text-white shadow-sm hover:bg-[#2a0648] lg:flex"
+          >
+            ✦ Qualquer lugar
+          </a>
+        ) : null}
 
-        <nav className="ml-auto hidden items-center gap-5 md:flex">
-          {topItems.map((item) => (
-            <button
-              key={item.href}
-              type="button"
-              onClick={() => goTo(item.href)}
-              className={getTopNavClasses(
-                isAdminArea || isOperatorArea
-                  ? isActivePath(item.href)
-                  : getCustomerActiveState(item.href),
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
+        <nav className="ml-auto hidden items-center gap-8 md:flex">
+          {isCustomerArea
+            ? topLinks.map((item) => (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  className="whitespace-nowrap text-sm font-black text-[#19002f]/85 transition hover:text-[#19002f]"
+                >
+                  {item.label}
+                </a>
+              ))
+            : null}
         </nav>
 
-        <div className="relative">
+        <div className="relative shrink-0">
           <button
             type="button"
-            onClick={() => setMenuOpen((prev) => !prev)}
-            className="flex h-12 items-center gap-3 rounded-full border border-gray-200 bg-white px-3 shadow-sm hover:bg-gray-50"
+            onClick={() => setMenuOpen((value) => !value)}
+            className="flex h-11 items-center gap-2 rounded-full bg-white px-3 text-[#19002f] shadow-sm ring-1 ring-black/10"
+            aria-label="Abrir menu"
           >
-            <span className="text-lg">☰</span>
-
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-sm font-semibold text-gray-700">
-              {getInitial(user)}
+            <span className="text-xl leading-none">☰</span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#19002f] text-sm font-black text-white">
+              {getInitials(currentUser?.name, currentUser?.email)}
             </span>
           </button>
 
           {menuOpen ? (
-            <div className="absolute right-0 mt-3 w-80 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
-              <div className="border-b border-gray-100 px-4 py-4">
+            <div className="absolute right-0 z-[10000] mt-3 w-80 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl">
+              <div className="border-b border-neutral-100 px-4 py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-black text-gray-900">
-                      {user?.name || "Usuário"}
+                    <p className="truncate text-sm font-black text-neutral-950">
+                      {currentUser?.name || "Usuário"}
                     </p>
-
-                    <p className="mt-1 break-all text-xs text-gray-500">
-                      {user?.email || "-"}
+                    <p className="mt-1 break-all text-xs font-semibold text-neutral-500">
+                      {currentUser?.email || "sem e-mail"}
                     </p>
-
-                    {user?.cpf ? (
-                      <p className="mt-1 text-xs text-gray-400">
-                        CPF: {user.cpf}
-                      </p>
-                    ) : null}
+                    <p className="mt-1 text-xs text-neutral-400">
+                      CPF: {currentUser?.cpf || "não informado"}
+                    </p>
                   </div>
 
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
+                  <span className="rounded-full bg-neutral-100 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-neutral-500">
                     {role || "USER"}
                   </span>
                 </div>
               </div>
 
-              {isAdminArea
-                ? renderAdminMenu()
-                : isOperatorArea
-                  ? renderOperatorMenu()
-                  : renderCustomerMenu()}
+              {renderContextualMenu()}
 
-              <div className="border-t border-gray-100 p-2">
+              <div className="border-t border-neutral-100 p-2">
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50"
+                  className="flex w-full items-center rounded-xl px-3 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50"
                 >
-                  <span className="w-5 text-center">🚪</span>
-                  <span>Sair</span>
+                  Sair
                 </button>
               </div>
             </div>
           ) : null}
         </div>
       </div>
-
-      {showSearch ? (
-        <div className="mx-auto px-4 pb-4 md:hidden">
-          <div className="flex h-12 items-center rounded-2xl border border-gray-200 bg-white px-4 shadow-sm">
-            <span className="mr-3 text-gray-400">🔎</span>
-
-            <input
-              type="text"
-              placeholder={searchPlaceholder}
-              value={localSearch}
-              onChange={(event) => handleSearchChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  handleSearchSubmit();
-                }
-              }}
-              className="w-full bg-transparent text-sm outline-none placeholder:text-gray-400"
-            />
-          </div>
-        </div>
-      ) : null}
     </header>
   );
 }
+
+
+

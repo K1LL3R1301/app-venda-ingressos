@@ -687,3 +687,144 @@ model SupportMessage {
   @@index([senderType])
   @@index([createdAt])
 }
+
+model AdminAccessRequest {
+  id       String @id @default(uuid())
+  protocol String @unique
+
+  requesterUserId String
+  requesterRole   String?
+  requesterName   String?
+  requesterEmail  String?
+  requesterCpf    String?
+
+  fullName         String
+  email            String
+  cpfCnpj          String
+  phone            String
+  producerName     String
+  producerDocument String
+  city             String
+  state            String
+  websiteOrSocial  String
+  eventTypes       String
+
+  firstEventDescription String
+  estimatedEventDate    DateTime
+  expectedAudience      String
+  experience            String
+  reason                String
+  extraNotes            String?
+
+  acceptedReviewTerm Boolean @default(false)
+  acceptedTruthTerm  Boolean @default(false)
+
+  status                     String   @default("PENDING_REVIEW")
+  reviewDeadlineBusinessDays Int      @default(15)
+  submittedAt                DateTime @default(now())
+
+  moderatorUserId String?
+  moderatorName   String?
+  moderatorEmail  String?
+  moderatorNote   String?
+  reviewedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([requesterUserId])
+  @@index([requesterEmail])
+  @@index([status])
+  @@index([submittedAt])
+  @@index([reviewedAt])
+}
+
+model PromotionBoostRequest {
+  id       String @id @default(uuid())
+  protocol String @unique
+
+  requesterUserId String
+  requesterRole   String?
+  requesterName   String?
+  requesterEmail  String?
+  requesterCpf    String?
+
+  eventId    String?
+  eventTitle String
+  eventDate  DateTime
+
+  placement            String
+  placementLabel       String
+  placementDescription String?
+  periodDays           Int
+  unitPriceCents       Int
+  cycles               Int
+  totalAmountCents     Int
+
+  startsAt DateTime
+  endsAt   DateTime
+
+  paymentStatus    String  @default("DECLARED_PAID")
+  paymentMethod    String?
+  paymentReference String?
+  paymentProofText String?
+  notes            String?
+
+  status      String   @default("PAID_PENDING_REVIEW")
+  submittedAt DateTime @default(now())
+
+  moderatorUserId String?
+  moderatorName   String?
+  moderatorEmail  String?
+  moderatorNote   String?
+  reviewedAt      DateTime?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([requesterUserId])
+  @@index([requesterEmail])
+  @@index([status])
+  @@index([placement])
+  @@index([startsAt])
+  @@index([endsAt])
+}
+
+
+model AdminSupportTicket {
+  id       String @id @default(uuid())
+  protocol String @unique
+
+  requesterUserId String
+  requesterRole   String?
+  requesterName   String?
+  requesterEmail  String?
+  requesterCpf    String?
+
+  eventId    String?
+  eventTitle String
+
+  subject  String
+  message  String
+  priority String @default("NORMAL")
+  category String @default("EVENT_SUPPORT")
+  status   String @default("OPEN")
+
+  replyText      String?
+  repliedAt      DateTime?
+  moderatorUserId String?
+  moderatorName   String?
+  moderatorEmail  String?
+
+  submittedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([requesterUserId])
+  @@index([requesterEmail])
+  @@index([eventId])
+  @@index([status])
+}
+

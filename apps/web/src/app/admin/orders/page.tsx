@@ -1,9 +1,7 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-
-type OrderStatus = "ALL" | "PAID" | "PENDING" | "CANCELED" | "EXPIRED" | "REFUNDED" | string;
 
 type OrderItem = {
   id: string;
@@ -35,7 +33,6 @@ type OrderItem = {
       status?: string | null;
       accessKind?: string | null;
       accessLabel?: string | null;
-      accessMetadata?: unknown;
     }>;
   }>;
   payments?: Array<{
@@ -48,6 +45,10 @@ type OrderItem = {
 };
 
 type StatusFilter = "ALL" | "PAID" | "PENDING" | "CANCELED" | "REFUNDED";
+type PeriodFilter = "ALL" | "TODAY" | "7D" | "30D";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
 
 function toNumber(value?: string | number | null) {
   if (typeof value === "number") return value;
@@ -91,8 +92,12 @@ function normalize(value?: string | number | null) {
     .trim();
 }
 
+function normalizeStatus(status?: string | null) {
+  return String(status || "").toUpperCase();
+}
+
 function getStatusLabel(status?: string | null) {
-  const normalized = String(status || "").toUpperCase();
+  const normalized = normalizeStatus(status);
 
   const labels: Record<string, string> = {
     PAID: "Pago",
@@ -109,20 +114,13 @@ function getStatusLabel(status?: string | null) {
 }
 
 function getStatusClasses(status?: string | null) {
-  const normalized = String(status || "").toUpperCase();
+  const normalized = normalizeStatus(status);
 
-  if (normalized === "PAID") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-
-  if (normalized === "PENDING") {
-    return "border-amber-200 bg-amber-50 text-amber-700";
-  }
-
+  if (normalized === "PAID") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (normalized === "PENDING") return "border-amber-200 bg-amber-50 text-amber-700";
   if (["CANCELED", "CANCELLED", "EXPIRED", "FAILED"].includes(normalized)) {
     return "border-rose-200 bg-rose-50 text-rose-700";
   }
-
   if (["REFUNDED", "PARTIALLY_REFUNDED"].includes(normalized)) {
     return "border-sky-200 bg-sky-50 text-sky-700";
   }
@@ -143,9 +141,24 @@ function getPaymentLabel(method?: string | null) {
     MANUAL: "Manual",
     WALLET: "Wallet",
     COURTESY: "Cortesia",
+    TRANSFER: "Transferência",
   };
 
   return labels[normalized] || method || "-";
+}
+
+function getPaymentSummary(order: OrderItem) {
+  if (!order.payments?.length) return "-";
+
+  return Array.from(new Set(order.payments.map((payment) => getPaymentLabel(payment.method)))).join(", ");
+}
+
+function getEventName(order: OrderItem) {
+  return order.event?.name || order.eventId || "Evento não informado";
+}
+
+function getCustomerName(order: OrderItem) {
+  return order.customerName || "Cliente não informado";
 }
 
 function getOrderLimitQuantity(order: OrderItem) {
@@ -156,9 +169,7 @@ function getOrderLimitQuantity(order: OrderItem) {
 }
 
 function getOrderQrQuantity(order: OrderItem) {
-  return (order.items || []).reduce((total, item) => {
-    return total + (item.tickets?.length || 0);
-  }, 0);
+  return (order.items || []).reduce((total, item) => total + (item.tickets?.length || 0), 0);
 }
 
 function getTicketTypeNames(order: OrderItem) {
@@ -172,39 +183,18 @@ function getTicketTypeNames(order: OrderItem) {
   if (!names.size) return "-";
 
   const list = Array.from(names);
-  if (list.length <= 2) return list.join(", ");
-
-  return `${list.slice(0, 2).join(", ")} +${list.length - 2}`;
+  return list.length <= 2 ? list.join(", ") : `${list.slice(0, 2).join(", ")} +${list.length - 2}`;
 }
 
-function getPaymentSummary(order: OrderItem) {
-  if (!order.payments?.length) return "-";
-
-  const methods = Array.from(
-    new Set(order.payments.map((payment) => getPaymentLabel(payment.method))),
-  );
-
-  return methods.join(", ");
-}
-
-function getLastPaymentStatus(order: OrderItem) {
-  const payment = order.payments?.[0];
-  return payment?.status || "-";
-}
-
-function getEventName(order: OrderItem) {
-  return order.event?.name || order.eventId || "Evento não informado";
-}
-
-function getCustomerName(order: OrderItem) {
-  return order.customerName || "Cliente não informado";
+function isCanceledLike(order: OrderItem) {
+  return ["CANCELED", "CANCELLED", "EXPIRED", "FAILED"].includes(normalizeStatus(order.status));
 }
 
 function isRefundLike(order: OrderItem) {
-  const status = String(order.status || "").toUpperCase();
+  const status = normalizeStatus(order.status);
   const ticketStatuses = (order.items || [])
     .flatMap((item) => item.tickets || [])
-    .map((ticket) => String(ticket.status || "").toUpperCase());
+    .map((ticket) => normalizeStatus(ticket.status));
 
   return (
     status.includes("REFUND") ||
@@ -214,13 +204,35 @@ function isRefundLike(order: OrderItem) {
   );
 }
 
+function isInPeriod(order: OrderItem, period: PeriodFilter) {
+  if (period === "ALL") return true;
+
+  const created = new Date(order.createdAt || "");
+  if (Number.isNaN(created.getTime())) return false;
+
+  const now = new Date();
+
+  if (period === "TODAY") {
+    return (
+      created.getDate() === now.getDate() &&
+      created.getMonth() === now.getMonth() &&
+      created.getFullYear() === now.getFullYear()
+    );
+  }
+
+  if (period === "7D") return created.getTime() >= now.getTime() - 7 * 24 * 60 * 60 * 1000;
+  if (period === "30D") return created.getTime() >= now.getTime() - 30 * 24 * 60 * 60 * 1000;
+
+  return true;
+}
+
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [eventFilter, setEventFilter] = useState("ALL");
-  const [periodFilter, setPeriodFilter] = useState<"ALL" | "TODAY" | "7D" | "30D">("ALL");
+  const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("ALL");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -233,7 +245,7 @@ export default function AdminOrdersPage() {
       }
 
       try {
-        const res = await fetch("http://localhost:3001/v1/orders", {
+        const response = await fetch(`${API_BASE_URL}/orders`, {
           method: "GET",
           headers: {
             "Content-Type": "application/json",
@@ -241,14 +253,10 @@ export default function AdminOrdersPage() {
           },
         });
 
-        const result = await res.json();
+        const result = await response.json().catch(() => null);
 
-        if (!res.ok) {
-          alert(
-            typeof result?.message === "string"
-              ? result.message
-              : "Erro ao carregar pedidos",
-          );
+        if (!response.ok) {
+          alert(typeof result?.message === "string" ? result.message : "Erro ao carregar pedidos");
           return;
         }
 
@@ -289,18 +297,15 @@ export default function AdminOrdersPage() {
 
   const filteredOrders = useMemo(() => {
     const term = normalize(search);
-    const now = new Date();
 
     return sortedOrders.filter((order) => {
-      const status = String(order.status || "").toUpperCase();
+      const status = normalizeStatus(order.status);
 
       if (statusFilter !== "ALL") {
         if (statusFilter === "CANCELED") {
-          if (!["CANCELED", "CANCELLED", "EXPIRED", "FAILED"].includes(status)) {
-            return false;
-          }
+          if (!isCanceledLike(order)) return false;
         } else if (statusFilter === "REFUNDED") {
-          if (!status.includes("REFUND") && !isRefundLike(order)) return false;
+          if (!isRefundLike(order)) return false;
         } else if (status !== statusFilter) {
           return false;
         }
@@ -311,29 +316,7 @@ export default function AdminOrdersPage() {
         if (orderEventId !== eventFilter) return false;
       }
 
-      if (periodFilter !== "ALL") {
-        const created = new Date(order.createdAt || "");
-        if (Number.isNaN(created.getTime())) return false;
-
-        if (periodFilter === "TODAY") {
-          const sameDay =
-            created.getDate() === now.getDate() &&
-            created.getMonth() === now.getMonth() &&
-            created.getFullYear() === now.getFullYear();
-
-          if (!sameDay) return false;
-        }
-
-        if (periodFilter === "7D") {
-          const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000;
-          if (created.getTime() < sevenDaysAgo) return false;
-        }
-
-        if (periodFilter === "30D") {
-          const thirtyDaysAgo = now.getTime() - 30 * 24 * 60 * 60 * 1000;
-          if (created.getTime() < thirtyDaysAgo) return false;
-        }
-      }
+      if (!isInPeriod(order, periodFilter)) return false;
 
       if (!term) return true;
 
@@ -347,7 +330,6 @@ export default function AdminOrdersPage() {
         order.event?.name,
         order.eventId,
         getPaymentSummary(order),
-        getLastPaymentStatus(order),
         ...(order.items?.flatMap((item) => [
           item.ticketType?.name,
           item.quantity,
@@ -367,25 +349,14 @@ export default function AdminOrdersPage() {
   }, [sortedOrders, search, statusFilter, eventFilter, periodFilter]);
 
   const selectedOrder = useMemo(() => {
-    return (
-      filteredOrders.find((order) => order.id === selectedOrderId) ||
-      filteredOrders[0] ||
-      null
-    );
+    return filteredOrders.find((order) => order.id === selectedOrderId) || filteredOrders[0] || null;
   }, [filteredOrders, selectedOrderId]);
 
   const stats = useMemo(() => {
-    const paid = orders.filter((order) => String(order.status || "").toUpperCase() === "PAID");
-    const pending = orders.filter(
-      (order) => String(order.status || "").toUpperCase() === "PENDING",
-    );
-    const canceled = orders.filter((order) =>
-      ["CANCELED", "CANCELLED", "EXPIRED", "FAILED"].includes(
-        String(order.status || "").toUpperCase(),
-      ),
-    );
+    const paid = orders.filter((order) => normalizeStatus(order.status) === "PAID");
+    const pending = orders.filter((order) => normalizeStatus(order.status) === "PENDING");
+    const canceled = orders.filter(isCanceledLike);
     const refundLike = orders.filter(isRefundLike);
-
     const revenue = paid.reduce((total, order) => total + toNumber(order.totalAmount), 0);
     const accessCount = orders.reduce((total, order) => total + getOrderQrQuantity(order), 0);
 
@@ -402,7 +373,7 @@ export default function AdminOrdersPage() {
 
   const visibleRevenue = useMemo(() => {
     return filteredOrders
-      .filter((order) => String(order.status || "").toUpperCase() === "PAID")
+      .filter((order) => normalizeStatus(order.status) === "PAID")
       .reduce((total, order) => total + toNumber(order.totalAmount), 0);
   }, [filteredOrders]);
 
@@ -423,8 +394,7 @@ export default function AdminOrdersPage() {
               Pedidos, pagamentos e ingressos no mesmo radar.
             </h1>
             <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-300">
-              Acompanhe compras, status de pagamento, QR Codes, estornos e ações
-              de suporte sem precisar abrir cada evento.
+              Esta é a tela de pedidos. Para gráficos e relatório contábil, use a tela Financeiro.
             </p>
           </div>
 
@@ -446,10 +416,10 @@ export default function AdminOrdersPage() {
             </div>
 
             <Link
-              href="/admin/events"
+              href="/admin/finance"
               className="rounded-2xl border border-white/15 bg-white px-5 py-4 text-center text-sm font-black text-slate-950 transition hover:bg-slate-100"
             >
-              Ver eventos
+              Ver financeiro
             </Link>
 
             <Link
@@ -563,7 +533,7 @@ export default function AdminOrdersPage() {
           <select
             value={periodFilter}
             onChange={(event) => {
-              setPeriodFilter(event.target.value as typeof periodFilter);
+              setPeriodFilter(event.target.value as PeriodFilter);
               setSelectedOrderId(null);
             }}
             className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-sky-400"
@@ -651,6 +621,9 @@ export default function AdminOrdersPage() {
                             <p className="font-bold text-slate-950">{getCustomerName(order)}</p>
                             <p className="mt-1 max-w-[180px] truncate text-xs text-slate-500">
                               {order.customerEmail || "-"}
+                            </p>
+                            <p className="mt-1 max-w-[180px] truncate text-xs text-slate-400">
+                              {order.customerDocument || "sem documento"}
                             </p>
                           </td>
 
@@ -772,9 +745,7 @@ export default function AdminOrdersPage() {
           {!selectedOrder ? (
             <div className="rounded-3xl bg-slate-50 p-6 text-center">
               <p className="font-black text-slate-950">Selecione um pedido</p>
-              <p className="mt-2 text-sm text-slate-500">
-                O resumo operacional aparece aqui.
-              </p>
+              <p className="mt-2 text-sm text-slate-500">O resumo operacional aparece aqui.</p>
             </div>
           ) : (
             <div>
@@ -805,15 +776,13 @@ export default function AdminOrdersPage() {
                   <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
                     Cliente
                   </p>
-                  <p className="mt-2 font-black text-slate-950">
-                    {getCustomerName(selectedOrder)}
-                  </p>
+                  <p className="mt-2 font-black text-slate-950">{getCustomerName(selectedOrder)}</p>
                   <p className="mt-1 break-all text-sm text-slate-500">
                     {selectedOrder.customerEmail || "-"}
                   </p>
                   {selectedOrder.customerDocument ? (
                     <p className="mt-1 text-sm text-slate-500">
-                      CPF: {selectedOrder.customerDocument}
+                      Documento: {selectedOrder.customerDocument}
                     </p>
                   ) : null}
                 </div>
@@ -822,20 +791,18 @@ export default function AdminOrdersPage() {
                   <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
                     Evento
                   </p>
-                  <p className="mt-2 font-black text-slate-950">
-                    {getEventName(selectedOrder)}
-                  </p>
+                  <p className="mt-2 font-black text-slate-950">{getEventName(selectedOrder)}</p>
                   <p className="mt-1 text-sm text-slate-500">
                     {formatDate(selectedOrder.event?.eventDate)}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-3xl bg-slate-50 p-4">
-                    <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
-                      Total
+                  <div className="rounded-3xl bg-emerald-50 p-4">
+                    <p className="text-xs font-black uppercase tracking-[0.22em] text-emerald-700">
+                      Valor
                     </p>
-                    <p className="mt-2 font-black text-slate-950">
+                    <p className="mt-2 text-xl font-black text-emerald-950">
                       {formatMoney(selectedOrder.totalAmount)}
                     </p>
                   </div>
@@ -844,29 +811,8 @@ export default function AdminOrdersPage() {
                     <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
                       Pagamento
                     </p>
-                    <p className="mt-2 font-black text-slate-950">
+                    <p className="mt-2 text-xl font-black text-slate-950">
                       {getPaymentSummary(selectedOrder)}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {getLastPaymentStatus(selectedOrder)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-slate-50 p-4">
-                    <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
-                      Limite
-                    </p>
-                    <p className="mt-2 font-black text-slate-950">
-                      {getOrderLimitQuantity(selectedOrder)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-3xl bg-slate-50 p-4">
-                    <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
-                      QR Codes
-                    </p>
-                    <p className="mt-2 font-black text-slate-950">
-                      {getOrderQrQuantity(selectedOrder)}
                     </p>
                   </div>
                 </div>
@@ -876,62 +822,22 @@ export default function AdminOrdersPage() {
                     Ingressos
                   </p>
                   <p className="mt-2 text-sm font-bold text-slate-950">
+                    {getOrderLimitQuantity(selectedOrder)} ingresso(s) no pedido
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {getOrderQrQuantity(selectedOrder)} QR code(s) vinculado(s)
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
                     {getTicketTypeNames(selectedOrder)}
                   </p>
-
-                  <div className="mt-3 space-y-2">
-                    {(selectedOrder.items || []).slice(0, 4).map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 text-xs"
-                      >
-                        <span className="truncate font-semibold text-slate-700">
-                          {item.ticketType?.name || "Ingresso"}
-                        </span>
-                        <span className="font-black text-slate-950">
-                          {item.quantity || 0} / {item.tickets?.length || 0} QR
-                        </span>
-                      </div>
-                    ))}
-                  </div>
                 </div>
-              </div>
 
-              <div className="mt-5 grid gap-3">
                 <Link
                   href={`/orders/${selectedOrder.id}`}
-                  className="rounded-2xl bg-slate-950 px-4 py-3 text-center text-sm font-black text-white transition hover:bg-slate-800"
+                  className="rounded-2xl bg-slate-950 px-5 py-4 text-center text-sm font-black text-white transition hover:bg-slate-800"
                 >
                   Abrir pedido completo
                 </Link>
-
-                {selectedOrder.event?.id || selectedOrder.eventId ? (
-                  <Link
-                    href={`/admin/events/${selectedOrder.event?.id || selectedOrder.eventId}`}
-                    className="rounded-2xl border border-slate-200 px-4 py-3 text-center text-sm font-black text-slate-700 transition hover:bg-slate-50"
-                  >
-                    Abrir evento
-                  </Link>
-                ) : null}
-
-                <Link
-                  href={`/admin/support?search=${encodeURIComponent(selectedOrder.id)}`}
-                  className="rounded-2xl border border-slate-200 px-4 py-3 text-center text-sm font-black text-slate-700 transition hover:bg-slate-50"
-                >
-                  Ver suporte vinculado
-                </Link>
-
-                {String(selectedOrder.status || "").toUpperCase() !== "PAID" &&
-                !["CANCELED", "CANCELLED", "EXPIRED"].includes(
-                  String(selectedOrder.status || "").toUpperCase(),
-                ) ? (
-                  <Link
-                    href={`/orders/${selectedOrder.id}/payment`}
-                    className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-black text-amber-700 transition hover:bg-amber-100"
-                  >
-                    Ver pagamento pendente
-                  </Link>
-                ) : null}
               </div>
             </div>
           )}
@@ -940,3 +846,4 @@ export default function AdminOrdersPage() {
     </main>
   );
 }
+

@@ -48,7 +48,6 @@ type EventItem = {
   };
   media?: EventMedia | null;
   content?: EventContent | null;
-  location?: EventLocation | null;
   ticketTypes?: Array<{
     id: string;
     name?: string;
@@ -56,6 +55,7 @@ type EventItem = {
     quantity?: number;
     status?: string;
   }>;
+  location?: EventLocation | null;
 };
 
 type CategoryItem = {
@@ -63,8 +63,6 @@ type CategoryItem = {
   label: string;
   title: string;
   shortLabel: string;
-  icon: string;
-  image: string;
   keywords: string[];
 };
 
@@ -72,169 +70,94 @@ type DateFilter = "all" | "today" | "week" | "weekend" | "soon";
 type PriceFilter = "all" | "free" | "paid";
 type SortFilter = "relevance" | "date" | "price";
 
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
 const categories: CategoryItem[] = [
   {
     id: "shows",
     label: "Festas e Shows",
-    title: "Festas e Shows em Qualquer lugar",
+    title: "Festas e Shows",
     shortLabel: "Shows",
-    icon: "🎤",
-    image:
-      "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=900&q=80",
-    keywords: ["show", "shows", "festa", "festas", "festival", "balada", "dj", "música", "musica"],
+    keywords: ["show", "shows", "festa", "festas", "festival", "balada", "dj", "musica", "música", "FESTAS_SHOWS"],
   },
   {
     id: "theater",
-    label: "Teatro",
-    title: "Peças de teatro em Qualquer lugar",
+    label: "Teatros e Espetáculos",
+    title: "Teatros e Espetáculos",
     shortLabel: "Teatro",
-    icon: "🎭",
-    image:
-      "https://images.unsplash.com/photo-1503095396549-807759245b35?auto=format&fit=crop&w=900&q=80",
-    keywords: ["teatro", "espetáculo", "espetaculo", "palco", "musical"],
+    keywords: ["teatro", "teatros", "espetaculo", "espetáculo", "palco", "musical", "TEATROS_ESPETACULOS"],
+  },
+  {
+    id: "party",
+    label: "Festas Juninas",
+    title: "Festas Juninas",
+    shortLabel: "Festas",
+    keywords: ["junina", "arraia", "arraiá", "quadrilha", "sao joao", "são joão"],
   },
   {
     id: "comedy",
-    label: "Comedy",
-    title: "Eventos de comedy em Qualquer lugar",
+    label: "Stand Up Comedy",
+    title: "Stand Up Comedy",
     shortLabel: "Comedy",
-    icon: "😂",
-    image:
-      "https://images.unsplash.com/photo-1527224857830-43a7acc85260?auto=format&fit=crop&w=900&q=80",
-    keywords: ["stand", "comedy", "humor", "comédia", "comedia", "risada", "risadas"],
+    keywords: ["stand", "stand-up", "comedy", "humor", "comedia", "comédia", "STAND_UP_COMEDY"],
   },
   {
     id: "sports",
     label: "Esportes",
-    title: "Eventos esportivos em Qualquer lugar",
+    title: "Esportes",
     shortLabel: "Esportes",
-    icon: "⚽",
-    image:
-      "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?auto=format&fit=crop&w=900&q=80",
-    keywords: ["esporte", "esportes", "futebol", "corrida", "luta", "arena", "campeonato", "fight"],
+    keywords: ["esporte", "esportes", "futebol", "corrida", "luta", "arena", "campeonato", "ESPORTES"],
+  },
+  {
+    id: "tours",
+    label: "Passeios e Tours",
+    title: "Passeios e Tours",
+    shortLabel: "Passeios",
+    keywords: ["tour", "passeio", "passeios", "excursao", "excursão", "visita", "PASSEIOS_TOURS"],
+  },
+  {
+    id: "discounts",
+    label: "Descontos exclusivos",
+    title: "Descontos exclusivos",
+    shortLabel: "Descontos",
+    keywords: ["desconto", "promo", "promocao", "promoção", "social", "meia"],
   },
   {
     id: "business",
-    label: "Congressos",
-    title: "Congressos e eventos profissionais em Qualquer lugar",
+    label: "Congressos e Palestras",
+    title: "Congressos e Palestras",
     shortLabel: "Congressos",
-    icon: "🏛️",
-    image:
-      "https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=900&q=80",
-    keywords: [
-      "congresso",
-      "congressos",
-      "feira",
-      "summit",
-      "palestra",
-      "corporativo",
-      "networking",
-      "negócios",
-      "negocios",
-      "tech",
-    ],
-  },
-  {
-    id: "food",
-    label: "Gastronomia",
-    title: "Eventos gastronômicos em Qualquer lugar",
-    shortLabel: "Gastronomia",
-    icon: "🍔",
-    image:
-      "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=900&q=80",
-    keywords: [
-      "gastronomia",
-      "gastronômico",
-      "gastronomico",
-      "food",
-      "vinho",
-      "cerveja",
-      "hambúrguer",
-      "hamburguer",
-      "gourmet",
-      "degustação",
-      "degustacao",
-    ],
+    keywords: ["congresso", "congressos", "feira", "summit", "palestra", "corporativo", "CONGRESSOS"],
   },
   {
     id: "kids",
     label: "Infantil",
-    title: "Eventos para crianças em Qualquer lugar",
+    title: "Infantil",
     shortLabel: "Infantil",
-    icon: "🎈",
-    image:
-      "https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&w=900&q=80",
-    keywords: ["infantil", "família", "familia", "criança", "crianca", "kids", "crianças", "criancas"],
-  },
-  {
-    id: "tours",
-    label: "Passeios",
-    title: "Passeios e experiências em Qualquer lugar",
-    shortLabel: "Passeios",
-    icon: "🌎",
-    image:
-      "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80",
-    keywords: [
-      "passeio",
-      "passeios",
-      "tour",
-      "excursão",
-      "excursao",
-      "visita",
-      "rota",
-      "histórico",
-      "historico",
-      "natureza",
-      "cultural",
-      "fotográfica",
-      "fotografica",
-    ],
-  },
-  {
-    id: "online",
-    label: "Online",
-    title: "Eventos online",
-    shortLabel: "Online",
-    icon: "💻",
-    image:
-      "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=80",
-    keywords: ["online", "digital", "remoto", "streaming", "workshop", "mentoria"],
+    keywords: ["infantil", "familia", "família", "crianca", "criança", "kids", "INFANTIL"],
   },
 ];
 
-const cityCards = [
-  {
-    city: "São Paulo",
-    state: "SP",
-    image:
-      "https://images.unsplash.com/photo-1543059080-f9b1272213d5?auto=format&fit=crop&w=900&q=80",
-  },
-  {
-    city: "Rio de Janeiro",
-    state: "RJ",
-    image:
-      "https://images.unsplash.com/photo-1483729558449-99ef09a8c325?auto=format&fit=crop&w=900&q=80",
-  },
-  {
-    city: "Belo Horizonte",
-    state: "MG",
-    image:
-      "https://images.unsplash.com/photo-1604449345680-88025e44ac85?auto=format&fit=crop&w=900&q=80",
-  },
-  {
-    city: "Salvador",
-    state: "BA",
-    image:
-      "https://images.unsplash.com/photo-1589820296156-2454bb8a6ad1?auto=format&fit=crop&w=900&q=80",
-  },
-];
+const viewTitles: Record<string, string> = {
+  recent: "Vistos recentemente",
+  "most-bought": "Eventos mais comprados nas últimas 24h",
+  today: "O que fazer hoje",
+  "last-call": "Última chamada",
+  shows: "Festas, shows e festivais",
+  business: "Eventos corporativos",
+  culture: "Passeios e eventos culturais",
+  comedy: "Peças de teatro e stand-up comedy",
+  sports: "Eventos esportivos",
+  kids: "Eventos e atividades para crianças",
+  gastronomy: "Eventos gastronômicos",
+  courses: "Cursos e workshops",
+};
 
 function toNumber(value?: string | number) {
   if (value === undefined || value === null) return 0;
 
-  const numeric =
-    typeof value === "number" ? value : Number(String(value).replace(",", "."));
-
+  const numeric = typeof value === "number" ? value : Number(String(value).replace(",", "."));
   return Number.isNaN(numeric) ? 0 : numeric;
 }
 
@@ -273,7 +196,7 @@ function getEventDate(event?: EventItem | null) {
   return event?.startDate || event?.eventDate;
 }
 
-function getFutureTimestamp(value?: string | null) {
+function getTimestamp(value?: string | null) {
   if (!value) return Number.MAX_SAFE_INTEGER;
 
   const date = new Date(value);
@@ -284,44 +207,34 @@ function getFutureTimestamp(value?: string | null) {
 }
 
 function getEventImage(event?: EventItem | null) {
-  if (!event) return "";
-
   return (
-    event.media?.coverImageUrl ||
-    event.media?.bannerImageUrl ||
-    event.media?.mobileBannerUrl ||
-    event.media?.thumbnailUrl ||
-    event.media?.gallery?.[0] ||
+    event?.media?.coverImageUrl ||
+    event?.media?.bannerImageUrl ||
+    event?.media?.mobileBannerUrl ||
+    event?.media?.thumbnailUrl ||
+    event?.media?.gallery?.[0] ||
     ""
   );
 }
 
 function getLocationLabel(event?: EventItem | null) {
   const venue = event?.location?.venueName;
-  const cityState = [event?.location?.city, event?.location?.state]
-    .filter(Boolean)
-    .join(" - ");
+  const cityState = [event?.location?.city, event?.location?.state].filter(Boolean).join(" - ");
 
   return [venue, cityState].filter(Boolean).join(", ") || "Local a confirmar";
 }
 
-function getOrganizerName(event?: EventItem | null) {
-  return (
-    event?.organizer?.tradeName ||
-    event?.organizer?.legalName ||
-    "Organizador parceiro"
-  );
-}
-
 function getMinimumPrice(event?: EventItem | null) {
   const prices =
-    event?.ticketTypes
-      ?.map((ticketType) => toNumber(ticketType.price))
-      .filter((price) => price > 0) || [];
+    event?.ticketTypes?.map((ticketType) => toNumber(ticketType.price)).filter((price) => price > 0) || [];
 
   if (prices.length === 0) return null;
 
   return Math.min(...prices);
+}
+
+function getTotalTicketQuantity(event?: EventItem | null) {
+  return event?.ticketTypes?.reduce((sum, ticketType) => sum + Number(ticketType.quantity || 0), 0) || 0;
 }
 
 function eventMatchesSearch(event: EventItem, search: string) {
@@ -352,20 +265,6 @@ function eventMatchesSearch(event: EventItem, search: string) {
 }
 
 function eventMatchesCategory(event: EventItem, category: CategoryItem) {
-  const directCategoryText = normalizeText(
-    [event.category, event.highlightTag].join(" "),
-  );
-
-  const categoryLabel = normalizeText(category.label);
-  const categoryShortLabel = normalizeText(category.shortLabel);
-
-  if (
-    directCategoryText.includes(categoryLabel) ||
-    directCategoryText.includes(categoryShortLabel)
-  ) {
-    return true;
-  }
-
   const haystack = normalizeText(
     [
       event.name,
@@ -373,6 +272,8 @@ function eventMatchesCategory(event: EventItem, category: CategoryItem) {
       event.shortDescription,
       event.category,
       event.highlightTag,
+      event.content?.headline,
+      event.content?.summary,
       event.organizer?.tradeName,
       event.organizer?.legalName,
       event.location?.venueName,
@@ -381,8 +282,12 @@ function eventMatchesCategory(event: EventItem, category: CategoryItem) {
     ].join(" "),
   );
 
-  return category.keywords.some((keyword) =>
-    haystack.includes(normalizeText(keyword)),
+  const directCategory = normalizeText([event.category, event.highlightTag].join(" "));
+
+  return (
+    directCategory.includes(normalizeText(category.label)) ||
+    directCategory.includes(normalizeText(category.shortLabel)) ||
+    category.keywords.some((keyword) => haystack.includes(normalizeText(keyword)))
   );
 }
 
@@ -390,24 +295,17 @@ function getCategoryById(id: string) {
   return categories.find((category) => category.id === id) || null;
 }
 
-function getCategoryForEvent(event: EventItem, index = 0) {
-  return (
-    categories.find((category) => eventMatchesCategory(event, category)) ||
-    categories[index % categories.length]
-  );
+function getCategoryForEvent(event: EventItem, fallbackIndex = 0) {
+  return categories.find((category) => eventMatchesCategory(event, category)) || categories[fallbackIndex % categories.length];
 }
 
 function getEventGradient(index: number) {
   const gradients = [
-    "from-sky-600 via-blue-600 to-indigo-700",
-    "from-fuchsia-600 via-purple-600 to-indigo-700",
-    "from-emerald-500 via-teal-500 to-cyan-700",
-    "from-orange-500 via-amber-500 to-yellow-500",
-    "from-rose-500 via-pink-500 to-fuchsia-700",
-    "from-slate-800 via-slate-900 to-slate-950",
-    "from-cyan-500 via-sky-600 to-blue-800",
-    "from-lime-500 via-emerald-600 to-teal-800",
-    "from-violet-500 via-indigo-600 to-slate-950",
+    "from-orange-500 via-orange-600 to-[#19002f]",
+    "from-[#19002f] via-zinc-900 to-orange-600",
+    "from-neutral-950 via-neutral-800 to-orange-600",
+    "from-orange-400 via-orange-700 to-neutral-950",
+    "from-[#19002f] via-orange-700 to-orange-500",
   ];
 
   return gradients[index % gradients.length];
@@ -435,8 +333,7 @@ function isThisWeek(value?: string | null) {
 
   if (Number.isNaN(date.getTime())) return false;
 
-  const diffMs = date.getTime() - Date.now();
-  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  const diffDays = (date.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
 
   return diffDays >= 0 && diffDays <= 7;
 }
@@ -461,39 +358,9 @@ function isSoon(value?: string | null) {
 
   if (Number.isNaN(date.getTime())) return false;
 
-  const diffMs = date.getTime() - Date.now();
-  const diffHours = diffMs / (1000 * 60 * 60);
+  const diffHours = (date.getTime() - Date.now()) / (1000 * 60 * 60);
 
   return diffHours >= 0 && diffHours <= 72;
-}
-
-function buildSection(events: EventItem[], start: number, count = 4) {
-  if (events.length === 0) return [];
-
-  const result: EventItem[] = [];
-
-  for (let index = 0; index < Math.min(count, events.length); index += 1) {
-    result.push(events[(start + index) % events.length]);
-  }
-
-  return result;
-}
-
-function getPageTitle(activeCategory: string, queryTitle: string, city: string) {
-  if (queryTitle) return queryTitle;
-
-  if (activeCategory !== "all") {
-    const category = getCategoryById(activeCategory);
-
-    if (category?.title) {
-      if (city) return category.title.replace("Qualquer lugar", city);
-      return category.title;
-    }
-  }
-
-  if (city) return `Eventos em ${city}`;
-
-  return "Eventos em Qualquer lugar";
 }
 
 function getDateFilterLabel(filter: DateFilter) {
@@ -519,6 +386,38 @@ function getSortFilterLabel(filter: SortFilter) {
   return "Relevância";
 }
 
+function inferViewCollection(view: string) {
+  if (view === "shows") return "shows";
+  if (view === "business") return "business";
+  if (view === "comedy") return "comedy";
+  if (view === "sports") return "sports";
+  if (view === "kids") return "kids";
+  if (view === "culture") return "tours";
+
+  return "";
+}
+
+function inferDateFromView(view: string): DateFilter {
+  if (view === "today") return "today";
+  if (view === "last-call") return "soon";
+
+  return "all";
+}
+
+function getPageTitle(collection: string, view: string, title: string, city: string) {
+  if (title) return title;
+
+  const category = getCategoryById(collection);
+
+  if (category) return city ? `${category.title} em ${city}` : `${category.title} em Qualquer lugar`;
+
+  if (view && viewTitles[view]) return city ? `${viewTitles[view]} em ${city}` : viewTitles[view];
+
+  if (city) return `Eventos em ${city}`;
+
+  return "Eventos em Qualquer lugar";
+}
+
 async function safeJson<T>(response: Response): Promise<T | null> {
   try {
     return (await response.json()) as T;
@@ -527,29 +426,99 @@ async function safeJson<T>(response: Response): Promise<T | null> {
   }
 }
 
-function SectionTitle({
-  title,
-  actionLabel = "Ver tudo",
-  onAction,
+function getRecentIds() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const parsed = JSON.parse(localStorage.getItem("astro_recent_events") || "[]");
+
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberRecentEvent(id: string) {
+  try {
+    const previous = getRecentIds();
+    const next = [id, ...previous.filter((item) => item !== id)].slice(0, 24);
+
+    localStorage.setItem("astro_recent_events", JSON.stringify(next));
+  } catch {
+    // localStorage can fail in private mode. Navigation should still work.
+  }
+}
+
+function buildRealViewBase(events: EventItem[], view: string) {
+  const byDate = [...events].sort((first, second) => getTimestamp(getEventDate(first)) - getTimestamp(getEventDate(second)));
+
+  if (view === "recent") {
+    const recentIds = getRecentIds();
+
+    if (recentIds.length > 0) {
+      const byId = new Map(events.map((event) => [event.id, event]));
+      return recentIds.map((id) => byId.get(id)).filter(Boolean) as EventItem[];
+    }
+
+    return byDate.slice(0, 24);
+  }
+
+  if (view === "most-bought") {
+    return [...events]
+      .sort((first, second) => getTotalTicketQuantity(second) - getTotalTicketQuantity(first))
+      .slice(0, 48);
+  }
+
+  if (view === "today") {
+    return events.filter((event) => isToday(getEventDate(event)));
+  }
+
+  if (view === "last-call") {
+    return events.filter((event) => isSoon(getEventDate(event)));
+  }
+
+  if (view === "gastronomy") {
+    return events.filter((event) => {
+      const haystack = normalizeText([event.name, event.description, event.category, event.highlightTag].join(" "));
+      return ["gastronomia", "gastronomico", "gastronômico", "food", "vinho", "cerveja"].some((keyword) =>
+        haystack.includes(normalizeText(keyword)),
+      );
+    });
+  }
+
+  if (view === "courses") {
+    return events.filter((event) => {
+      const haystack = normalizeText([event.name, event.description, event.category, event.highlightTag].join(" "));
+      return ["curso", "workshop", "aula", "treinamento", "mentoria"].some((keyword) =>
+        haystack.includes(normalizeText(keyword)),
+      );
+    });
+  }
+
+  return events;
+}
+
+function FilterButton({
+  active,
+  children,
+  onClick,
 }: {
-  title: string;
-  actionLabel?: string;
-  onAction?: () => void;
+  active: boolean;
+  children: React.ReactNode;
+  onClick: () => void;
 }) {
   return (
-    <div className="mb-4 flex items-center justify-between gap-4">
-      <h2 className="text-[20px] font-black text-slate-950">{title}</h2>
-
-      {onAction && actionLabel ? (
-        <button
-          type="button"
-          onClick={onAction}
-          className="text-sm font-bold text-sky-600 hover:text-sky-700"
-        >
-          {actionLabel}
-        </button>
-      ) : null}
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-2 text-xs font-black transition ${
+        active
+          ? "bg-[#19002f] text-white shadow-sm"
+          : "bg-white text-neutral-600 ring-1 ring-neutral-200 hover:bg-orange-50 hover:text-[#19002f]"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -570,13 +539,9 @@ function EventCard({
     <button
       type="button"
       onClick={onOpen}
-      className="group min-w-0 overflow-hidden bg-transparent text-left transition"
+      className="group min-w-0 overflow-hidden rounded-[12px] bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
-      <div
-        className={`relative h-[150px] overflow-hidden rounded-[8px] bg-gradient-to-r ${getEventGradient(
-          index,
-        )}`}
-      >
+      <div className={`relative h-[164px] overflow-hidden bg-gradient-to-r ${getEventGradient(index)}`}>
         {image ? (
           <img
             src={image}
@@ -587,74 +552,26 @@ function EventCard({
 
         <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-black/5 to-transparent" />
 
-        <span className="absolute left-2 top-2 rounded-full bg-white/95 px-2 py-1 text-[10px] font-bold text-slate-700 shadow-sm">
+        <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2 py-1 text-[10px] font-black text-[#19002f] shadow-sm">
           {category.shortLabel}
         </span>
       </div>
 
-      <div className="pt-2">
-        <h3 className="line-clamp-2 text-[14px] font-black leading-5 text-slate-950">
+      <div className="p-3">
+        <h3 className="line-clamp-2 min-h-[40px] text-[15px] font-black leading-5 text-neutral-950">
           {event.name || "Evento sem nome"}
         </h3>
 
-        <p className="mt-1 line-clamp-1 text-[12px] text-slate-500">
+        <p className="mt-2 line-clamp-1 text-[12px] font-semibold text-neutral-500">
           {formatDate(getEventDate(event))}
         </p>
 
-        <p className="mt-1 line-clamp-1 text-[12px] text-slate-500">
+        <p className="mt-1 line-clamp-1 text-[12px] text-neutral-500">
           {getLocationLabel(event)}
         </p>
 
-        <p className="mt-2 text-[12px] font-black text-slate-950">
-          {minimumPrice === null
-            ? "Consultar valores"
-            : `A partir de ${formatMoney(minimumPrice)}`}
-        </p>
-      </div>
-    </button>
-  );
-}
-
-function WideEventCard({
-  event,
-  index,
-  onOpen,
-}: {
-  event: EventItem;
-  index: number;
-  onOpen: () => void;
-}) {
-  const image = getEventImage(event);
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="grid grid-cols-[128px_1fr] gap-3 rounded-[8px] bg-white p-2 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-    >
-      <div
-        className={`h-[76px] overflow-hidden rounded-[7px] bg-gradient-to-r ${getEventGradient(
-          index,
-        )}`}
-      >
-        {image ? (
-          <img
-            src={image}
-            alt={event.name || "Evento"}
-            className="h-full w-full object-cover"
-          />
-        ) : null}
-      </div>
-
-      <div className="min-w-0 self-center">
-        <h3 className="line-clamp-1 text-[14px] font-black text-slate-950">
-          {event.name || "Evento sem nome"}
-        </h3>
-        <p className="mt-1 line-clamp-1 text-[12px] text-slate-500">
-          {formatDate(getEventDate(event))}
-        </p>
-        <p className="mt-1 line-clamp-1 text-[12px] text-slate-500">
-          {getOrganizerName(event)}
+        <p className="mt-3 text-[12px] font-black text-neutral-950">
+          {minimumPrice === null ? "Consultar valores" : `A partir de ${formatMoney(minimumPrice)}`}
         </p>
       </div>
     </button>
@@ -666,15 +583,31 @@ function CustomerEventsPageContent() {
 
   const queryTitle = searchParams.get("title") || "";
   const queryCollection = searchParams.get("collection") || "";
+  const queryView = searchParams.get("view") || "";
   const queryCity = searchParams.get("city") || "";
+  const queryDate = searchParams.get("date") || "";
+  const queryPrice = searchParams.get("price") || "";
+  const querySort = searchParams.get("sort") || "";
+  const querySearch = searchParams.get("q") || "";
+
+  const inferredCollection = queryCollection || inferViewCollection(queryView);
+  const inferredDate = (queryDate || inferDateFromView(queryView)) as DateFilter;
 
   const [events, setEvents] = useState<EventItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [activeCategory, setActiveCategory] = useState("all");
-  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
-  const [priceFilter, setPriceFilter] = useState<PriceFilter>("all");
-  const [sortFilter, setSortFilter] = useState<SortFilter>("relevance");
+  const [search, setSearch] = useState(querySearch);
+  const [activeCategory, setActiveCategory] = useState(inferredCollection || "all");
+  const [dateFilter, setDateFilter] = useState<DateFilter>(
+    ["all", "today", "week", "weekend", "soon"].includes(inferredDate) ? inferredDate : "all",
+  );
+  const [priceFilter, setPriceFilter] = useState<PriceFilter>(
+    ["all", "free", "paid"].includes(queryPrice) ? (queryPrice as PriceFilter) : "all",
+  );
+  const [sortFilter, setSortFilter] = useState<SortFilter>(
+    ["relevance", "date", "price"].includes(querySort) ? (querySort as SortFilter) : "relevance",
+  );
+  const [city, setCity] = useState(queryCity);
+  const [lockedView, setLockedView] = useState(queryView);
 
   useEffect(() => {
     function handleHeaderSearch(event: Event) {
@@ -682,29 +615,22 @@ function CustomerEventsPageContent() {
       setSearch(customEvent.detail || "");
     }
 
-    window.addEventListener(
-      "customer-header-search",
-      handleHeaderSearch as EventListener,
-    );
+    window.addEventListener("customer-header-search", handleHeaderSearch as EventListener);
 
     return () => {
-      window.removeEventListener(
-        "customer-header-search",
-        handleHeaderSearch as EventListener,
-      );
+      window.removeEventListener("customer-header-search", handleHeaderSearch as EventListener);
     };
   }, []);
 
   useEffect(() => {
-    const categoryFromUrl = getCategoryById(queryCollection);
-
-    if (categoryFromUrl) {
-      setActiveCategory(categoryFromUrl.id);
-      return;
-    }
-
-    setActiveCategory("all");
-  }, [queryCollection]);
+    setSearch(querySearch);
+    setActiveCategory(inferredCollection || "all");
+    setDateFilter(["all", "today", "week", "weekend", "soon"].includes(inferredDate) ? inferredDate : "all");
+    setPriceFilter(["all", "free", "paid"].includes(queryPrice) ? (queryPrice as PriceFilter) : "all");
+    setSortFilter(["relevance", "date", "price"].includes(querySort) ? (querySort as SortFilter) : "relevance");
+    setCity(queryCity);
+    setLockedView(queryView);
+  }, [querySearch, inferredCollection, inferredDate, queryPrice, querySort, queryCity, queryView]);
 
   useEffect(() => {
     async function loadEvents() {
@@ -716,7 +642,7 @@ function CustomerEventsPageContent() {
       }
 
       try {
-        const response = await fetch("http://localhost:3001/v1/events", {
+        const response = await fetch(`${API_BASE_URL}/events`, {
           method: "GET",
           headers: {
             "Content-Type": "application/json",
@@ -733,47 +659,11 @@ function CustomerEventsPageContent() {
         }
 
         if (!response.ok) {
-          alert(
-            typeof data?.message === "string"
-              ? data.message
-              : "Erro ao carregar eventos",
-          );
+          alert(typeof data?.message === "string" ? data.message : "Erro ao carregar eventos");
           return;
         }
 
-        const eventList = Array.isArray(data) ? data : [];
-
-        const detailedEvents = await Promise.all(
-          eventList.map(async (event: EventItem) => {
-            try {
-              const detailResponse = await fetch(
-                `http://localhost:3001/v1/events/${event.id}`,
-                {
-                  method: "GET",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                  },
-                },
-              );
-
-              const detailData = await safeJson<EventItem>(detailResponse);
-
-              if (detailResponse.ok && detailData) {
-                return {
-                  ...event,
-                  ...detailData,
-                };
-              }
-
-              return event;
-            } catch {
-              return event;
-            }
-          }),
-        );
-
-        setEvents(detailedEvents);
+        setEvents(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error("CUSTOMER EVENTS ERROR:", error);
         alert("Erro ao conectar com a API");
@@ -789,8 +679,55 @@ function CustomerEventsPageContent() {
     window.location.href = path;
   }
 
+  function setUrl(next: {
+    category?: string;
+    date?: DateFilter;
+    price?: PriceFilter;
+    sort?: SortFilter;
+    city?: string;
+    q?: string;
+    view?: string;
+    title?: string;
+  }) {
+    const params = new URLSearchParams();
+
+    const nextView = next.view ?? lockedView;
+    const nextCategory = next.category ?? activeCategory;
+    const nextDate = next.date ?? dateFilter;
+    const nextPrice = next.price ?? priceFilter;
+    const nextSort = next.sort ?? sortFilter;
+    const nextCity = next.city ?? city;
+    const nextSearch = next.q ?? search;
+    const nextTitle = next.title;
+
+    if (nextView) {
+      params.set("view", nextView);
+      params.set("title", nextTitle || viewTitles[nextView] || queryTitle || "Eventos");
+    }
+
+    if (nextCategory && nextCategory !== "all") {
+      params.set("collection", nextCategory);
+
+      if (!nextView) {
+        const category = getCategoryById(nextCategory);
+        if (category) params.set("title", category.title);
+      }
+    }
+
+    if (nextDate && nextDate !== "all") params.set("date", nextDate);
+    if (nextPrice && nextPrice !== "all") params.set("price", nextPrice);
+    if (nextSort && nextSort !== "relevance") params.set("sort", nextSort);
+    if (nextCity) params.set("city", nextCity);
+    if (nextSearch) params.set("q", nextSearch);
+
+    const query = params.toString();
+
+    window.history.pushState(null, "", query ? `/events?${query}` : "/events");
+  }
+
   function updateSearch(value: string) {
     setSearch(value);
+    setUrl({ q: value });
 
     window.dispatchEvent(
       new CustomEvent("customer-header-search-sync", {
@@ -799,33 +736,83 @@ function CustomerEventsPageContent() {
     );
   }
 
+  function updateCategory(value: string) {
+    setActiveCategory(value);
+    setLockedView("");
+    setUrl({ category: value, view: "" });
+  }
+
+  function updateView(value: string) {
+    const category = inferViewCollection(value);
+
+    setLockedView(value);
+    setActiveCategory(category || "all");
+    setDateFilter(inferDateFromView(value));
+    setUrl({
+      view: value,
+      category: category || "all",
+      date: inferDateFromView(value),
+      title: viewTitles[value] || "Eventos",
+    });
+  }
+
+  function updateDate(value: DateFilter) {
+    setDateFilter(value);
+    setLockedView("");
+    setUrl({ date: value, view: "" });
+  }
+
+  function updatePrice(value: PriceFilter) {
+    setPriceFilter(value);
+    setUrl({ price: value });
+  }
+
+  function updateSort(value: SortFilter) {
+    setSortFilter(value);
+    setUrl({ sort: value });
+  }
+
+  function updateCity(value: string) {
+    setCity(value);
+    setUrl({ city: value });
+  }
+
   function clearFilters() {
-    updateSearch("");
+    setSearch("");
+    setActiveCategory("all");
     setDateFilter("all");
     setPriceFilter("all");
     setSortFilter("relevance");
+    setCity("");
+    setLockedView("");
+
+    window.history.pushState(null, "", "/events");
+
+    window.dispatchEvent(
+      new CustomEvent("customer-header-search-sync", {
+        detail: "",
+      }),
+    );
+  }
+
+  function openEvent(event: EventItem) {
+    rememberRecentEvent(event.id);
+    goTo(`/events/${event.id}`);
   }
 
   const sortedEvents = useMemo(() => {
     return [...events].sort(
-      (first, second) =>
-        getFutureTimestamp(getEventDate(first)) -
-        getFutureTimestamp(getEventDate(second)),
+      (first, second) => getTimestamp(getEventDate(first)) - getTimestamp(getEventDate(second)),
     );
   }, [events]);
 
-  const collectionEvents = useMemo(() => {
-    if (activeCategory === "all") return sortedEvents;
-
-    const category = getCategoryById(activeCategory);
-
-    if (!category) return sortedEvents;
-
-    return sortedEvents.filter((event) => eventMatchesCategory(event, category));
-  }, [sortedEvents, activeCategory]);
-
   const filteredEvents = useMemo(() => {
-    const base = collectionEvents.filter((event) => {
+    const baseByView = buildRealViewBase(sortedEvents, lockedView);
+
+    const base = baseByView.filter((event) => {
+      const category = getCategoryById(activeCategory);
+      const matchesCategory = activeCategory === "all" || !category ? true : eventMatchesCategory(event, category);
+
       const matchesSearch = eventMatchesSearch(event, search);
 
       const matchesDate =
@@ -850,20 +837,18 @@ function CustomerEventsPageContent() {
             ? minimumPrice === null || minimumPrice === 0
             : minimumPrice !== null && minimumPrice > 0;
 
-      const matchesCity = queryCity
-        ? normalizeText(event.location?.city).includes(normalizeText(queryCity)) ||
-          normalizeText(event.location?.state).includes(normalizeText(queryCity))
+      const matchesCity = city
+        ? normalizeText(event.location?.city).includes(normalizeText(city)) ||
+          normalizeText(event.location?.state).includes(normalizeText(city)) ||
+          normalizeText(event.location?.venueName).includes(normalizeText(city))
         : true;
 
-      return matchesSearch && matchesDate && matchesPrice && matchesCity;
+      return matchesCategory && matchesSearch && matchesDate && matchesPrice && matchesCity;
     });
 
     return [...base].sort((first, second) => {
       if (sortFilter === "date") {
-        return (
-          getFutureTimestamp(getEventDate(first)) -
-          getFutureTimestamp(getEventDate(second))
-        );
+        return getTimestamp(getEventDate(first)) - getTimestamp(getEventDate(second));
       }
 
       if (sortFilter === "price") {
@@ -879,96 +864,127 @@ function CustomerEventsPageContent() {
       if (firstStatus === "PUBLISHED" && secondStatus !== "PUBLISHED") return -1;
       if (firstStatus !== "PUBLISHED" && secondStatus === "PUBLISHED") return 1;
 
-      return (
-        getFutureTimestamp(getEventDate(first)) -
-        getFutureTimestamp(getEventDate(second))
-      );
-    });
-  }, [
-    collectionEvents,
-    search,
-    dateFilter,
-    priceFilter,
-    sortFilter,
-    queryCity,
-  ]);
+      if (lockedView === "most-bought") {
+        return getTotalTicketQuantity(second) - getTotalTicketQuantity(first);
+      }
 
-  const pageTitle = getPageTitle(activeCategory, queryTitle, queryCity);
+      return getTimestamp(getEventDate(first)) - getTimestamp(getEventDate(second));
+    });
+  }, [sortedEvents, lockedView, activeCategory, search, dateFilter, priceFilter, city, sortFilter]);
+
+  const pageTitle = getPageTitle(activeCategory, lockedView, queryTitle, city);
   const activeCategoryData = getCategoryById(activeCategory);
 
-  const hotEvents = buildSection(filteredEvents, 0, 4);
-  const showEvents = buildSection(filteredEvents, 1, 4);
-  const partyEvents = buildSection(filteredEvents, 2, 4);
-  const nearEvents = buildSection(filteredEvents, 3, 4);
-  const lastCall = buildSection(
-    filteredEvents.filter((event) => isSoon(getEventDate(event))).length > 0
-      ? filteredEvents.filter((event) => isSoon(getEventDate(event)))
-      : filteredEvents,
-    0,
-    6,
-  );
+  const activeBadges = [
+    lockedView ? viewTitles[lockedView] || lockedView : null,
+    activeCategoryData?.label || "Todos os eventos",
+    getDateFilterLabel(dateFilter),
+    getPriceFilterLabel(priceFilter),
+    getSortFilterLabel(sortFilter),
+    city || "Qualquer lugar",
+  ].filter(Boolean);
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-[980px] px-4 py-10">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-sm font-semibold text-slate-700">
-            Carregando eventos...
-          </p>
+      <main className="mx-auto max-w-[1180px] px-4 py-10">
+        <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-semibold text-neutral-700">Carregando eventos...</p>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f7f7] text-slate-950">
-      <div className="mx-auto max-w-[980px] px-4 pb-14 pt-7">
-        <section className="mb-8">
-          <div className="mb-4 flex flex-wrap items-center gap-2 text-[13px] text-slate-500">
+    <main className="min-h-screen bg-[#f4f4f4] text-neutral-950">
+      <div className="mx-auto max-w-[1180px] px-4 pb-14 pt-7">
+        <section className="mb-6 rounded-[24px] bg-white p-6 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-[13px] text-neutral-500">
             <button
               type="button"
               onClick={() => goTo("/dashboard")}
-              className="font-semibold text-sky-600 hover:text-sky-700"
+              className="font-black text-[#19002f] hover:text-orange-700"
             >
               Página inicial
             </button>
             <span>&gt;</span>
-            <span>Coleções</span>
-            <span>&gt;</span>
-            <span className="font-semibold text-slate-700">
-              {activeCategoryData?.label || "Eventos"}
-            </span>
+            <span>Eventos</span>
+            {activeCategoryData ? (
+              <>
+                <span>&gt;</span>
+                <span className="font-black text-neutral-700">{activeCategoryData.label}</span>
+              </>
+            ) : null}
           </div>
 
-          <h1 className="text-[34px] font-black leading-tight text-slate-950 md:text-[44px]">
-            {pageTitle}
-          </h1>
+          <div className="grid gap-6 lg:grid-cols-[1fr_270px] lg:items-end">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-600">
+                Filtros funcionais
+              </p>
 
-          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-500">
-            Encontre eventos, compare opções, filtre por data ou preço e abra o
-            evento para continuar sua compra.
-          </p>
+              <h1 className="mt-2 max-w-4xl text-[34px] font-black leading-tight text-neutral-950 md:text-[46px]">
+                {pageTitle}
+              </h1>
+
+              <p className="mt-3 max-w-2xl text-sm leading-7 text-neutral-500">
+                Os filtros abaixo mudam a lista de verdade e também atualizam a URL da tela.
+              </p>
+            </div>
+
+            <div className="rounded-[18px] bg-gradient-to-r from-orange-500 to-[#19002f] p-5 text-white">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white/70">
+                Resultado
+              </p>
+              <p className="mt-2 text-[34px] font-black leading-none">{filteredEvents.length}</p>
+              <p className="mt-1 text-sm font-semibold text-white/75">evento(s) encontrados</p>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            {activeBadges.map((badge) => (
+              <span
+                key={String(badge)}
+                className="rounded-full bg-orange-50 px-3 py-1.5 text-[11px] font-black text-[#19002f] ring-1 ring-orange-100"
+              >
+                {badge}
+              </span>
+            ))}
+          </div>
         </section>
 
-        <section className="mb-8 rounded-[14px] bg-white p-4 shadow-sm">
-          <div className="grid gap-3 md:grid-cols-[1fr_180px_180px_210px]">
-            <div className="flex h-12 items-center rounded-xl border border-slate-200 bg-white px-4">
-              <span className="mr-3 text-slate-400">🔎</span>
+        <section className="mb-6 rounded-[20px] bg-white p-4 shadow-sm">
+          <div className="grid gap-3 lg:grid-cols-[1fr_180px_160px_180px_auto]">
+            <div className="flex h-12 items-center rounded-xl border border-neutral-200 bg-white px-4">
+              <span className="mr-3 text-neutral-400">⌕</span>
               <input
                 type="text"
                 placeholder="Buscar por nome, cidade, local ou produtor"
                 value={search}
                 onChange={(event) => updateSearch(event.target.value)}
-                className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                className="w-full bg-transparent text-sm font-semibold text-neutral-700 outline-none placeholder:text-neutral-400"
               />
             </div>
 
             <select
-              value={dateFilter}
-              onChange={(event) => setDateFilter(event.target.value as DateFilter)}
-              className="h-12 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none"
+              value={city}
+              onChange={(event) => updateCity(event.target.value)}
+              className="h-12 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-bold text-neutral-700 outline-none focus:border-[#19002f]"
             >
-              <option value="all">Data</option>
+              <option value="">Qualquer lugar</option>
+              <option value="São Paulo">São Paulo</option>
+              <option value="Rio de Janeiro">Rio de Janeiro</option>
+              <option value="Belo Horizonte">Belo Horizonte</option>
+              <option value="Curitiba">Curitiba</option>
+              <option value="Ribeirão Preto">Ribeirão Preto</option>
+              <option value="Campinas">Campinas</option>
+            </select>
+
+            <select
+              value={dateFilter}
+              onChange={(event) => updateDate(event.target.value as DateFilter)}
+              className="h-12 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-bold text-neutral-700 outline-none focus:border-[#19002f]"
+            >
+              <option value="all">Qualquer data</option>
               <option value="today">Hoje</option>
               <option value="week">Esta semana</option>
               <option value="weekend">Fim de semana</option>
@@ -977,235 +993,100 @@ function CustomerEventsPageContent() {
 
             <select
               value={priceFilter}
-              onChange={(event) => setPriceFilter(event.target.value as PriceFilter)}
-              className="h-12 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none"
+              onChange={(event) => updatePrice(event.target.value as PriceFilter)}
+              className="h-12 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-bold text-neutral-700 outline-none focus:border-[#19002f]"
             >
-              <option value="all">Preço</option>
+              <option value="all">Todos os preços</option>
               <option value="free">Grátis</option>
               <option value="paid">Pago</option>
             </select>
 
-            <select
-              value={sortFilter}
-              onChange={(event) => setSortFilter(event.target.value as SortFilter)}
-              className="h-12 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none"
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="h-12 rounded-xl bg-[#19002f] px-5 text-sm font-black text-white hover:bg-[#2a0648]"
             >
-              <option value="relevance">Ordenar por Relevância</option>
-              <option value="date">Data mais próxima</option>
-              <option value="price">Menor preço</option>
-            </select>
+              Limpar
+            </button>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700">
-              {filteredEvents.length} resultado(s)
-            </span>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <FilterButton active={!lockedView && activeCategory === "all"} onClick={() => updateCategory("all")}>
+              Todos
+            </FilterButton>
 
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700">
-              {getDateFilterLabel(dateFilter)}
-            </span>
+            <FilterButton active={lockedView === "recent"} onClick={() => updateView("recent")}>
+              Vistos recentemente
+            </FilterButton>
 
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700">
-              {getPriceFilterLabel(priceFilter)}
-            </span>
+            <FilterButton active={lockedView === "most-bought"} onClick={() => updateView("most-bought")}>
+              Mais comprados
+            </FilterButton>
 
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700">
-              {getSortFilterLabel(sortFilter)}
-            </span>
+            <FilterButton active={lockedView === "today"} onClick={() => updateView("today")}>
+              Hoje
+            </FilterButton>
 
-            {search ||
-            dateFilter !== "all" ||
-            priceFilter !== "all" ||
-            sortFilter !== "relevance" ? (
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 hover:bg-sky-100"
+            <FilterButton active={lockedView === "last-call"} onClick={() => updateView("last-call")}>
+              Última chamada
+            </FilterButton>
+
+            {categories.map((category) => (
+              <FilterButton
+                key={category.id}
+                active={!lockedView && activeCategory === category.id}
+                onClick={() => updateCategory(category.id)}
               >
-                Limpar filtros
-              </button>
-            ) : null}
-          </div>
-        </section>
-
-        {filteredEvents.length === 0 ? (
-          <section className="rounded-[18px] border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
-            <p className="text-lg font-black text-slate-950">
-              Nenhum evento encontrado
-            </p>
-            <p className="mt-2 text-sm text-slate-500">
-              Tente mudar os filtros ou criar eventos dessa coleção no seed.
-            </p>
-          </section>
-        ) : (
-          <>
-            <section className="mb-10">
-              <SectionTitle
-                title={
-                  activeCategory === "shows"
-                    ? "Festas e shows que estão em alta"
-                    : "Eventos que estão em alta"
-                }
-                actionLabel="Ver tudo"
-                onAction={() => clearFilters()}
-              />
-
-              <div className="grid gap-5 md:grid-cols-4">
-                {hotEvents.map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section className="mb-10">
-              <SectionTitle
-                title={
-                  activeCategory === "shows"
-                    ? "Shows para curtir muito"
-                    : "Eventos para curtir muito"
-                }
-                actionLabel="Ver tudo"
-                onAction={() => setDateFilter("week")}
-              />
-
-              <div className="grid gap-5 md:grid-cols-4">
-                {showEvents.map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 4}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section className="mb-10">
-              <SectionTitle
-                title={
-                  activeCategory === "shows"
-                    ? "Festas e baladas"
-                    : "Experiências selecionadas"
-                }
-                actionLabel="Ver tudo"
-                onAction={() => setSortFilter("date")}
-              />
-
-              <div className="grid gap-5 md:grid-cols-4">
-                {partyEvents.map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 8}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section className="mb-10">
-              <SectionTitle
-                title="Última chamada"
-                actionLabel="Ver tudo"
-                onAction={() => setDateFilter("soon")}
-              />
-
-              <div className="grid gap-3 md:grid-cols-2">
-                {lastCall.map((event, index) => (
-                  <WideEventCard
-                    key={event.id}
-                    event={event}
-                    index={index}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section className="mb-10">
-              <SectionTitle
-                title="Eventos próximos"
-                actionLabel="Ver tudo"
-                onAction={() => setSortFilter("date")}
-              />
-
-              <div className="grid gap-5 md:grid-cols-4">
-                {nearEvents.map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 12}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section className="mb-10">
-              <SectionTitle title="Todos os resultados" actionLabel="" />
-
-              <div className="grid gap-5 md:grid-cols-4">
-                {filteredEvents.map((event, index) => (
-                  <EventCard
-                    key={event.id}
-                    event={event}
-                    index={index + 16}
-                    onOpen={() => goTo(`/events/${event.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-          </>
-        )}
-        
-
-        <section className="mb-8">
-          <SectionTitle title="Descubra o que fazer na sua cidade" actionLabel="" />
-
-          <div className="grid gap-4 md:grid-cols-4">
-            {cityCards.map((city) => (
-              <button
-                key={`${city.city}-${city.state}`}
-                type="button"
-                onClick={() => updateSearch(city.city)}
-                className="group relative h-[150px] overflow-hidden rounded-[14px] bg-slate-900 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
-              >
-                <img
-                  src={city.image}
-                  alt={city.city}
-                  className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105"
-                />
-
-                <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
-
-                <div className="absolute bottom-4 left-4 right-4 text-white">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/70">
-                    Cidade
-                  </p>
-                  <p className="mt-1 text-xl font-black">{city.city}</p>
-                  <p className="text-sm text-white/75">{city.state}</p>
-                </div>
-              </button>
+                {category.shortLabel}
+              </FilterButton>
             ))}
           </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs font-semibold text-neutral-500">
+              Mostrando {filteredEvents.length} de {events.length} evento(s) carregados.
+            </div>
+
+            <select
+              value={sortFilter}
+              onChange={(event) => updateSort(event.target.value as SortFilter)}
+              className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-black text-neutral-700 outline-none focus:border-[#19002f]"
+            >
+              <option value="relevance">Ordenar por Relevância</option>
+              <option value="date">Ordenar por Data</option>
+              <option value="price">Ordenar por Preço</option>
+            </select>
+          </div>
         </section>
-      </div>
-    </main>
-    
-  );
-}
-function EventsPageLoading() {
-  return (
-    <main className="mx-auto max-w-[980px] px-4 py-10">
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-sm font-semibold text-slate-700">
-          Carregando eventos...
-        </p>
+
+        {filteredEvents.length > 0 ? (
+          <section className="grid grid-cols-2 gap-5 lg:grid-cols-3 xl:grid-cols-4">
+            {filteredEvents.map((event, index) => (
+              <EventCard
+                key={event.id}
+                event={event}
+                index={index}
+                onOpen={() => openEvent(event)}
+              />
+            ))}
+          </section>
+        ) : (
+          <section className="rounded-[22px] border border-neutral-200 bg-white p-10 text-center shadow-sm">
+            <h2 className="text-[24px] font-black text-neutral-950">Nenhum evento encontrado</h2>
+
+            <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-neutral-500">
+              Este filtro está vazio. Tente outra categoria, outra data, outra cidade ou limpe os filtros.
+            </p>
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="mt-5 rounded-xl bg-[#19002f] px-5 py-3 text-sm font-black text-white hover:bg-[#2a0648]"
+            >
+              Ver todos os eventos
+            </button>
+          </section>
+        )}
       </div>
     </main>
   );
@@ -1213,7 +1094,7 @@ function EventsPageLoading() {
 
 export default function CustomerEventsPage() {
   return (
-    <Suspense fallback={<EventsPageLoading />}>
+    <Suspense fallback={<main className="p-8">Carregando...</main>}>
       <CustomerEventsPageContent />
     </Suspense>
   );

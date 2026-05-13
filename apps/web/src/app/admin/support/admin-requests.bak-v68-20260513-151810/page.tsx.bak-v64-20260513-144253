@@ -1,0 +1,295 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type StoredUser = {
+  id?: string;
+  name?: string;
+  email?: string;
+  role?: string;
+};
+
+type AdminAccessRequest = {
+  id: string;
+  protocol: string;
+  status: "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+  requesterUserId: string;
+  requesterRole?: string;
+  requesterName?: string;
+  requesterEmail?: string;
+  requesterCpf?: string;
+  fullName?: string;
+  email?: string;
+  cpfCnpj?: string;
+  phone?: string;
+  producerName?: string;
+  producerDocument?: string;
+  city?: string;
+  state?: string;
+  websiteOrSocial?: string;
+  eventTypes?: string;
+  firstEventDescription?: string;
+  estimatedEventDate?: string;
+  expectedAudience?: string;
+  experience?: string;
+  reason?: string;
+  extraNotes?: string;
+  reviewDeadlineBusinessDays?: number;
+  submittedAt?: string;
+  reviewedAt?: string;
+  moderatorName?: string;
+  moderatorEmail?: string;
+  moderatorNote?: string;
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+function formatDate(value?: string) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("pt-BR");
+}
+
+function getStatusLabel(status: AdminAccessRequest["status"]) {
+  if (status === "APPROVED") return "Aprovada";
+  if (status === "REJECTED") return "Reprovada";
+  return "Pendente de análise";
+}
+
+function getStatusClass(status: AdminAccessRequest["status"]) {
+  if (status === "APPROVED") return "bg-emerald-50 text-emerald-700 ring-emerald-100";
+  if (status === "REJECTED") return "bg-red-50 text-red-700 ring-red-100";
+  return "bg-orange-50 text-[#19002f] ring-orange-100";
+}
+
+function InfoBox({ label, value }: { label: string; value?: string | number | null }) {
+  return (
+    <div className="rounded-2xl bg-neutral-50 p-4">
+      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-neutral-400">
+        {label}
+      </p>
+      <p className="mt-2 break-words text-sm font-bold text-neutral-800">
+        {value || "-"}
+      </p>
+    </div>
+  );
+}
+
+export default function AdminSupportAdminRequestsPage() {
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [requests, setRequests] = useState<AdminAccessRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [moderatorNote, setModeratorNote] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+
+  const isAdmin = useMemo(() => String(user?.role || "").toUpperCase() === "SUPER_ADMIN", [user]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const rawUser = localStorage.getItem("user");
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    try {
+      setUser(rawUser ? (JSON.parse(rawUser) as StoredUser) : null);
+    } catch {
+      setUser(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+
+    async function loadRequests() {
+      const token = localStorage.getItem("token");
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/admin-access-requests`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        const data = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          throw new Error(data?.message || "Não foi possível carregar as solicitações.");
+        }
+
+        setRequests(Array.isArray(data) ? data : []);
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : "Não foi possível carregar as solicitações.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadRequests();
+  }, [user]);
+
+  async function reviewRequest(id: string, status: "APPROVED" | "REJECTED") {
+    const token = localStorage.getItem("token");
+
+    const response = await fetch(`${API_BASE_URL}/admin-access-requests/${id}/review`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        status,
+        moderatorNote: moderatorNote[id] || "",
+      }),
+    });
+
+    const updated = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      alert(updated?.message || "Não foi possível atualizar a solicitação.");
+      return;
+    }
+
+    setRequests((current) => current.map((item) => (item.id === id ? updated : item)));
+  }
+
+  if (!isAdmin) {
+    return (
+      <main className="min-h-screen bg-[#f4f4f4] px-4 py-10">
+        <section className="mx-auto max-w-[780px] rounded-3xl bg-white p-8 shadow-sm">
+          <h1 className="text-[34px] font-black">Acesso restrito</h1>
+          <p className="mt-3 text-sm text-neutral-500">
+            Apenas super administradores podem acessar o suporte do moderador.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f4f4f4] px-4 py-10 text-neutral-950">
+      <section className="mx-auto max-w-[1180px]">
+        <div className="mb-6 rounded-[28px] bg-gradient-to-r from-orange-500 to-[#19002f] p-8 text-white">
+          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/70">
+            Suporte do moderador
+          </p>
+          <h1 className="mt-3 text-[44px] font-black leading-tight">
+            Solicitações para criar eventos
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-7 text-white/80">
+            Aqui aparecem todos os chamados de customer/operator pedindo liberação para virar administrador. O moderador pode aprovar ou reprovar.
+          </p>
+        </div>
+
+        {error ? (
+          <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        {loading ? (
+          <div className="rounded-2xl bg-white p-6 shadow-sm">Carregando solicitações...</div>
+        ) : requests.length === 0 ? (
+          <div className="rounded-2xl bg-white p-8 text-center shadow-sm">
+            <h2 className="text-[24px] font-black">Nenhuma solicitação encontrada</h2>
+          </div>
+        ) : (
+          <div className="grid gap-5">
+            {requests.map((request) => (
+              <article key={request.id} className="rounded-[24px] bg-white p-6 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.16em] text-orange-600">
+                      {request.protocol}
+                    </p>
+                    <h2 className="mt-2 text-[26px] font-black">
+                      {request.producerName || request.fullName}
+                    </h2>
+                    <p className="mt-1 text-sm text-neutral-500">
+                      Solicitante: {request.fullName} • {request.email} • perfil atual {request.requesterRole || "-"}
+                    </p>
+                  </div>
+
+                  <span className={`rounded-full px-3 py-2 text-xs font-black ring-1 ${getStatusClass(request.status)}`}>
+                    {getStatusLabel(request.status)}
+                  </span>
+                </div>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                  <InfoBox label="Telefone / WhatsApp" value={request.phone} />
+                  <InfoBox label="Cidade / estado" value={`${request.city || "-"} - ${request.state || "-"}`} />
+                  <InfoBox label="Enviado em" value={formatDate(request.submittedAt)} />
+                  <InfoBox label="CPF/CNPJ da conta" value={request.cpfCnpj} />
+                  <InfoBox label="Documento da produtora" value={request.producerDocument} />
+                  <InfoBox label="Site ou rede social" value={request.websiteOrSocial} />
+                  <InfoBox label="Tipos de evento" value={request.eventTypes} />
+                  <InfoBox label="Primeira data estimada" value={formatDate(request.estimatedEventDate)} />
+                  <InfoBox label="Público esperado" value={request.expectedAudience} />
+                </div>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  <InfoBox label="Descrição do primeiro evento" value={request.firstEventDescription} />
+                  <InfoBox label="Experiência com eventos" value={request.experience} />
+                  <InfoBox label="Motivo da solicitação" value={request.reason} />
+                  <InfoBox label="Observações extras" value={request.extraNotes} />
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4 text-sm font-bold leading-6 text-[#19002f]">
+                  Prazo informado ao solicitante: até {request.reviewDeadlineBusinessDays || 15} dias úteis para aprovação ou reprovação por um moderador.
+                </div>
+
+                {request.status === "PENDING_REVIEW" ? (
+                  <div className="mt-5 border-t border-neutral-100 pt-5">
+                    <textarea
+                      value={moderatorNote[request.id] || ""}
+                      onChange={(event) =>
+                        setModeratorNote((current) => ({
+                          ...current,
+                          [request.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Observação do moderador. Ex: aprovado após validação do documento e rede social."
+                      rows={3}
+                      className="w-full resize-none rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-[#19002f]"
+                    />
+
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => reviewRequest(request.id, "APPROVED")}
+                        className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+                      >
+                        Aprovar e virar ADMIN
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reviewRequest(request.id, "REJECTED")}
+                        className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-700"
+                      >
+                        Reprovar solicitação
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-2xl bg-neutral-50 p-4 text-sm text-neutral-600">
+                    Decisão registrada em {formatDate(request.reviewedAt)} por {request.moderatorName || request.moderatorEmail || "moderador"}.
+                    {request.moderatorNote ? <p className="mt-2 font-semibold">{request.moderatorNote}</p> : null}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+

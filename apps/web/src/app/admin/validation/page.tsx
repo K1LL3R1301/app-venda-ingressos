@@ -190,7 +190,7 @@ export default function AdminValidationPage() {
 
       setUser(parsedUser);
 
-      if (role !== "ADMIN" && role !== "OPERATOR") {
+      if (role !== "ADMIN" && role !== "SUPER_ADMIN" && role !== "OPERATOR") {
         setForbidden(true);
       }
     } catch (err) {

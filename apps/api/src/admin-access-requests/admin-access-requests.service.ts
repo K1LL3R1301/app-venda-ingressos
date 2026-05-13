@@ -1,0 +1,230 @@
+﻿import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateAdminAccessRequestDto } from './dto/create-admin-access-request.dto';
+import { ReviewAdminAccessRequestDto } from './dto/review-admin-access-request.dto';
+
+type AuthenticatedUser = {
+  sub: string;
+  email: string;
+  role: string;
+  name?: string;
+  cpf?: string;
+};
+
+function clean(value: unknown) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'boolean') return value ? 'true' : '';
+  return String(value).trim();
+}
+
+function makeProtocol() {
+  const now = new Date();
+  const datePart = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('');
+
+  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
+
+  return `ASTRO-ADM-${datePart}-${randomPart}`;
+}
+
+function parseDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException('Data estimada do primeiro evento inválida');
+  }
+
+  return date;
+}
+
+@Injectable()
+export class AdminAccessRequestsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  private requiredFields: Array<keyof CreateAdminAccessRequestDto> = [
+    'fullName',
+    'email',
+    'cpfCnpj',
+    'phone',
+    'producerName',
+    'producerDocument',
+    'city',
+    'state',
+    'websiteOrSocial',
+    'eventTypes',
+    'firstEventDescription',
+    'estimatedEventDate',
+    'expectedAudience',
+    'experience',
+    'reason',
+  ];
+
+  async create(user: AuthenticatedUser, body: CreateAdminAccessRequestDto) {
+    if (['ADMIN', 'SUPER_ADMIN'].includes(String(user.role || '').toUpperCase())) {
+      throw new BadRequestException('Esta conta já é administradora');
+    }
+
+    const missing = this.requiredFields.filter((field) => !clean(body[field]));
+
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Preencha todos os campos obrigatórios: ${missing.join(', ')}`,
+      );
+    }
+
+    if (body.acceptedReviewTerm !== true) {
+      throw new BadRequestException(
+        'Confirme o prazo de análise de até 15 dias úteis',
+      );
+    }
+
+    if (body.acceptedTruthTerm !== true) {
+      throw new BadRequestException(
+        'Confirme que as informações enviadas são verdadeiras',
+      );
+    }
+
+    const existingPending = await this.prisma.adminAccessRequest.findFirst({
+      where: {
+        requesterUserId: user.sub,
+        status: 'PENDING_REVIEW',
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (existingPending) {
+      throw new BadRequestException(
+        `Você já possui uma solicitação pendente: ${existingPending.protocol}`,
+      );
+    }
+
+    const request = await this.prisma.adminAccessRequest.create({
+      data: {
+        protocol: makeProtocol(),
+        requesterUserId: user.sub,
+        requesterRole: user.role,
+        requesterName: clean(user.name) || clean(body.fullName),
+        requesterEmail: clean(user.email) || clean(body.email),
+        requesterCpf: clean(user.cpf) || clean(body.cpfCnpj),
+        fullName: clean(body.fullName),
+        email: clean(body.email),
+        cpfCnpj: clean(body.cpfCnpj),
+        phone: clean(body.phone),
+        producerName: clean(body.producerName),
+        producerDocument: clean(body.producerDocument),
+        city: clean(body.city),
+        state: clean(body.state),
+        websiteOrSocial: clean(body.websiteOrSocial),
+        eventTypes: clean(body.eventTypes),
+        firstEventDescription: clean(body.firstEventDescription),
+        estimatedEventDate: parseDate(body.estimatedEventDate),
+        expectedAudience: clean(body.expectedAudience),
+        experience: clean(body.experience),
+        reason: clean(body.reason),
+        extraNotes: clean(body.extraNotes),
+        acceptedReviewTerm: body.acceptedReviewTerm,
+        acceptedTruthTerm: body.acceptedTruthTerm,
+        status: 'PENDING_REVIEW',
+        reviewDeadlineBusinessDays: 15,
+        submittedAt: new Date(),
+      },
+    });
+
+    return request;
+  }
+
+  async listMine(userId: string) {
+    return this.prisma.adminAccessRequest.findMany({
+      where: {
+        requesterUserId: userId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async listForModerator() {
+    return this.prisma.adminAccessRequest.findMany({
+      orderBy: [
+        {
+          status: 'asc',
+        },
+        {
+          submittedAt: 'desc',
+        },
+      ],
+    });
+  }
+
+  async findForModerator(id: string) {
+    const request = await this.prisma.adminAccessRequest.findUnique({
+      where: { id },
+    });
+
+    if (!request) {
+      throw new NotFoundException('Solicitação não encontrada');
+    }
+
+    return request;
+  }
+
+  async review(
+    id: string,
+    moderator: AuthenticatedUser,
+    body: ReviewAdminAccessRequestDto,
+  ) {
+    const request = await this.prisma.adminAccessRequest.findUnique({
+      where: { id },
+    });
+
+    if (!request) {
+      throw new NotFoundException('Solicitação não encontrada');
+    }
+
+    if (request.status !== 'PENDING_REVIEW') {
+      throw new BadRequestException('Esta solicitação já foi analisada');
+    }
+
+    const moderatorNote = clean(body.moderatorNote);
+
+    const updatedRequest = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.adminAccessRequest.update({
+        where: { id },
+        data: {
+          status: body.status,
+          reviewedAt: new Date(),
+          moderatorUserId: moderator.sub,
+          moderatorName: clean(moderator.name) || 'Moderador',
+          moderatorEmail: clean(moderator.email),
+          moderatorNote,
+        },
+      });
+
+      if (body.status === 'APPROVED') {
+        await tx.user.update({
+          where: { id: request.requesterUserId },
+          data: {
+            role: 'ADMIN',
+          },
+        });
+      }
+
+      return updated;
+    });
+
+    return updatedRequest;
+  }
+}
+
+
+
