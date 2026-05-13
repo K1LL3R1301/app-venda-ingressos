@@ -246,6 +246,16 @@ type TicketItem = {
   isHidden: boolean;
 };
 
+type TicketAutomationConfig = {
+  lotCount: string;
+  lotQuantity: string;
+  firstPrice: string;
+  priceStep: string;
+  intervalDays: string;
+  maxPerOrder: string;
+  salesStartAt: string;
+};
+
 type DragState = {
   objectId: string;
   offsetX: number;
@@ -421,6 +431,12 @@ const TICKET_KIND_OPTIONS: Array<{ label: string; value: TicketKind }> = [
   { label: "Social", value: "SOCIAL" },
 ];
 
+const TICKET_KIND_ORDER: Record<TicketKind, number> = {
+  INTEIRA: 1,
+  MEIA: 2,
+  SOCIAL: 3,
+};
+
 const LOTS = Array.from({ length: 20 }, (_, index) => `${index + 1}º Lote`);
 
 const OBJECT_LABELS: Record<MapObjectType, string> = {
@@ -502,6 +518,237 @@ function moneyInput(value: unknown) {
 
 function formatMoney(value: string) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(moneyNumber(value));
+}
+
+function moneyInputFromNumber(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  return value.toFixed(2).replace(".", ",");
+}
+
+function addMoneyValue(value: string, amount: number) {
+  const base = moneyNumber(value);
+  if (!Number.isFinite(base) || base <= 0) return "";
+  return moneyInputFromNumber(base + amount);
+}
+
+function ticketGroupKey(sessionId: string, sectorId: string) {
+  return `${sessionId || "sem-data"}::${sectorId || "sem-setor"}`;
+}
+
+function shiftInputDays(value: string, days: number) {
+  if (!value) return "";
+  const date = new Date(value.length === 10 ? `${value}T00:00` : value);
+  if (Number.isNaN(date.getTime())) return value;
+  date.setDate(date.getDate() + days);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, value.length === 10 ? 10 : 16);
+}
+
+function suggestTicketSaleEnd(startAt: string, limitAt: string, intervalDays: number) {
+  if (!startAt) return "";
+  const suggested = shiftInputDays(startAt, Math.max(1, intervalDays) - 1);
+  const limitDay = inputDateDay(limitAt);
+  if (limitDay && suggested > limitDay) return limitDay;
+  return suggested;
+}
+
+function inputDayAsDate(value: string) {
+  const day = inputDateDay(value);
+  if (!day) return null;
+  const date = new Date(`${day}T00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function daysBetweenInputs(startAt: string, limitAt: string) {
+  const start = inputDayAsDate(startAt);
+  const end = inputDayAsDate(limitAt);
+
+  if (!start || !end) return 1;
+
+  const diff = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+  return Math.max(1, diff);
+}
+
+function toTicketKindLabel(kind: TicketKind) {
+  return TICKET_KIND_OPTIONS.find((item) => item.value === kind)?.label || "Inteira";
+}
+
+function ticketKindPriceFactor(_kind: TicketKind) {
+  return 1;
+}
+
+function toTicketKindDescription(kind: TicketKind) {
+  if (kind === "MEIA") return "Meia-entrada conforme política do evento.";
+  if (kind === "SOCIAL") return "Ingresso social conforme política do evento.";
+  return "Ingresso de valor cheio.";
+}
+
+function toInputDayFromDateTime(value: string) {
+  return inputDateDay(value) || inputDateToday();
+}
+
+function toSafeLotCount(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : 1;
+}
+
+function toSafeIntervalDays(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(365, parsed)) : 20;
+}
+
+function toSafeQuantity(value: string, fallback: number) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.max(1, fallback);
+}
+
+function toSafeMaxPerOrder(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : "";
+}
+
+function distributeQuantity(total: number, requestedSlots: number) {
+  const safeTotal = Math.max(0, Math.floor(total));
+  const safeRequestedSlots = Math.max(1, Math.floor(requestedSlots));
+
+  if (safeTotal <= 0) return [0];
+
+  const slots = Math.max(1, Math.min(safeRequestedSlots, safeTotal));
+  const base = Math.floor(safeTotal / slots);
+  const remainder = safeTotal % slots;
+
+  return Array.from({ length: slots }, (_, index) => base + (index < remainder ? 1 : 0));
+}
+
+function quantityPreviewLabel(total: number, lotCount: number) {
+  const quantities = distributeQuantity(total, lotCount);
+  const preview = quantities.length > 5
+    ? `${quantities.slice(0, 5).join(" / ")}...`
+    : quantities.join(" / ");
+
+  return preview || "0";
+}
+
+function clampInputDayToLimit(value: string, limitAt: string) {
+  if (!value) return "";
+  const limitDay = inputDateDay(limitAt);
+
+  if (limitDay && value > limitDay) return limitDay;
+
+  return value;
+}
+
+function defaultSalesStartDay(limitAt: string) {
+  return clampInputDayToLimit(inputDateToday(), limitAt);
+}
+
+function toTicketSaleLimit(session: SessionItem, generalEnd: string) {
+  return session.endsAt || session.startsAt || generalEnd;
+}
+
+function toClampedSaleStart(value: string, limitAt: string) {
+  return clampInputDayToLimit(value || inputDateToday(), limitAt);
+}
+
+function toLotStart(baseStart: string, index: number, intervalDays: number, limitAt: string) {
+  return clampInputDayToLimit(shiftInputDays(baseStart, index * intervalDays), limitAt);
+}
+
+function capacityLotTarget(capacity: number) {
+  const value = Math.max(0, positiveIntOrZero(capacity));
+
+  if (value <= 0) return 1;
+  if (value <= 300) return 1;
+  if (value <= 900) return 2;
+  if (value <= 2500) return 3;
+  if (value <= 6000) return 4;
+  if (value <= 12000) return 5;
+  if (value <= 25000) return 6;
+  if (value <= 50000) return 8;
+
+  return 10;
+}
+
+function timeLotTarget(daysAvailable: number) {
+  const days = Math.max(1, positiveIntOrZero(daysAvailable));
+
+  if (days <= 2) return 1;
+  if (days <= 5) return 2;
+  if (days <= 10) return 3;
+  if (days <= 20) return 4;
+  if (days <= 40) return 5;
+  if (days <= 70) return 6;
+  if (days <= 120) return 8;
+
+  return 10;
+}
+
+function toAutomaticLotCount(capacity: number, startAt?: string, limitAt?: string) {
+  const value = Math.max(0, positiveIntOrZero(capacity));
+
+  if (value <= 0) return 1;
+
+  const byCapacity = capacityLotTarget(value);
+  const byTime = startAt && limitAt ? timeLotTarget(daysBetweenInputs(startAt, limitAt)) : byCapacity;
+
+  return Math.max(1, Math.min(20, byCapacity, byTime, value));
+}
+
+function toAutomaticLotIntervalDays(startAt: string, limitAt: string, lotCount: number) {
+  const daysAvailable = daysBetweenInputs(startAt, limitAt);
+  const safeLotCount = Math.max(1, positiveIntOrZero(lotCount));
+
+  return Math.max(1, Math.ceil(daysAvailable / safeLotCount));
+}
+
+function toAutomaticLotEnd(baseStart: string, index: number, intervalDays: number, limitAt: string, lotCount: number) {
+  if (index >= lotCount - 1) return inputDateDay(limitAt) || limitAt;
+
+  const nextStart = toLotStart(baseStart, index + 1, intervalDays, limitAt);
+  return clampInputDayToLimit(shiftInputDays(nextStart, -1), limitAt);
+}
+
+function toGeneratedTicketQuantities(sectorLimit: number, lotCount: number, kindCount = 1) {
+  return distributeQuantity(sectorLimit, lotCount * Math.max(1, kindCount));
+}
+
+function normalizeTicketKinds(kinds: Array<TicketKind | undefined | null>) {
+  return Array.from(
+    new Set(
+      kinds.filter((kind): kind is TicketKind =>
+        kind === "INTEIRA" || kind === "MEIA" || kind === "SOCIAL",
+      ),
+    ),
+  ).sort((a, b) => TICKET_KIND_ORDER[a] - TICKET_KIND_ORDER[b]);
+}
+
+function distributeGroupCapacityAcrossLots(
+  groupLimit: number,
+  lotCount: number,
+  kindCount: number,
+) {
+  const safeGroupLimit = Math.max(0, positiveIntOrZero(groupLimit));
+  const safeLotCount = Math.max(1, positiveIntOrZero(lotCount));
+  const safeKindCount = Math.max(1, positiveIntOrZero(kindCount));
+
+  return distributeQuantity(safeGroupLimit, safeLotCount * safeKindCount);
+}
+
+function ticketGroupCapacityLimit(session: SessionItem, sector: SectorItem, generalCapacity: number) {
+  const sessionLimit = positiveIntOrZero(session.capacity) || generalCapacity || 0;
+  const sectorLimit = sectorCapacityFromParts(sector) || sessionLimit || generalCapacity || 0;
+
+  if (sessionLimit <= 0 && sectorLimit <= 0) return 0;
+  if (sessionLimit <= 0) return sectorLimit;
+  if (sectorLimit <= 0) return sessionLimit;
+
+  return Math.min(sessionLimit, sectorLimit);
+}
+
+function ticketGroupCapacityHelper(session: SessionItem, sector: SectorItem, generalCapacity: number) {
+  const limit = ticketGroupCapacityLimit(session, sector, generalCapacity);
+
+  return limit > 0 ? limit : 1;
 }
 
 function toInputDate(value?: string | null) {
@@ -1135,6 +1382,23 @@ export default function EditEventPage() {
   const [dragState, setDragState] = useState<DragState | null>(null);
 
   const [tickets, setTickets] = useState<TicketItem[]>([]);
+  const [ticketBuilderStep, setTicketBuilderStep] = useState<"CREATE" | "REVIEW">("CREATE");
+  const [ticketMaxPerOrder, setTicketMaxPerOrder] = useState("4");
+  const [expandedTicketSessionId, setExpandedTicketSessionId] = useState("");
+  const [expandedTicketSectorKey, setExpandedTicketSectorKey] = useState("");
+  const [ticketAutomationConfigs, setTicketAutomationConfigs] = useState<Record<string, TicketAutomationConfig>>({});
+
+  useEffect(() => {
+    const lockedMaxPerOrder = toSafeMaxPerOrder(ticketMaxPerOrder);
+
+    setTickets((current) =>
+      current.map((ticket) => ({
+        ...ticket,
+        maxPerOrder: lockedMaxPerOrder,
+      })),
+    );
+  }, [ticketMaxPerOrder]);
+
   const [venueName, setVenueName] = useState("");
   const [zipCode, setZipCode] = useState("");
   const [addressLine1, setAddressLine1] = useState("");
@@ -1155,6 +1419,23 @@ export default function EditEventPage() {
   const sectorTotal = sectors.reduce((sum, item) => sum + sectorCapacityFromParts(item), 0);
   const sessionTotal = sessions.reduce((sum, item) => sum + toNumber(item.capacity), 0);
   const ticketTotal = tickets.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+  const ticketRevenuePreview = tickets.reduce((sum, item) => sum + moneyNumber(item.price) * toNumber(item.quantity), 0);
+  const ticketGroupTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    tickets.forEach((ticket) => {
+      const key = ticketGroupKey(ticket.eventSessionLocalId, ticket.venueSectorLocalId);
+      totals.set(key, (totals.get(key) || 0) + toNumber(ticket.quantity));
+    });
+    return totals;
+  }, [tickets]);
+  const ticketCountByGroup = useMemo(() => {
+    const totals = new Map<string, number>();
+    tickets.forEach((ticket) => {
+      const key = ticketGroupKey(ticket.eventSessionLocalId, ticket.venueSectorLocalId);
+      totals.set(key, (totals.get(key) || 0) + 1);
+    });
+    return totals;
+  }, [tickets]);
   const selectedMapObject = mapObjects.find((object) => object.localId === selectedMapObjectId) || null;
   const isOnline = venueName.trim().toLowerCase() === "online";
 
@@ -1165,7 +1446,7 @@ export default function EditEventPage() {
     { id: "media", title: "Imagens e políticas", description: "Mídias e regras." },
     { id: "sectors", title: "Setores / áreas", description: "Setores." },
     { id: "map", title: "Mapa", description: "Editor visual." },
-    { id: "tickets", title: "Ingressos / lotes", description: "Preços e vendas." },
+    { id: "tickets", title: "Ingressos / lotes", description: "Automático: lotes por data, setor e tempo de venda." },
     { id: "location", title: "Local e acesso", description: "Endereço." },
     { id: "review", title: "Revisão", description: "Salvar." },
   ];
@@ -1191,12 +1472,27 @@ export default function EditEventPage() {
 
   const ticketError = useMemo(() => {
     if (tickets.length === 0) return "Crie pelo menos um lote.";
+    if (tickets.some((item) => !item.eventSessionLocalId)) return "Todo lote precisa estar vinculado a uma data.";
+    if (tickets.some((item) => !item.venueSectorLocalId)) return "Todo lote precisa estar vinculado a um setor.";
     if (tickets.some((item) => !item.name.trim())) return "Todo lote precisa ter nome.";
     if (tickets.some((item) => !item.price.trim())) return "Todo lote precisa ter preço.";
     if (tickets.some((item) => toNumber(item.quantity) <= 0)) return "Todo lote precisa ter quantidade.";
     if (ticketTotal > generalCapacity) return "A soma dos ingressos não pode ultrapassar a capacidade geral.";
+
+    for (const session of sessions) {
+      for (const sector of sectors) {
+        const groupTotal = tickets
+          .filter((item) => item.eventSessionLocalId === session.localId && item.venueSectorLocalId === sector.localId)
+          .reduce((sum, item) => sum + toNumber(item.quantity), 0);
+        const groupLimit = ticketGroupCapacityLimit(session, sector, generalCapacity);
+        if (groupLimit > 0 && groupTotal > groupLimit) {
+          return `Ingressos de ${sector.name} em ${session.name || datePreview(session.startsAt)} passam da capacidade reservada para este setor nesta data.`;
+        }
+      }
+    }
+
     return "";
-  }, [tickets, ticketTotal, generalCapacity]);
+  }, [tickets, ticketTotal, generalCapacity, sessions, sectors]);
 
   const mediaError = "";
 
@@ -1222,7 +1518,9 @@ export default function EditEventPage() {
     location: submitAttempted && !completion.location,
   };
 
-  function applyEventToForm(event: EventDetails) {
+  function applyEventToForm(event: EventDetails | null) {
+    if (!event) return;
+
     const nextCategory = normalizeCategory(String(event.category || ""));
     const nextPresetKey = presetFromEvent(event);
     const nextPreset = PRESETS[nextPresetKey] || PRESETS.PLATEIA;
@@ -1625,11 +1923,324 @@ export default function EditEventPage() {
     });
   }
 
+  function defaultTicketConfig(session: SessionItem, sector: SectorItem): TicketAutomationConfig {
+    const groupCapacity = ticketGroupCapacityHelper(session, sector, generalCapacity);
+    const saleLimit = toTicketSaleLimit(session, endDate);
+    const salesStartAt = defaultSalesStartDay(saleLimit);
+    const lotCount = String(toAutomaticLotCount(groupCapacity, salesStartAt, saleLimit));
+    const lotQuantity = quantityPreviewLabel(groupCapacity, toSafeLotCount(lotCount));
+    const intervalDays = String(toAutomaticLotIntervalDays(salesStartAt, saleLimit, toSafeLotCount(lotCount)));
+
+    return {
+      lotCount,
+      lotQuantity,
+      firstPrice: "100,00",
+      priceStep: "20,00",
+      intervalDays,
+      maxPerOrder: ticketMaxPerOrder || "4",
+      salesStartAt,
+    };
+  }
+
+  function getTicketConfig(session: SessionItem, sector: SectorItem) {
+    const key = ticketGroupKey(session.localId, sector.localId);
+    const groupCapacity = ticketGroupCapacityHelper(session, sector, generalCapacity);
+    const saleLimit = toTicketSaleLimit(session, endDate);
+    const base = {
+      ...defaultTicketConfig(session, sector),
+      ...(ticketAutomationConfigs[key] || {}),
+    };
+    const salesStartAt = toClampedSaleStart(base.salesStartAt, saleLimit);
+    const lotCount = String(toAutomaticLotCount(groupCapacity, salesStartAt, saleLimit));
+    const intervalDays = String(toAutomaticLotIntervalDays(salesStartAt, saleLimit, toSafeLotCount(lotCount)));
+
+    return {
+      ...base,
+      lotCount,
+      lotQuantity: quantityPreviewLabel(groupCapacity, toSafeLotCount(lotCount)),
+      intervalDays,
+      maxPerOrder: ticketMaxPerOrder || "4",
+      salesStartAt,
+    };
+  }
+
+  function updateTicketConfig(session: SessionItem, sector: SectorItem, patch: Partial<TicketAutomationConfig>) {
+    const key = ticketGroupKey(session.localId, sector.localId);
+    const {
+      intervalDays: _intervalDays,
+      maxPerOrder: _maxPerOrder,
+      lotQuantity: _lotQuantity,
+      lotCount: _lotCount,
+      ...editablePatch
+    } = patch;
+
+    setTicketAutomationConfigs((current) => {
+      const groupCapacity = ticketGroupCapacityHelper(session, sector, generalCapacity);
+      const saleLimit = toTicketSaleLimit(session, endDate);
+      const base = {
+        ...defaultTicketConfig(session, sector),
+        ...current[key],
+        ...editablePatch,
+      };
+      const salesStartAt = toClampedSaleStart(base.salesStartAt, saleLimit);
+      const lotCount = String(toAutomaticLotCount(groupCapacity, salesStartAt, saleLimit));
+      const intervalDays = String(toAutomaticLotIntervalDays(salesStartAt, saleLimit, toSafeLotCount(lotCount)));
+
+      return {
+        ...current,
+        [key]: {
+          ...base,
+          lotCount,
+          lotQuantity: quantityPreviewLabel(groupCapacity, toSafeLotCount(lotCount)),
+          intervalDays,
+          maxPerOrder: ticketMaxPerOrder || "4",
+          salesStartAt,
+        },
+      };
+    });
+  }
+
   function addTicket() {
     const sessionId = sessions[0]?.localId || "";
     const sectorId = sectors[0]?.localId || "";
     const sector = sectors[0];
     setTickets((current) => [...current, newTicket(current.length, sessionId, sectorId, sector?.mode || preset.mode)]);
+    setTicketBuilderStep("REVIEW");
+  }
+
+  function groupExistingKinds(session: SessionItem, sector: SectorItem) {
+    const kindSet = new Set<TicketKind>();
+
+    tickets.forEach((ticket) => {
+      if (ticket.eventSessionLocalId !== session.localId) return;
+      if (ticket.venueSectorLocalId !== sector.localId) return;
+      kindSet.add(ticket.ticketKind || "INTEIRA");
+    });
+
+    return normalizeTicketKinds(Array.from(kindSet));
+  }
+
+  function ticketKindConfigKey(sessionId: string, sectorId: string, kind: TicketKind) {
+    return `${ticketGroupKey(sessionId, sectorId)}::${kind}`;
+  }
+
+  function existingTicketsForKind(session: SessionItem, sector: SectorItem, kind: TicketKind) {
+    return tickets
+      .filter(
+        (ticket) =>
+          ticket.eventSessionLocalId === session.localId &&
+          ticket.venueSectorLocalId === sector.localId &&
+          ticket.ticketKind === kind,
+      )
+      .slice()
+      .sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel));
+  }
+
+  function inferKindPriceConfigFromTickets(
+    session: SessionItem,
+    sector: SectorItem,
+    kind: TicketKind,
+    fallback: TicketAutomationConfig,
+  ) {
+    const kindTickets = existingTicketsForKind(session, sector, kind);
+    const firstPrice = kindTickets[0]?.price || fallback.firstPrice;
+    const firstPriceNumber = moneyNumber(firstPrice);
+    const secondPriceNumber = kindTickets[1] ? moneyNumber(kindTickets[1].price) : undefined;
+    const inferredStep =
+      secondPriceNumber !== undefined
+        ? Math.max(0, secondPriceNumber - firstPriceNumber)
+        : moneyNumber(fallback.priceStep);
+
+    return {
+      firstPrice: moneyInputFromNumber(firstPriceNumber),
+      priceStep: moneyInputFromNumber(inferredStep),
+    };
+  }
+
+  function getTicketConfigForKind(
+    session: SessionItem,
+    sector: SectorItem,
+    kind: TicketKind,
+    fallback: TicketAutomationConfig,
+    requestedKinds: TicketKind[],
+  ) {
+    const groupKey = ticketGroupKey(session.localId, sector.localId);
+    const kindKey = ticketKindConfigKey(session.localId, sector.localId, kind);
+    const savedKindConfig = ticketAutomationConfigs[kindKey];
+
+    if (savedKindConfig?.firstPrice || savedKindConfig?.priceStep) {
+      return {
+        firstPrice: savedKindConfig.firstPrice || fallback.firstPrice,
+        priceStep: savedKindConfig.priceStep || fallback.priceStep,
+      };
+    }
+
+    const groupConfig = ticketAutomationConfigs[groupKey];
+
+    if (requestedKinds.includes(kind)) {
+      return {
+        firstPrice: groupConfig?.firstPrice || fallback.firstPrice,
+        priceStep: groupConfig?.priceStep || fallback.priceStep,
+      };
+    }
+
+    return inferKindPriceConfigFromTickets(session, sector, kind, fallback);
+  }
+
+  function saveRequestedKindConfigs(
+    session: SessionItem,
+    sector: SectorItem,
+    requestedKinds: TicketKind[],
+  ) {
+    const base = getTicketConfig(session, sector);
+
+    setTicketAutomationConfigs((current) => {
+      const next = { ...current };
+
+      requestedKinds.forEach((kind) => {
+        next[ticketKindConfigKey(session.localId, sector.localId, kind)] = {
+          ...base,
+          firstPrice: base.firstPrice,
+          priceStep: base.priceStep,
+        };
+      });
+
+      return next;
+    });
+  }
+
+  function buildGeneratedTicketsForGroup(session: SessionItem, sector: SectorItem, kinds: TicketKind[], requestedKindsForCurrentPrice: TicketKind[] = []) {
+    const cleanKinds = normalizeTicketKinds(kinds);
+    const priceSourceKinds = normalizeTicketKinds(requestedKindsForCurrentPrice);
+    const config = getTicketConfig(session, sector);
+    const groupLimit = ticketGroupCapacityHelper(session, sector, generalCapacity);
+    const sessionLimit = toTicketSaleLimit(session, endDate);
+    const baseStart = toClampedSaleStart(config.salesStartAt || inputDateToday(), sessionLimit);
+    const lotCount = toAutomaticLotCount(groupLimit, baseStart, sessionLimit);
+    const intervalDays = toAutomaticLotIntervalDays(baseStart, sessionLimit, lotCount);
+    const quantities = distributeGroupCapacityAcrossLots(groupLimit, lotCount, cleanKinds.length);
+    const generated: TicketItem[] = [];
+
+    if (groupLimit <= 0 || cleanKinds.length === 0) return generated;
+
+    cleanKinds.forEach((kind, kindIndex) => {
+      const kindConfig = getTicketConfigForKind(session, sector, kind, config, priceSourceKinds);
+      const firstPrice = moneyNumber(kindConfig.firstPrice);
+      const priceStep = moneyNumber(kindConfig.priceStep);
+
+      for (let index = 0; index < lotCount; index += 1) {
+        const quantityIndex = index * cleanKinds.length + kindIndex;
+        const quantity = quantities[quantityIndex] || 0;
+
+        if (quantity <= 0) continue;
+
+        const lotLabel = `${index + 1}º Lote`;
+        const lotStart = toLotStart(baseStart, index, intervalDays, sessionLimit);
+        const lotEnd = toAutomaticLotEnd(baseStart, index, intervalDays, sessionLimit, lotCount);
+        const price = moneyInputFromNumber(firstPrice + priceStep * index);
+
+        generated.push({
+          ...newTicket(kindIndex * lotCount + index, session.localId, sector.localId, sector.mode || preset.mode),
+          ticketKind: kind,
+          name: toTicketKindLabel(kind),
+          lotLabel,
+          description: toTicketKindDescription(kind),
+          price,
+          quantity: String(quantity),
+          salesStartAt: lotStart,
+          salesEndAt: lotEnd,
+          maxPerOrder: toSafeMaxPerOrder(ticketMaxPerOrder || config.maxPerOrder),
+          isHidden: false,
+        });
+      }
+    });
+
+    const generatedTotal = generated.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+
+    if (generatedTotal > groupLimit) {
+      let overflow = generatedTotal - groupLimit;
+
+      for (let index = generated.length - 1; index >= 0 && overflow > 0; index -= 1) {
+        const currentQuantity = toNumber(generated[index].quantity);
+        const remove = Math.min(currentQuantity, overflow);
+        const nextQuantity = currentQuantity - remove;
+        overflow -= remove;
+        generated[index].quantity = String(nextQuantity);
+      }
+
+      return generated.filter((item) => toNumber(item.quantity) > 0);
+    }
+
+    return generated;
+  }
+
+  function generateTicketsForGroup(
+    session: SessionItem,
+    sector: SectorItem,
+    kindsInput: TicketKind[] | TicketKind = ["INTEIRA"],
+    options: { replaceGroup?: boolean } = {},
+  ) {
+    const requestedKinds = normalizeTicketKinds(Array.isArray(kindsInput) ? kindsInput : [kindsInput]);
+    const activeKinds = options.replaceGroup
+      ? requestedKinds
+      : normalizeTicketKinds([...groupExistingKinds(session, sector), ...requestedKinds]);
+    const generated = buildGeneratedTicketsForGroup(session, sector, activeKinds, requestedKinds);
+
+    saveRequestedKindConfigs(session, sector, requestedKinds);
+
+    setTickets((current) => [
+      ...current.filter((item) => !(item.eventSessionLocalId === session.localId && item.venueSectorLocalId === sector.localId)),
+      ...generated,
+    ]);
+    setExpandedTicketSessionId(session.localId);
+    setExpandedTicketSectorKey(ticketGroupKey(session.localId, sector.localId));
+    setTicketBuilderStep("CREATE");
+  }
+
+  function generateTicketsForAllGroups(
+    kindsInput: TicketKind[] | TicketKind = ["INTEIRA"],
+    options: { replaceGroup?: boolean } = {},
+  ) {
+    const requestedKinds = normalizeTicketKinds(Array.isArray(kindsInput) ? kindsInput : [kindsInput]);
+    const groupKeysToRegenerate = new Set<string>();
+    const generated: TicketItem[] = [];
+
+    sessions.forEach((session) => {
+      sectors.forEach((sector) => {
+        const activeKinds = options.replaceGroup
+          ? requestedKinds
+          : normalizeTicketKinds([...groupExistingKinds(session, sector), ...requestedKinds]);
+
+        groupKeysToRegenerate.add(ticketGroupKey(session.localId, sector.localId));
+        generated.push(...buildGeneratedTicketsForGroup(session, sector, activeKinds, requestedKinds));
+      });
+    });
+
+    setTicketAutomationConfigs((current) => {
+      const next = { ...current };
+
+      sessions.forEach((session) => {
+        sectors.forEach((sector) => {
+          const base = getTicketConfig(session, sector);
+
+          requestedKinds.forEach((kind) => {
+            next[ticketKindConfigKey(session.localId, sector.localId, kind)] = {
+              ...base,
+              firstPrice: base.firstPrice,
+              priceStep: base.priceStep,
+            };
+          });
+        });
+      });
+
+      return next;
+    });
+
+    setTickets((current) => [
+      ...current.filter((item) => !groupKeysToRegenerate.has(ticketGroupKey(item.eventSessionLocalId, item.venueSectorLocalId))),
+      ...generated,
+    ]);
+    setTicketBuilderStep("CREATE");
   }
 
   function updateTicket(localId: string, patch: Partial<TicketItem>) {
@@ -1643,8 +2254,23 @@ export default function EditEventPage() {
         const sector = sectors.find((sectorItem) => sectorItem.localId === patch.venueSectorLocalId);
         next.occupancyMode = sector?.mode || preset.mode;
       }
+      if (patch.ticketKind !== undefined && (!patch.name || next.name === item.name)) {
+        next.name = toTicketKindLabel(patch.ticketKind);
+        next.description = next.description || toTicketKindDescription(patch.ticketKind);
+      }
       return next;
     }));
+  }
+
+  function duplicateTicket(ticket: TicketItem) {
+    setTickets((current) => [
+      ...current,
+      {
+        ...ticket,
+        localId: uid("ticket"),
+        lotLabel: LOTS[Math.min(LOTS.length - 1, lotNumber(ticket.lotLabel))] || ticket.lotLabel,
+      },
+    ]);
   }
 
   function removeTicket(localId: string) {
@@ -1813,7 +2439,7 @@ export default function EditEventPage() {
         quantity: intOrUndefined(ticket.quantity),
         salesStartAt: ticket.salesStartAt ? new Date(`${ticket.salesStartAt}T00:00`).toISOString() : undefined,
         salesEndAt: ticket.salesEndAt ? new Date(`${ticket.salesEndAt}T23:59`).toISOString() : undefined,
-        maxPerOrder: intOrUndefined(ticket.maxPerOrder),
+        maxPerOrder: intOrUndefined(ticketMaxPerOrder || ticket.maxPerOrder),
         displayOrder: index,
         isHidden: ticket.isHidden,
         status: "ACTIVE",
@@ -1849,8 +2475,29 @@ export default function EditEventPage() {
         body: JSON.stringify(buildPayload()),
       });
       const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(typeof result?.message === "string" ? result.message : "Erro ao salvar evento.");
-      applyEventToForm(result as EventDetails);
+      if (!response.ok) {
+        throw new Error(typeof result?.message === "string" ? result.message : "Erro ao salvar evento.");
+      }
+
+      let updatedEvent =
+        result && typeof result === "object" && "id" in result
+          ? (result as EventDetails)
+          : null;
+
+      if (!updatedEvent) {
+        const refreshResponse = await fetch(`${API_BASE_URL}/events/${eventId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const refreshResult = await refreshResponse.json().catch(() => null);
+
+        if (!refreshResponse.ok || !refreshResult) {
+          throw new Error("Evento salvo, mas não consegui recarregar os dados atualizados.");
+        }
+
+        updatedEvent = refreshResult as EventDetails;
+      }
+
+      applyEventToForm(updatedEvent);
       setSavedMessage("Evento salvo com sucesso.");
       setStepIndex(steps.length - 1);
     } catch (err) {
@@ -2107,11 +2754,227 @@ export default function EditEventPage() {
             ) : null}
 
             {activeStep.id === "tickets" ? (
-              <StepShell eyebrow="Etapa 7" title="Ingressos / lotes" description="Ingressos ficam em uma etapa separada, como na criação.">
-                <div className="mb-4 grid gap-3 md:grid-cols-3"><MiniStat label="Capacidade geral" value={generalCapacity} /><MiniStat label="Ingressos" value={ticketTotal} /><MiniStat label="Lotes" value={tickets.length} /></div>
-                {ticketError ? <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">{ticketError}</div> : null}
-                <div className="grid gap-4">{tickets.map((ticket, index) => <div key={ticket.localId} className="rounded-[1.6rem] border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-4 flex items-center justify-between"><p className="text-lg font-black text-slate-950">Lote {index + 1}</p><button type="button" onClick={() => removeTicket(ticket.localId)} className="text-xs font-black text-rose-600">Remover</button></div><div className="grid gap-4 md:grid-cols-3"><Select label="Data" value={ticket.eventSessionLocalId} onChange={(value) => updateTicket(ticket.localId, { eventSessionLocalId: value })} options={sessions.map((session) => ({ value: session.localId, label: session.name || datePreview(session.startsAt) }))} /><Select label="Setor" value={ticket.venueSectorLocalId} onChange={(value) => updateTicket(ticket.localId, { venueSectorLocalId: value })} options={sectors.map((sector) => ({ value: sector.localId, label: sector.name }))} /><Select label="Tipo" value={ticket.ticketKind} onChange={(value) => updateTicket(ticket.localId, { ticketKind: value as TicketKind })} options={TICKET_KIND_OPTIONS} /><Field label="Nome" value={ticket.name} onChange={(value) => updateTicket(ticket.localId, { name: value })} /><Select label="Lote" value={ticket.lotLabel} onChange={(value) => updateTicket(ticket.localId, { lotLabel: value })} options={LOTS.map((lot) => ({ label: lot, value: lot }))} /><Field label="Preço" value={ticket.price} onChange={(value) => updateTicket(ticket.localId, { price: value })} money /><Field label="Quantidade" value={ticket.quantity} onChange={(value) => updateTicket(ticket.localId, { quantity: value })} onlyNumbers /><Field label="Início vendas" type="date" value={ticket.salesStartAt} onChange={(value) => updateTicket(ticket.localId, { salesStartAt: value })} /><Field label="Fim vendas" type="date" value={ticket.salesEndAt} onChange={(value) => updateTicket(ticket.localId, { salesEndAt: value })} /></div></div>)}</div>
-                <button type="button" onClick={addTicket} className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-sky-700">Adicionar lote</button>
+              <StepShell eyebrow="Etapa 7" title="Ingressos / lotes" description="Sistema automático e protegido: capacidade geral → datas → setores → tipos → lotes. A máquina decide lotes e quantidades sem permitir excedente.">
+                <div className="mb-5 grid gap-3 md:grid-cols-4">
+                  <MiniStat label="Capacidade geral" value={generalCapacity} />
+                  <MiniStat label="Ingressos criados" value={ticketTotal} />
+                  <MiniStat label="Lotes automáticos" value={tickets.length} />
+                  <MiniStat label="Receita prevista" value={formatMoney(String(ticketRevenuePreview).replace(".", ","))} />
+                </div>
+
+                {ticketError ? <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-black text-rose-700">{ticketError}</div> : null}
+
+                <div className="mb-6 overflow-hidden rounded-[2rem] border border-sky-100 bg-gradient-to-br from-sky-50 via-white to-emerald-50 shadow-sm">
+                  <div className="grid gap-5 p-5 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-600">Gerador automático protegido</p>
+                      <h3 className="mt-2 text-2xl font-black text-slate-950">O sistema monta os lotes sozinho</h3>
+                      <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-600">
+                        Para evitar venda acima da capacidade, a tela não deixa editar quantidade, data, setor ou máximo por pedido nos lotes. A divisão é feita automaticamente por data + setor + tipos ativos. Quando você adiciona Inteira, Meia ou Social, o sistema recalcula todos os lotes daquele setor/data para que a soma nunca passe do disponível. Você só informa o preço inicial e o aumento entre lotes.
+                      </p>
+                      <div className="mt-4 grid gap-3 md:grid-cols-4">
+                        <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">1</p>
+                          <p className="mt-1 text-sm font-black text-slate-900">Capacidade geral</p>
+                        </div>
+                        <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">2</p>
+                          <p className="mt-1 text-sm font-black text-slate-900">Divide nas datas</p>
+                        </div>
+                        <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">3</p>
+                          <p className="mt-1 text-sm font-black text-slate-900">Reserva por setor</p>
+                        </div>
+                        <div className="rounded-2xl border border-white bg-white/80 p-3 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">4</p>
+                          <p className="mt-1 text-sm font-black text-slate-900">Define lotes e viradas</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-sm">
+                      <p className="text-sm font-black text-slate-950">Criar tudo agora</p>
+                      <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">Adiciona/recalcula o tipo escolhido e redistribui a capacidade de cada data/setor. Use Recriar inteira + meia para deixar somente esses dois tipos.</p>
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => generateTicketsForAllGroups(["INTEIRA"])} className="rounded-2xl bg-slate-950 px-4 py-3 text-xs font-black text-white hover:bg-sky-700">+ Inteira</button>
+                        <button type="button" onClick={() => generateTicketsForAllGroups(["MEIA"])} className="rounded-2xl border border-slate-300 px-4 py-3 text-xs font-black text-slate-700 hover:bg-slate-50">+ Meia</button>
+                        <button type="button" onClick={() => generateTicketsForAllGroups(["SOCIAL"])} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-black text-emerald-700 hover:bg-emerald-100">+ Social</button>
+                        <button type="button" onClick={() => generateTicketsForAllGroups(["INTEIRA", "MEIA"], { replaceGroup: true })} className="rounded-2xl bg-sky-600 px-4 py-3 text-xs font-black text-white hover:bg-sky-700">Recriar inteira + meia</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-5 flex gap-2 rounded-[1.5rem] border border-slate-200 bg-white p-2 shadow-sm">
+                  <button type="button" onClick={() => setTicketBuilderStep("CREATE")} className={`rounded-2xl px-4 py-3 text-xs font-black ${ticketBuilderStep === "CREATE" ? "bg-sky-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>Gerador por data/setor</button>
+                  <button type="button" onClick={() => setTicketBuilderStep("REVIEW")} className={`rounded-2xl px-4 py-3 text-xs font-black ${ticketBuilderStep === "REVIEW" ? "bg-sky-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>Resumo dos lotes</button>
+                </div>
+
+                {ticketBuilderStep === "CREATE" ? (
+                  <div className="grid gap-5">
+                    {sessions.map((session, sessionIndex) => {
+                      const sessionOpen = expandedTicketSessionId === session.localId || (!expandedTicketSessionId && sessionIndex === 0);
+                      const sessionTickets = tickets.filter((ticket) => ticket.eventSessionLocalId === session.localId);
+                      const sessionTicketTotal = sessionTickets.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+
+                      return (
+                        <div key={session.localId} className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+                          <button type="button" onClick={() => setExpandedTicketSessionId(sessionOpen ? "" : session.localId)} className="flex w-full flex-col justify-between gap-3 bg-slate-950 px-5 py-4 text-left text-white md:flex-row md:items-center">
+                            <div>
+                              <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-300">Data {sessionIndex + 1}</p>
+                              <p className="mt-1 text-xl font-black">{session.name || datePreview(session.startsAt)}</p>
+                              <p className="mt-1 text-xs font-semibold text-slate-300">{datePreview(session.startsAt)} • capacidade desta data {session.capacity || "0"}</p>
+                            </div>
+                            <div className="flex gap-2">
+                              <span className="rounded-full bg-white/10 px-3 py-2 text-xs font-black">{sessionTickets.length} lote(s)</span>
+                              <span className="rounded-full bg-white/10 px-3 py-2 text-xs font-black">{sessionTicketTotal} ingresso(s)</span>
+                            </div>
+                          </button>
+
+                          {sessionOpen ? (
+                            <div className="grid gap-4 p-5">
+                              {sectors.map((sector) => {
+                                const groupKey = ticketGroupKey(session.localId, sector.localId);
+                                const groupOpen = expandedTicketSectorKey === groupKey || (!expandedTicketSectorKey && sessionIndex === 0 && sectors[0]?.localId === sector.localId);
+                                const groupTickets = tickets.filter((ticket) => ticket.eventSessionLocalId === session.localId && ticket.venueSectorLocalId === sector.localId);
+                                const groupQuantity = ticketGroupTotals.get(groupKey) || 0;
+                                const sectorLimit = sectorCapacityFromParts(sector);
+                                const groupLimit = ticketGroupCapacityHelper(session, sector, generalCapacity);
+                                const config = getTicketConfig(session, sector);
+                                const saleLimit = toTicketSaleLimit(session, endDate);
+                                const automaticLotCount = toAutomaticLotCount(groupLimit, config.salesStartAt, saleLimit);
+                                const automaticInterval = toAutomaticLotIntervalDays(config.salesStartAt, saleLimit, automaticLotCount);
+                                const automaticLotPreview = quantityPreviewLabel(groupLimit, automaticLotCount);
+
+                                return (
+                                  <div key={groupKey} className="rounded-[1.75rem] border border-slate-200 bg-slate-50 p-4">
+                                    <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+                                      <button type="button" onClick={() => setExpandedTicketSectorKey(groupOpen ? "" : groupKey)} className="flex flex-1 items-start gap-3 text-left">
+                                        <span className="mt-1 h-4 w-4 rounded-full shadow-sm" style={{ backgroundColor: sector.color }} />
+                                        <div>
+                                          <p className="text-lg font-black text-slate-950">{sector.name}</p>
+                                          <p className="mt-1 text-xs font-semibold text-slate-500">{KIND_LABEL[sector.kind]} • reservado nesta data {groupLimit} • setor base {sectorLimit} • {groupQuantity} ingresso(s) criados</p>
+                                        </div>
+                                      </button>
+                                      <div className="flex flex-wrap gap-2">
+                                        <button type="button" onClick={() => generateTicketsForGroup(session, sector, ["INTEIRA"])} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white hover:bg-sky-700">+ Inteira</button>
+                                        <button type="button" onClick={() => generateTicketsForGroup(session, sector, ["MEIA"])} className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100">+ Meia</button>
+                                        <button type="button" onClick={() => generateTicketsForGroup(session, sector, ["SOCIAL"])} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-100">+ Social</button>
+                                        <button type="button" onClick={() => generateTicketsForGroup(session, sector, ["INTEIRA", "MEIA"], { replaceGroup: true })} className="rounded-xl bg-sky-600 px-3 py-2 text-xs font-black text-white hover:bg-sky-700">Inteira + Meia</button>
+                                      </div>
+                                    </div>
+
+                                    {groupOpen ? (
+                                      <div className="mt-4 grid gap-4">
+                                        <div className="grid gap-3 md:grid-cols-2">
+                                          <Field label="Valor do 1º lote" value={config.firstPrice} onChange={(value) => updateTicketConfig(session, sector, { firstPrice: onlyMoney(value) })} money helper="Valor real do tipo gerado. A máquina cria quantidade e viradas automaticamente." />
+                                          <Field label="Quanto sobe cada lote" value={config.priceStep} onChange={(value) => updateTicketConfig(session, sector, { priceStep: onlyMoney(value) })} money helper="A cada virada de lote, o preço aumenta este valor." />
+                                        </div>
+
+                                        <div className="grid gap-3 md:grid-cols-4">
+                                          <div className="rounded-2xl border border-white bg-white p-4 shadow-sm">
+                                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Lotes automáticos</p>
+                                            <p className="mt-1 text-2xl font-black text-slate-950">{automaticLotCount}</p>
+                                          </div>
+                                          <div className="rounded-2xl border border-white bg-white p-4 shadow-sm">
+                                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Quantidade por lote</p>
+                                            <p className="mt-1 text-sm font-black text-slate-950">{automaticLotPreview}</p>
+                                          </div>
+                                          <div className="rounded-2xl border border-white bg-white p-4 shadow-sm">
+                                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Virada automática</p>
+                                            <p className="mt-1 text-sm font-black text-slate-950">a cada {automaticInterval} dia(s)</p>
+                                          </div>
+                                          <div className="rounded-2xl border border-white bg-white p-4 shadow-sm">
+                                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Período de venda</p>
+                                            <p className="mt-1 text-sm font-black text-slate-950">{datePreview(config.salesStartAt)} → {datePreview(saleLimit)}</p>
+                                          </div>
+                                        </div>
+
+                                        {groupTickets.length > 0 ? (
+                                          <div className="overflow-hidden rounded-[1.4rem] border border-slate-200 bg-white">
+                                            <div className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-slate-400">
+                                              <span>Lote</span>
+                                              <span>Tipo</span>
+                                              <span>Preço</span>
+                                              <span>Qtd.</span>
+                                            </div>
+                                            {groupTickets
+                                              .slice()
+                                              .sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel) || a.ticketKind.localeCompare(b.ticketKind))
+                                              .map((ticket) => (
+                                                <div key={ticket.localId} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-700 last:border-b-0">
+                                                  <span>{ticket.lotLabel}</span>
+                                                  <span>{toTicketKindLabel(ticket.ticketKind)}</span>
+                                                  <span>{formatMoney(ticket.price)}</span>
+                                                  <span>{ticket.quantity}</span>
+                                                </div>
+                                              ))}
+                                          </div>
+                                        ) : (
+                                          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm font-semibold text-slate-500">Nenhum lote criado para esta data e setor. Informe os valores e clique em um dos botões do setor.</div>
+                                        )}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    {tickets.length === 0 ? (
+                      <div className="rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+                        <p className="text-lg font-black text-slate-900">Nenhum lote criado ainda.</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-500">Volte para o gerador e crie os lotes automaticamente.</p>
+                        <button type="button" onClick={() => setTicketBuilderStep("CREATE")} className="mt-4 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-sky-700">Criar lotes</button>
+                      </div>
+                    ) : (
+                      sessions.map((session) => {
+                        const sessionTickets = tickets.filter((ticket) => ticket.eventSessionLocalId === session.localId);
+
+                        if (sessionTickets.length === 0) return null;
+
+                        return (
+                          <div key={`review-${session.localId}`} className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm">
+                            <div className="bg-slate-950 px-5 py-4 text-white">
+                              <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-300">Resumo</p>
+                              <p className="mt-1 text-lg font-black">{session.name || datePreview(session.startsAt)}</p>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                              {sectors.map((sector) => {
+                                const groupTickets = sessionTickets.filter((ticket) => ticket.venueSectorLocalId === sector.localId);
+
+                                if (groupTickets.length === 0) return null;
+
+                                return (
+                                  <div key={`review-${session.localId}-${sector.localId}`} className="p-4">
+                                    <p className="text-sm font-black text-slate-950">{sector.name}</p>
+                                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                                      {groupTickets
+                                        .slice()
+                                        .sort((a, b) => lotNumber(a.lotLabel) - lotNumber(b.lotLabel) || a.ticketKind.localeCompare(b.ticketKind))
+                                        .map((ticket) => (
+                                          <div key={ticket.localId} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                            <p className="text-xs font-black text-slate-900">{toTicketKindLabel(ticket.ticketKind)} • {ticket.lotLabel}</p>
+                                            <p className="mt-1 text-xs font-semibold text-slate-500">{ticket.quantity} ingresso(s) • {formatMoney(ticket.price)}</p>
+                                            <p className="mt-1 text-[11px] font-semibold text-slate-400">{datePreview(ticket.salesStartAt)} até {datePreview(ticket.salesEndAt)}</p>
+                                          </div>
+                                        ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
               </StepShell>
             ) : null}
 

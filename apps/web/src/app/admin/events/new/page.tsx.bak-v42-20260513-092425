@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import {
@@ -1093,81 +1093,6 @@ function GalleryUploadField({
   );
 }
 
-function clampTicketsForCapacity(
-  sourceTickets: TicketItem[],
-  sessions: SessionItem[],
-  sectors: SectorItem[],
-  eventCapacityValue: string,
-  isOpenOnly: boolean,
-) {
-  const eventCapacity = Math.max(0, toNumber(eventCapacityValue));
-  const fallbackSession = sessions[0]?.localId || "default-session";
-  const fallbackSector = isOpenOnly ? "" : sectors[0]?.localId || "default-sector";
-  const sessionCapacityById = new Map(
-    sessions.map((session) => [
-      session.localId,
-      positiveIntOrZero(session.capacity) || eventCapacity,
-    ]),
-  );
-  const sectorCapacityById = new Map(
-    sectors.map((sector) => [
-      isOpenOnly ? "" : sector.localId,
-      positiveIntOrZero(sector.capacity) || eventCapacity,
-    ]),
-  );
-  const groupUsed = new Map<string, number>();
-  const sessionUsed = new Map<string, number>();
-  const sanitized: TicketItem[] = [];
-
-  const ordered = [...sourceTickets]
-    .filter((ticket) => ticket.name.trim() && ticket.price.trim() && toNumber(ticket.quantity) > 0)
-    .sort((a, b) => {
-      const sessionCompare = String(a.eventSessionLocalId || "").localeCompare(String(b.eventSessionLocalId || ""));
-      if (sessionCompare !== 0) return sessionCompare;
-      const sectorCompare = String(a.venueSectorLocalId || "").localeCompare(String(b.venueSectorLocalId || ""));
-      if (sectorCompare !== 0) return sectorCompare;
-      const lotCompare = lotNumber(a.lotLabel) - lotNumber(b.lotLabel);
-      if (lotCompare !== 0) return lotCompare;
-      return TICKET_KIND_OPTIONS.findIndex((item) => item.value === a.ticketKind) - TICKET_KIND_OPTIONS.findIndex((item) => item.value === b.ticketKind);
-    });
-
-  for (const ticket of ordered) {
-    const sectorKey = isOpenOnly ? "" : ticket.venueSectorLocalId || fallbackSector;
-    const sectorLimit = sectorCapacityById.get(sectorKey) || eventCapacity;
-    const sessionKeys = ticket.eventSessionLocalId
-      ? [ticket.eventSessionLocalId]
-      : sessions.map((session) => session.localId).filter(Boolean);
-    const effectiveSessionKeys = sessionKeys.length ? sessionKeys : [fallbackSession];
-
-    const possibleQuantity = effectiveSessionKeys.reduce((min, sessionKey) => {
-      const sessionLimit = sessionCapacityById.get(sessionKey) || eventCapacity;
-      const groupLimit = Math.max(0, Math.min(sessionLimit, sectorLimit));
-      const groupKey = `${sessionKey}::${sectorKey}`;
-      const groupRemaining = groupLimit - (groupUsed.get(groupKey) || 0);
-      const sessionRemaining = sessionLimit - (sessionUsed.get(sessionKey) || 0);
-      return Math.min(min, groupRemaining, sessionRemaining);
-    }, toNumber(ticket.quantity));
-
-    const nextQuantity = Math.max(0, Math.min(toNumber(ticket.quantity), possibleQuantity));
-
-    if (nextQuantity <= 0) continue;
-
-    for (const sessionKey of effectiveSessionKeys) {
-      const groupKey = `${sessionKey}::${sectorKey}`;
-      groupUsed.set(groupKey, (groupUsed.get(groupKey) || 0) + nextQuantity);
-      sessionUsed.set(sessionKey, (sessionUsed.get(sessionKey) || 0) + nextQuantity);
-    }
-
-    sanitized.push({
-      ...ticket,
-      quantity: String(Math.floor(nextQuantity)),
-      eventSessionLocalId: ticket.eventSessionLocalId || effectiveSessionKeys[0] || fallbackSession,
-      venueSectorLocalId: sectorKey,
-    });
-  }
-
-  return sanitized;
-}
 export default function NewEventPage() {
   const [organizers, setOrganizers] = useState<Organizer[]>([]);
   const [loadingOrganizers, setLoadingOrganizers] = useState(true);
@@ -2896,7 +2821,7 @@ export default function NewEventPage() {
               },
             ]
           : [],
-      ticketTypes: clampTicketsForCapacity(tickets, sessions, sectors, capacity, isOpenOnly).map((ticket, index) => {
+      ticketTypes: tickets.map((ticket, index) => {
         const sector = sectors.find((item) => item.localId === ticket.venueSectorLocalId);
         const autoHidden = lotNumber(ticket.lotLabel) > 1 && tickets.some((other) =>
           other.localId !== ticket.localId &&
@@ -5741,4 +5666,3 @@ export default function NewEventPage() {
     </main>
   );
 }
-

@@ -1,8 +1,15 @@
-import { Body, Controller, BadRequestException, NotFoundException, Param, Patch } from '@nestjs/common';
-import { EventOccupancyMode, Prisma, SeatMapObjectType } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateEventDto } from './dto/create-event.dto';
-import { EventsService } from './events.service';
+import {
+  Body,
+  BadRequestException,
+  Controller,
+  NotFoundException,
+  Param,
+  Patch,
+} from "@nestjs/common";
+import { EventOccupancyMode, Prisma, SeatMapObjectType } from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
+import { CreateEventDto } from "./dto/create-event.dto";
+import { EventsService } from "./events.service";
 
 function text(value?: string | null) {
   const normalized = value?.trim();
@@ -10,8 +17,9 @@ function text(value?: string | null) {
 }
 
 function numberValue(value?: string | number | null) {
-  if (value === undefined || value === null || value === '') return undefined;
-  const numeric = typeof value === 'number' ? value : Number(String(value).replace(',', '.'));
+  if (value === undefined || value === null || value === "") return undefined;
+  const numeric =
+    typeof value === "number" ? value : Number(String(value).replace(",", "."));
   return Number.isFinite(numeric) ? numeric : undefined;
 }
 
@@ -22,24 +30,23 @@ function intValue(value?: string | number | null) {
   return parsed > 0 ? parsed : undefined;
 }
 
-function capacityInt(value?: string | number | null) {
-  return intValue(value) || 0;
-}
-
 function key(value?: string | null) {
   return text(value)
-    ?.normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/&/g, 'E')
-    .replace(/\//g, '_')
-    .replace(/-/g, '_')
-    .replace(/\s+/g, '_')
+    ?.normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, "E")
+    .replace(/\//g, "_")
+    .replace(/-/g, "_")
+    .replace(/\s+/g, "_")
     .toUpperCase();
 }
 
 function occupancy(value?: string | null): EventOccupancyMode {
   const normalized = key(value);
-  if (normalized && EventOccupancyMode[normalized as keyof typeof EventOccupancyMode]) {
+  if (
+    normalized &&
+    EventOccupancyMode[normalized as keyof typeof EventOccupancyMode]
+  ) {
     return EventOccupancyMode[normalized as keyof typeof EventOccupancyMode];
   }
   return EventOccupancyMode.GENERAL_ADMISSION;
@@ -47,7 +54,10 @@ function occupancy(value?: string | null): EventOccupancyMode {
 
 function objectType(value?: string | null): SeatMapObjectType {
   const normalized = key(value);
-  if (normalized && SeatMapObjectType[normalized as keyof typeof SeatMapObjectType]) {
+  if (
+    normalized &&
+    SeatMapObjectType[normalized as keyof typeof SeatMapObjectType]
+  ) {
     return SeatMapObjectType[normalized as keyof typeof SeatMapObjectType];
   }
 
@@ -68,7 +78,7 @@ function objectType(value?: string | null): SeatMapObjectType {
     BLOQUEIO: SeatMapObjectType.BLOCKED_SPACE,
   };
 
-  return aliases[normalized || ''] || SeatMapObjectType.AREA;
+  return aliases[normalized || ""] || SeatMapObjectType.AREA;
 }
 
 function dateValue(value?: string | null) {
@@ -77,132 +87,133 @@ function dateValue(value?: string | null) {
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
-function ensureFullUpdateCapacity(body: CreateEventDto) {
-  const eventCapacity = capacityInt(body.capacity);
 
-  if (eventCapacity <= 0) {
-    throw new BadRequestException('A capacidade geral do evento precisa ser maior que zero.');
-  }
-
-  const sessions = body.sessions || [];
-  const sectors = body.sectors || [];
-  const tickets = body.ticketTypes || [];
-  const sessionKeys = sessions.map((session, index) => session.localId || `session-${index}`);
-  const sectorKeys = sectors.map((sector, index) => sector.localId || `sector-${index}`);
-  const sessionCapacityByKey = new Map<string, number>();
-  const sectorCapacityByKey = new Map<string, number>();
-
-  for (const [index, session] of sessions.entries()) {
-    const sessionKey = session.localId || `session-${index}`;
-    const sessionCapacity = capacityInt(session.capacity) || eventCapacity;
-
-    if (sessionCapacity > eventCapacity) {
-      throw new BadRequestException(
-        `A capacidade da data ${session.name || index + 1} não pode ultrapassar a capacidade geral.`,
-      );
-    }
-
-    sessionCapacityByKey.set(sessionKey, sessionCapacity);
-  }
-
-  const sessionTotal = [...sessionCapacityByKey.values()].reduce(
-    (sum, value) => sum + value,
-    0,
-  );
-
-  if (sessionTotal > eventCapacity) {
-    throw new BadRequestException(
-      'A soma das capacidades das datas não pode ultrapassar a capacidade geral.',
-    );
-  }
-
-  for (const [index, sector] of sectors.entries()) {
-    const sectorKey = sector.localId || `sector-${index}`;
-    const sectorCapacity = capacityInt(sector.capacity) || eventCapacity;
-
-    if (sectorCapacity > eventCapacity) {
-      throw new BadRequestException(
-        `A capacidade do setor ${sector.name || index + 1} não pode ultrapassar a capacidade geral.`,
-      );
-    }
-
-    sectorCapacityByKey.set(sectorKey, sectorCapacity);
-  }
-
-  const sectorTotal = [...sectorCapacityByKey.values()].reduce(
-    (sum, value) => sum + value,
-    0,
-  );
-
-  for (const [index, session] of sessions.entries()) {
-    const sessionKey = session.localId || `session-${index}`;
-    const sessionCapacity = sessionCapacityByKey.get(sessionKey) || eventCapacity;
-
-    if (sectorTotal > sessionCapacity) {
-      throw new BadRequestException(
-        `A soma dos setores (${sectorTotal}) não pode ultrapassar a capacidade da data ${session.name || index + 1} (${sessionCapacity}).`,
-      );
-    }
-  }
-
-  const usedBySession = new Map<string, number>();
-  const usedBySessionAndSector = new Map<string, number>();
-  const fallbackSessionKey = sessionKeys[0] || 'default-session';
-  const fallbackSectorKey = sectorKeys[0] || 'default-sector';
-
-  for (const ticket of tickets) {
-    const quantity = capacityInt(ticket.quantity);
-
-    if (quantity <= 0) continue;
-
-    const sectorKey = ticket.venueSectorLocalId || fallbackSectorKey;
-    const sectorCapacity =
-      sectorCapacityByKey.get(sectorKey) ||
-      sectorCapacityByKey.get(fallbackSectorKey) ||
-      eventCapacity;
-    const targetSessionKeys = ticket.eventSessionLocalId
-      ? [ticket.eventSessionLocalId]
-      : sessionKeys.length
-        ? sessionKeys
-        : [fallbackSessionKey];
-
-    for (const sessionKey of targetSessionKeys) {
-      const sessionCapacity =
-        sessionCapacityByKey.get(sessionKey) ||
-        sessionCapacityByKey.get(fallbackSessionKey) ||
-        eventCapacity;
-      const groupLimit = Math.min(sessionCapacity, sectorCapacity);
-      const groupKey = `${sessionKey}::${sectorKey}`;
-      const nextGroupTotal = (usedBySessionAndSector.get(groupKey) || 0) + quantity;
-      const nextSessionTotal = (usedBySession.get(sessionKey) || 0) + quantity;
-
-      if (nextGroupTotal > groupLimit) {
-        throw new BadRequestException(
-          'Ingressos ultrapassam a capacidade disponível do setor nesta data. Refaça os lotes automaticamente.',
-        );
-      }
-
-      if (nextSessionTotal > sessionCapacity) {
-        throw new BadRequestException(
-          'Ingressos ultrapassam a capacidade disponível desta data. Refaça os lotes automaticamente.',
-        );
-      }
-
-      usedBySessionAndSector.set(groupKey, nextGroupTotal);
-      usedBySession.set(sessionKey, nextSessionTotal);
-    }
-  }
+function positiveIntOrZero(value?: string | number | null) {
+  return intValue(value) || 0;
 }
 
-@Controller('events')
+function localReference(value?: string | null) {
+  return text(value) || "";
+}
+
+function capacityGroupKey(sessionId: string, sectorId: string) {
+  return `${sessionId}::${sectorId}`;
+}
+
+@Controller("events")
 export class EventFullUpdateController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventsService: EventsService,
   ) {}
 
-  @Patch(':id/full')
-  async updateFull(@Param('id') id: string, @Body() body: CreateEventDto) {
+  private validateTicketCapacityPlan(body: CreateEventDto, existingCapacity: number) {
+    const generalCapacity = positiveIntOrZero(body.capacity) || existingCapacity || 0;
+    const sessions = body.sessions || [];
+    const sectors = body.sectors || [];
+    const tickets = body.ticketTypes || [];
+
+    if (!tickets.length) return;
+
+    const sessionCapacityByLocalId = new Map<string, number>();
+    const sectorCapacityByLocalId = new Map<string, number>();
+
+    let sessionTotal = 0;
+
+    sessions.forEach((session, index) => {
+      const sessionId = localReference(session.localId) || `SESSION-${index}`;
+      const capacity = positiveIntOrZero(session.capacity) || generalCapacity;
+      sessionCapacityByLocalId.set(sessionId, capacity);
+      sessionTotal += capacity;
+    });
+
+    if (generalCapacity > 0 && sessionTotal > generalCapacity) {
+      throw new BadRequestException(
+        `A soma das capacidades das datas (${sessionTotal}) não pode ultrapassar a capacidade geral (${generalCapacity}).`,
+      );
+    }
+
+    let sectorTotal = 0;
+
+    sectors.forEach((sector, index) => {
+      const sectorId = localReference(sector.localId) || `SECTOR-${index}`;
+      const capacity = positiveIntOrZero(sector.capacity) || generalCapacity;
+      sectorCapacityByLocalId.set(sectorId, capacity);
+      sectorTotal += capacity;
+    });
+
+    const sessionCapacities = Array.from(sessionCapacityByLocalId.values()).filter((value) => value > 0);
+    const smallestSessionCapacity = sessionCapacities.length
+      ? Math.min(...sessionCapacities)
+      : generalCapacity;
+
+    if (smallestSessionCapacity > 0 && sectorTotal > smallestSessionCapacity) {
+      throw new BadRequestException(
+        `A soma dos setores (${sectorTotal}) não pode ultrapassar a capacidade disponível por data (${smallestSessionCapacity}).`,
+      );
+    }
+
+    const ticketTotalByGroup = new Map<string, number>();
+    const ticketTotalBySession = new Map<string, number>();
+    let totalTickets = 0;
+
+    tickets.forEach((ticket, index) => {
+      const quantity = positiveIntOrZero(ticket.quantity);
+
+      if (quantity <= 0) {
+        throw new BadRequestException(`O lote ${index + 1} precisa ter quantidade maior que zero.`);
+      }
+
+      const sessionId = localReference(ticket.eventSessionLocalId);
+      const sectorId = localReference(ticket.venueSectorLocalId);
+
+      if (!sessionId || !sectorId) {
+        throw new BadRequestException(
+          `O lote ${index + 1} precisa estar vinculado a uma data e a um setor.`,
+        );
+      }
+
+      const groupKey = capacityGroupKey(sessionId, sectorId);
+      ticketTotalByGroup.set(groupKey, (ticketTotalByGroup.get(groupKey) || 0) + quantity);
+      ticketTotalBySession.set(sessionId, (ticketTotalBySession.get(sessionId) || 0) + quantity);
+      totalTickets += quantity;
+    });
+
+    for (const [sessionId, sessionTicketTotal] of ticketTotalBySession.entries()) {
+      const sessionCapacity = sessionCapacityByLocalId.get(sessionId) || generalCapacity;
+
+      if (sessionCapacity > 0 && sessionTicketTotal > sessionCapacity) {
+        throw new BadRequestException(
+          `Ingressos da data ${sessionId} (${sessionTicketTotal}) ultrapassam a capacidade da data (${sessionCapacity}).`,
+        );
+      }
+    }
+
+    if (generalCapacity > 0 && totalTickets > generalCapacity) {
+      throw new BadRequestException(
+        `A soma dos ingressos (${totalTickets}) não pode ultrapassar a capacidade geral (${generalCapacity}).`,
+      );
+    }
+
+    for (const [groupKey, groupTotal] of ticketTotalByGroup.entries()) {
+      const [sessionId, sectorId] = groupKey.split("::");
+      const sessionCapacity = sessionCapacityByLocalId.get(sessionId) || generalCapacity;
+      const sectorCapacity = sectorCapacityByLocalId.get(sectorId) || generalCapacity;
+      const groupLimit = Math.min(
+        sessionCapacity || sectorCapacity || generalCapacity,
+        sectorCapacity || sessionCapacity || generalCapacity,
+      );
+
+      if (groupLimit > 0 && groupTotal > groupLimit) {
+        throw new BadRequestException(
+          `Ingressos do grupo data/setor ${sessionId}/${sectorId} (${groupTotal}) ultrapassam a capacidade disponível (${groupLimit}).`,
+        );
+      }
+    }
+  }
+
+  @Patch(":id/full")
+  async updateFull(@Param("id") id: string, @Body() body: CreateEventDto) {
     const existing = await this.prisma.event.findUnique({
       where: { id },
       include: {
@@ -219,13 +230,14 @@ export class EventFullUpdateController {
     });
 
     if (!existing) {
-      throw new NotFoundException('Evento não encontrado');
+      throw new NotFoundException("Evento não encontrado");
     }
 
-    ensureFullUpdateCapacity(body);
-
-    const eventOccupancyMode = occupancy(body.occupancyMode) || existing.occupancyMode;
+    const eventOccupancyMode =
+      occupancy(body.occupancyMode) || existing.occupancyMode;
     const hasOrders = existing.orders.length > 0;
+
+    this.validateTicketCapacityPlan(body, existing.capacity || 0);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.event.update({
@@ -291,7 +303,7 @@ export class EventFullUpdateController {
           where: { eventId: id },
           create: {
             eventId: id,
-            mode: text(body.location.mode) || 'PRESENTIAL',
+            mode: text(body.location.mode) || "PRESENTIAL",
             venueName: text(body.location.venueName),
             addressLine1: text(body.location.addressLine1),
             addressLine2: text(body.location.addressLine2),
@@ -306,7 +318,7 @@ export class EventFullUpdateController {
             longitude: numberValue(body.location.longitude),
           },
           update: {
-            mode: text(body.location.mode) || 'PRESENTIAL',
+            mode: text(body.location.mode) || "PRESENTIAL",
             venueName: text(body.location.venueName),
             addressLine1: text(body.location.addressLine1),
             addressLine2: text(body.location.addressLine2),
@@ -333,7 +345,9 @@ export class EventFullUpdateController {
             thumbnailUrl: text(body.media.thumbnailUrl),
             mobileBannerUrl: text(body.media.mobileBannerUrl),
             sectorMapImageUrl: text(body.media.sectorMapImageUrl),
-            gallery: body.media.gallery?.length ? (body.media.gallery as Prisma.InputJsonValue) : undefined,
+            gallery: body.media.gallery?.length
+              ? (body.media.gallery as Prisma.InputJsonValue)
+              : undefined,
           },
           update: {
             coverImageUrl: text(body.media.coverImageUrl),
@@ -341,7 +355,9 @@ export class EventFullUpdateController {
             thumbnailUrl: text(body.media.thumbnailUrl),
             mobileBannerUrl: text(body.media.mobileBannerUrl),
             sectorMapImageUrl: text(body.media.sectorMapImageUrl),
-            gallery: body.media.gallery?.length ? (body.media.gallery as Prisma.InputJsonValue) : undefined,
+            gallery: body.media.gallery?.length
+              ? (body.media.gallery as Prisma.InputJsonValue)
+              : undefined,
           },
         });
       }
@@ -381,49 +397,51 @@ export class EventFullUpdateController {
 
       const sessionIdByLocalId = new Map<string, string>();
       const sectorIdByLocalId = new Map<string, string>();
-      const existingSessionsByOrder = [...existing.sessions].sort(
-        (a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0) || a.createdAt.getTime() - b.createdAt.getTime(),
+      const existingSessionIds = new Set(
+        existing.sessions.map((session) => session.id),
       );
-      const existingSectorsByOrder = [...existing.sectors].sort(
-        (a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0) || a.createdAt.getTime() - b.createdAt.getTime(),
+      const existingSectorIds = new Set(
+        existing.sectors.map((sector) => sector.id),
       );
 
       for (const [index, session] of (body.sessions || []).entries()) {
-        const sessionData = {
+        const incomingLocalId = text(session.localId);
+        const data = {
+          eventId: id,
           name: text(session.name) || `Data ${index + 1}`,
           description: text(session.description),
           startsAt: dateValue(session.startsAt) || existing.eventDate,
           endsAt: dateValue(session.endsAt),
           capacity: intValue(session.capacity),
-          status: text(session.status) || 'ACTIVE',
+          status: text(session.status) || "ACTIVE",
           displayOrder: session.displayOrder ?? index,
         };
 
-        const previousSession = hasOrders ? existingSessionsByOrder[index] : undefined;
-        const saved = previousSession
-          ? await tx.eventSession.update({
-              where: { id: previousSession.id },
-              data: sessionData,
-            })
-          : await tx.eventSession.create({
-              data: {
-                eventId: id,
-                ...sessionData,
-              },
-            });
+        if (
+          hasOrders &&
+          incomingLocalId &&
+          existingSessionIds.has(incomingLocalId)
+        ) {
+          const updated = await tx.eventSession.update({
+            where: { id: incomingLocalId },
+            data,
+          });
 
-        if (session.localId) sessionIdByLocalId.set(session.localId, saved.id);
-        sessionIdByLocalId.set(saved.id, saved.id);
-      }
-
-      if (hasOrders) {
-        for (const session of existingSessionsByOrder) {
-          sessionIdByLocalId.set(session.id, session.id);
+          sessionIdByLocalId.set(incomingLocalId, updated.id);
+          continue;
         }
+
+        const created = await tx.eventSession.create({ data });
+
+        if (incomingLocalId)
+          sessionIdByLocalId.set(incomingLocalId, created.id);
+        sessionIdByLocalId.set(created.id, created.id);
       }
 
       for (const [index, sector] of (body.sectors || []).entries()) {
-        const sectorData = {
+        const incomingLocalId = text(sector.localId);
+        const data = {
+          eventId: id,
           name: text(sector.name) || `Setor ${index + 1}`,
           description: text(sector.description),
           type: text(sector.type),
@@ -434,42 +452,42 @@ export class EventFullUpdateController {
           gateName: text(sector.gateName),
         };
 
-        const previousSector = hasOrders ? existingSectorsByOrder[index] : undefined;
-        const saved = previousSector
-          ? await tx.venueSector.update({
-              where: { id: previousSector.id },
-              data: sectorData,
-            })
-          : await tx.venueSector.create({
-              data: {
-                eventId: id,
-                ...sectorData,
-              },
-            });
+        if (
+          hasOrders &&
+          incomingLocalId &&
+          existingSectorIds.has(incomingLocalId)
+        ) {
+          const updated = await tx.venueSector.update({
+            where: { id: incomingLocalId },
+            data,
+          });
 
-        if (sector.localId) sectorIdByLocalId.set(sector.localId, saved.id);
-        sectorIdByLocalId.set(saved.id, saved.id);
-      }
-
-      if (hasOrders) {
-        for (const sector of existingSectorsByOrder) {
-          sectorIdByLocalId.set(sector.id, sector.id);
+          sectorIdByLocalId.set(incomingLocalId, updated.id);
+          continue;
         }
+
+        const created = await tx.venueSector.create({ data });
+
+        if (incomingLocalId) sectorIdByLocalId.set(incomingLocalId, created.id);
+        sectorIdByLocalId.set(created.id, created.id);
       }
 
-      const defaultSectorId = Array.from(sectorIdByLocalId.values())[0];
+      const defaultSectorId =
+        Array.from(sectorIdByLocalId.values())[0] || existing.sectors[0]?.id;
 
       for (const layout of body.venueLayouts || []) {
         const createdLayout = await tx.venueLayout.create({
           data: {
             eventId: id,
-            name: text(layout.name) || 'Mapa do evento',
+            name: text(layout.name) || "Mapa do evento",
             occupancyMode: occupancy(layout.occupancyMode),
             width: intValue(layout.width),
             height: intValue(layout.height),
-            mapData: layout.mapData ? (layout.mapData as Prisma.InputJsonValue) : undefined,
+            mapData: layout.mapData
+              ? (layout.mapData as Prisma.InputJsonValue)
+              : undefined,
             isDefault: layout.isDefault ?? true,
-            status: text(layout.status) || 'ACTIVE',
+            status: text(layout.status) || "ACTIVE",
           },
         });
 
@@ -477,7 +495,12 @@ export class EventFullUpdateController {
           await tx.seatMapObject.create({
             data: {
               layoutId: createdLayout.id,
-              venueSectorId: (object.venueSectorLocalId ? sectorIdByLocalId.get(object.venueSectorLocalId) : undefined) || text(object.venueSectorId) || defaultSectorId,
+              venueSectorId:
+                (object.venueSectorLocalId
+                  ? sectorIdByLocalId.get(object.venueSectorLocalId)
+                  : undefined) ||
+                text(object.venueSectorId) ||
+                defaultSectorId,
               code: text(object.code) || `OBJ-${Date.now()}`,
               label: text(object.label),
               type: objectType(object.type),
@@ -489,8 +512,10 @@ export class EventFullUpdateController {
               width: numberValue(object.width),
               height: numberValue(object.height),
               rotation: numberValue(object.rotation),
-              status: text(object.status) || 'AVAILABLE',
-              metadata: object.metadata ? (object.metadata as Prisma.InputJsonValue) : undefined,
+              status: text(object.status) || "AVAILABLE",
+              metadata: object.metadata
+                ? (object.metadata as Prisma.InputJsonValue)
+                : undefined,
             },
           });
         }
@@ -501,19 +526,23 @@ export class EventFullUpdateController {
           await tx.ticketType.create({
             data: {
               eventId: id,
-              eventSessionId: ticket.eventSessionLocalId ? sessionIdByLocalId.get(ticket.eventSessionLocalId) : undefined,
-              venueSectorId: ticket.venueSectorLocalId ? sectorIdByLocalId.get(ticket.venueSectorLocalId) : undefined,
+              eventSessionId: ticket.eventSessionLocalId
+                ? sessionIdByLocalId.get(ticket.eventSessionLocalId)
+                : undefined,
+              venueSectorId: ticket.venueSectorLocalId
+                ? sectorIdByLocalId.get(ticket.venueSectorLocalId)
+                : undefined,
               name: text(ticket.name) || `Ingresso ${index + 1}`,
               lotLabel: text(ticket.lotLabel),
               description: text(ticket.description),
-              price: text(ticket.price) || '0.00',
+              price: text(ticket.price) || "0.00",
               quantity: intValue(ticket.quantity) || 1,
               salesStartAt: dateValue(ticket.salesStartAt),
               salesEndAt: dateValue(ticket.salesEndAt),
               maxPerOrder: intValue(ticket.maxPerOrder),
               displayOrder: ticket.displayOrder ?? index,
               isHidden: ticket.isHidden ?? false,
-              status: text(ticket.status) || 'ACTIVE',
+              status: text(ticket.status) || "ACTIVE",
               occupancyMode: occupancy(ticket.occupancyMode),
             },
           });

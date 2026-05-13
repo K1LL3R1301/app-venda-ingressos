@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -391,137 +391,6 @@ export class EventsService {
     );
   }
 
-  private toCapacityInt(value?: string | number | null) {
-    const parsed =
-      typeof value === 'number'
-        ? value
-        : Number(String(value ?? '').replace(',', '.'));
-
-    if (!Number.isFinite(parsed) || parsed < 1) return 0;
-
-    return Math.floor(parsed);
-  }
-
-  private ensureTicketCapacityForCreate(
-    data: CreateEventDto,
-    sessionsPayload: LocalSessionPayload[],
-    sectorsPayload: LocalSectorPayload[],
-  ) {
-    const eventCapacity = this.toCapacityInt(data.capacity);
-
-    if (eventCapacity <= 0) {
-      throw new BadRequestException('A capacidade geral do evento precisa ser maior que zero.');
-    }
-
-    const sessionKeys = sessionsPayload.map(
-      (session, index) => session.localId || `session-${index}`,
-    );
-    const sectorKeys = sectorsPayload.map(
-      (sector, index) => sector.localId || `sector-${index}`,
-    );
-    const sessionCapacityByLocalId = new Map<string, number>();
-    const sectorCapacityByLocalId = new Map<string, number>();
-
-    for (const [index, session] of sessionsPayload.entries()) {
-      const key = session.localId || `session-${index}`;
-      const sessionCapacity = this.toCapacityInt(session.capacity) || eventCapacity;
-
-      if (sessionCapacity > eventCapacity) {
-        throw new BadRequestException(
-          `A capacidade da data ${session.name} nÃ£o pode ultrapassar a capacidade geral.`,
-        );
-      }
-
-      sessionCapacityByLocalId.set(key, sessionCapacity);
-    }
-
-    const sessionTotal = [...sessionCapacityByLocalId.values()].reduce(
-      (sum, value) => sum + value,
-      0,
-    );
-
-    if (sessionTotal > eventCapacity) {
-      throw new BadRequestException(
-        'A soma das capacidades das datas nÃ£o pode ultrapassar a capacidade geral.',
-      );
-    }
-
-    for (const [index, sector] of sectorsPayload.entries()) {
-      const key = sector.localId || `sector-${index}`;
-      const sectorCapacity = this.toCapacityInt(sector.capacity) || eventCapacity;
-
-      if (sectorCapacity > eventCapacity) {
-        throw new BadRequestException(
-          `A capacidade do setor ${sector.name} nÃ£o pode ultrapassar a capacidade geral.`,
-        );
-      }
-
-      sectorCapacityByLocalId.set(key, sectorCapacity);
-    }
-
-    const sectorTotal = [...sectorCapacityByLocalId.values()].reduce(
-      (sum, value) => sum + value,
-      0,
-    );
-
-    for (const session of sessionsPayload) {
-      const sessionKey = session.localId || sessionKeys[0] || 'default-session';
-      const sessionCapacity = sessionCapacityByLocalId.get(sessionKey) || eventCapacity;
-
-      if (sectorTotal > sessionCapacity) {
-        throw new BadRequestException(
-          `A soma dos setores (${sectorTotal}) nÃ£o pode ultrapassar a capacidade da data ${session.name} (${sessionCapacity}).`,
-        );
-      }
-    }
-
-    const usedBySession = new Map<string, number>();
-    const usedBySessionAndSector = new Map<string, number>();
-    const tickets = data.ticketTypes || [];
-    const fallbackSectorKey = sectorKeys[0] || 'default-sector';
-
-    for (const ticket of tickets) {
-      const quantity = this.toCapacityInt(ticket.quantity);
-
-      if (quantity <= 0) continue;
-
-      const sectorKey = ticket.venueSectorLocalId || fallbackSectorKey;
-      const sectorCapacity =
-        sectorCapacityByLocalId.get(sectorKey) ||
-        sectorCapacityByLocalId.get(fallbackSectorKey) ||
-        eventCapacity;
-      const targetSessionKeys = ticket.eventSessionLocalId
-        ? [ticket.eventSessionLocalId]
-        : sessionKeys.length
-          ? sessionKeys
-          : ['default-session'];
-
-      for (const sessionKey of targetSessionKeys) {
-        const sessionCapacity =
-          sessionCapacityByLocalId.get(sessionKey) || eventCapacity;
-        const groupLimit = Math.min(sessionCapacity, sectorCapacity);
-        const groupKey = `${sessionKey}::${sectorKey}`;
-        const nextGroupTotal =
-          (usedBySessionAndSector.get(groupKey) || 0) + quantity;
-        const nextSessionTotal = (usedBySession.get(sessionKey) || 0) + quantity;
-
-        if (nextGroupTotal > groupLimit) {
-          throw new BadRequestException(
-            'Ingressos ultrapassam a capacidade disponÃ­vel do setor nesta data. RefaÃ§a os lotes automaticamente.',
-          );
-        }
-
-        if (nextSessionTotal > sessionCapacity) {
-          throw new BadRequestException(
-            'Ingressos ultrapassam a capacidade disponÃ­vel desta data. RefaÃ§a os lotes automaticamente.',
-          );
-        }
-
-        usedBySessionAndSector.set(groupKey, nextGroupTotal);
-        usedBySession.set(sessionKey, nextSessionTotal);
-      }
-    }
-  }
   private buildContentPayload(data?: CreateEventDto['content']) {
     return {
       headline: this.normalizeString(data?.headline),
@@ -825,8 +694,6 @@ export class EventsService {
       occupancyMode,
       category,
     );
-
-    this.ensureTicketCapacityForCreate(data, sessionsPayload, sectorsPayload);
 
     const shouldAllowSeatMap =
       data.allowSeatMap ??
