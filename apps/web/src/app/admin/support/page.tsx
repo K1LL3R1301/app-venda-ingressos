@@ -609,7 +609,7 @@ export default function AdminSupportPage() {
               <button
                 type="button"
                 onClick={() => reviewTicket(ticket.id, "ANSWERED")}
-                className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+                className="rounded-xl bg-[#ff6900] px-5 py-3 text-sm font-black text-white hover:bg-[#e85f00]"
               >
                 Responder
               </button>
@@ -1085,7 +1085,7 @@ export default function AdminSupportPage() {
                           <button
                             type="button"
                             onClick={() => reviewBoost(boost.id, "APPROVED")}
-                            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+                            className="rounded-xl bg-[#ff6900] px-5 py-3 text-sm font-black text-white hover:bg-[#e85f00]"
                           >
                             Aprovar impulsionamento
                           </button>
@@ -1215,7 +1215,7 @@ export default function AdminSupportPage() {
                           <button
                             type="button"
                             onClick={() => reviewAdminRequest(request.id, "APPROVED")}
-                            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white hover:bg-emerald-700"
+                            className="rounded-xl bg-[#ff6900] px-5 py-3 text-sm font-black text-white hover:bg-[#e85f00]"
                           >
                             Aprovar e virar ADMIN
                           </button>

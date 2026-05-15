@@ -1,0 +1,230 @@
+﻿[
+    {
+        "name":  "Raiz package.json",
+        "status":  "PASS",
+        "details":  "Encontrado: package.json",
+        "logPath":  ""
+    },
+    {
+        "name":  "API package.json",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\api\\package.json",
+        "logPath":  ""
+    },
+    {
+        "name":  "WEB package.json",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\package.json",
+        "logPath":  ""
+    },
+    {
+        "name":  "Prisma schema",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\api\\prisma\\schema.prisma",
+        "logPath":  ""
+    },
+    {
+        "name":  "CustomerHeader",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\components\\customer\\CustomerHeader.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "OperatorPanel",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\operator\\_components\\OperatorPanel.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\admin\\super\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\admin\\super\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\admin\\super\\organizers\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\admin\\super\\organizers\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\admin\\super\\events\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\admin\\super\\events\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\admin\\super\\orders\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\admin\\super\\orders\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\admin\\super\\finance\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\admin\\super\\finance\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\admin\\super\\operators\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\admin\\super\\operators\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\admin\\super\\fees\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\admin\\super\\fees\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\operator\\dashboard\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\operator\\dashboard\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\operator\\events\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\operator\\events\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\operator\\validation\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\operator\\validation\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\operator\\support\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\operator\\support\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\operator\\reports\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\operator\\reports\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Rota apps\\web\\src\\app\\(customer)\\events\\cities\\page.tsx",
+        "status":  "PASS",
+        "details":  "Encontrado: apps\\web\\src\\app\\(customer)\\events\\cities\\page.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "OperatorPanel tem somente um Topbar",
+        "status":  "PASS",
+        "details":  "Encontrado 1 ocorrencia(s).",
+        "logPath":  ""
+    },
+    {
+        "name":  "OperatorPanel tem HeroMetric",
+        "status":  "PASS",
+        "details":  "Encontrado 1 ocorrencia(s).",
+        "logPath":  ""
+    },
+    {
+        "name":  "OperatorPanel sem header antigo simples",
+        "status":  "PASS",
+        "details":  "Nenhum padrao quebrado encontrado em apps\\web\\src\\app\\operator\\_components\\OperatorPanel.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "CustomerHeader sem onChange duplicado obvio",
+        "status":  "PASS",
+        "details":  "Nenhum padrao quebrado encontrado em apps\\web\\src\\components\\customer\\CustomerHeader.tsx",
+        "logPath":  ""
+    },
+    {
+        "name":  "Prisma validate",
+        "status":  "PASS",
+        "details":  "Concluido com sucesso.",
+        "logPath":  "C:\\Users\\march\\OneDrive\\Área de Trabalho\\plataforma-ingressos\\test-reports\\v101b-20260515-083236\\Prisma-validate.log"
+    },
+    {
+        "name":  "Prisma generate",
+        "status":  "WARN",
+        "details":  "Falhou com codigo 1, mas marcado como opcional. Veja log.",
+        "logPath":  "C:\\Users\\march\\OneDrive\\Área de Trabalho\\plataforma-ingressos\\test-reports\\v101b-20260515-083236\\Prisma-generate.log"
+    },
+    {
+        "name":  "Prisma generate aviso",
+        "status":  "WARN",
+        "details":  "Se o log mostrar EPERM/query_engine-windows.dll.node, pare API/WEB e rode npx prisma generate manualmente.",
+        "logPath":  ""
+    },
+    {
+        "name":  "API build",
+        "status":  "PASS",
+        "details":  "Concluido com sucesso.",
+        "logPath":  "C:\\Users\\march\\OneDrive\\Área de Trabalho\\plataforma-ingressos\\test-reports\\v101b-20260515-083236\\API-build.log"
+    },
+    {
+        "name":  "WEB build",
+        "status":  "PASS",
+        "details":  "Concluido com sucesso.",
+        "logPath":  "C:\\Users\\march\\OneDrive\\Área de Trabalho\\plataforma-ingressos\\test-reports\\v101b-20260515-083236\\WEB-build.log"
+    },
+    {
+        "name":  "API unit tests",
+        "status":  "SKIP",
+        "details":  "Use -Unit para rodar Jest.",
+        "logPath":  ""
+    },
+    {
+        "name":  "WEB lint",
+        "status":  "SKIP",
+        "details":  "Use -Lint para rodar npm run lint no WEB.",
+        "logPath":  ""
+    },
+    {
+        "name":  "API lint",
+        "status":  "SKIP",
+        "details":  "API lint usa --fix; rode manualmente se quiser.",
+        "logPath":  ""
+    },
+    {
+        "name":  "API Swagger docs",
+        "status":  "FAIL",
+        "details":  "http://localhost:3001/docs nao respondeu corretamente: Impossível conectar-se ao servidor remoto",
+        "logPath":  ""
+    },
+    {
+        "name":  "API base v1",
+        "status":  "FAIL",
+        "details":  "http://localhost:3001/v1 nao respondeu corretamente: Impossível conectar-se ao servidor remoto",
+        "logPath":  ""
+    },
+    {
+        "name":  "WEB dashboard",
+        "status":  "PASS",
+        "details":  "http://localhost:3000/dashboard respondeu HTTP 200",
+        "logPath":  ""
+    },
+    {
+        "name":  "WEB admin dashboard",
+        "status":  "PASS",
+        "details":  "http://localhost:3000/admin/dashboard respondeu HTTP 200",
+        "logPath":  ""
+    },
+    {
+        "name":  "WEB super admin",
+        "status":  "PASS",
+        "details":  "http://localhost:3000/admin/super respondeu HTTP 200",
+        "logPath":  ""
+    },
+    {
+        "name":  "WEB operator dashboard",
+        "status":  "PASS",
+        "details":  "http://localhost:3000/operator/dashboard respondeu HTTP 200",
+        "logPath":  ""
+    },
+    {
+        "name":  "WEB event cities",
+        "status":  "PASS",
+        "details":  "http://localhost:3000/events/cities respondeu HTTP 200",
+        "logPath":  ""
+    }
+]

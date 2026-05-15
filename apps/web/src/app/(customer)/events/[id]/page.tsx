@@ -598,9 +598,26 @@ function getDefaultLayout(event?: EventDetail | null) {
 
 function getLayoutObjects(layout?: VenueLayout | null) {
   const objects = layout?.mapObjects || layout?.objects || [];
-  return [...objects].sort((a, b) =>
+  const sorted = [...objects].sort((a, b) =>
     String(a.code || "").localeCompare(String(b.code || "")),
   );
+
+  const stages = sorted
+    .filter((object) => isStageMapObject(object))
+    .sort((a, b) => {
+      const yDiff = toNumber(a.y) - toNumber(b.y);
+      if (yDiff !== 0) return yDiff;
+      const xDiff = toNumber(a.x) - toNumber(b.x);
+      if (xDiff !== 0) return xDiff;
+      return String(a.code || "").localeCompare(String(b.code || ""));
+    });
+
+  const primaryStageId = stages[0] ? getObjectStableId(stages[0]) : "";
+
+  return sorted.filter((object) => {
+    if (!isStageMapObject(object)) return true;
+    return Boolean(primaryStageId && getObjectStableId(object) === primaryStageId);
+  });
 }
 
 function getLayoutWidth(layout?: VenueLayout | null) {
@@ -626,15 +643,32 @@ function objectShape(object: SeatMapObject): MapShape {
 }
 
 function objectPoints(object: SeatMapObject): MapPoint[] {
-  const points = object.metadata?.polygonPoints;
-  if (Array.isArray(points) && points.length >= 3) {
-    return points
+  const rawPoints = Array.isArray(object.metadata?.polygonPoints)
+    ? object.metadata?.polygonPoints
+    : Array.isArray(object.metadata?.points)
+      ? object.metadata?.points
+      : [];
+
+  if (rawPoints.length >= 3) {
+    const width = Math.max(1, toNumber(object.width) || DEFAULT_MAP_WIDTH);
+    const height = Math.max(1, toNumber(object.height) || DEFAULT_MAP_HEIGHT);
+
+    return rawPoints
       .map((point) => {
         const item = point as Partial<MapPoint>;
-        return { x: toNumber(item.x), y: toNumber(item.y) };
+        const rawX = toNumber(item.x);
+        const rawY = toNumber(item.y);
+        const x = rawX > 100 ? (rawX / width) * 100 : rawX;
+        const y = rawY > 100 ? (rawY / height) * 100 : rawY;
+
+        return {
+          x: Math.max(0, Math.min(100, x)),
+          y: Math.max(0, Math.min(100, y)),
+        };
       })
       .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
   }
+
   return [
     { x: 0, y: 12 },
     { x: 24, y: 0 },
@@ -920,14 +954,39 @@ function getChairRowsForObject(object?: SeatMapObject | null) {
 
 function getTableCountForObject(object?: SeatMapObject | null) {
   if (!object) return 0;
-  return Math.max(
+
+  const explicitTableCount = Math.max(
     0,
-    metadataNumber(object, "tableCount", metadataNumber(object, "tables", 0)),
+    metadataNumber(
+      object,
+      "tableCount",
+      metadataNumber(
+        object,
+        "tables",
+        metadataNumber(
+          object,
+          "tableQuantity",
+          metadataNumber(
+            object,
+            "totalTables",
+            metadataNumber(object, "mesas", metadataNumber(object, "mesaCount", 0)),
+          ),
+        ),
+      ),
+    ),
   );
+
+  if (explicitTableCount > 0) return explicitTableCount;
+
+  const capacity = toNumber(object.capacity);
+  if (capacity <= 0) return 0;
+
+  const chairsPerTable = getChairsPerTableForObject(object);
+  return Math.max(1, Math.min(MAX_RENDERED_RESERVED_PLACES, Math.ceil(capacity / chairsPerTable)));
 }
 
 function getChairsPerTableForObject(object?: SeatMapObject | null) {
-  if (!object) return 1;
+  if (!object) return 4;
   return Math.max(
     1,
     metadataNumber(
@@ -936,7 +995,7 @@ function getChairsPerTableForObject(object?: SeatMapObject | null) {
       metadataNumber(
         object,
         "seatsPerTable",
-        metadataNumber(object, "chairPerTable", 1),
+        metadataNumber(object, "chairPerTable", 4),
       ),
     ),
   );

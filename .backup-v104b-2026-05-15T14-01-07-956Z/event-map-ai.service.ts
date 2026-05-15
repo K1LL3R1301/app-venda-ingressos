@@ -833,11 +833,6 @@ function buildUserPayload({
     prompt,
     referenceImageDescription,
     hardRules: [
-      'ASTRO_MAPA_PRO_V104B: usar apenas um palco principal por padrão; segundo palco só se solicitado explicitamente.',
-      'ASTRO_MAPA_PRO_V104B: setor comercial nunca deve virar palco técnico duplicado.',
-      'ASTRO_MAPA_PRO_V104B: setores com mesas precisam informar metadata.tableCount e metadata.seatsPerTable.',
-      'ASTRO_MAPA_PRO_V104B: setores com cadeiras devem distribuir lugares em grade legível, nunca em linha espremida.',
-      'ASTRO_MAPA_PRO_V104B: mapa principal deve parecer planta profissional com setores proporcionais e sem sobreposição.',
       'HardRule V102: apenas um palco principal por padrÃ£o; crie segundo palco somente se o usuÃ¡rio pedir explicitamente.',
       'HardRule V102: setores de mesas devem carregar metadata.tableCount e metadata.seatsPerTable quando a quantidade for conhecida.',
       'HardRule V102: nÃ£o inventar PALCO duplicado se jÃ¡ existir palco operacional.',

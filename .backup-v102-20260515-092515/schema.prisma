@@ -475,10 +475,7 @@ model Ticket {
   holderName                   String?
   holderEmail                  String?
   holderCpf                    String?
-    accessKind     String?
-  accessLabel    String?
-  accessMetadata Json?
-usedAt                       DateTime?
+  usedAt                       DateTime?
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
 
@@ -500,7 +497,6 @@ usedAt                       DateTime?
   @@index([holderCpf])
   @@index([receivedViaTransferRequestId])
   @@index([receivedViaTransferLocked])
-  @@index([accessKind])
 }
 
 model TicketTransferRequest {

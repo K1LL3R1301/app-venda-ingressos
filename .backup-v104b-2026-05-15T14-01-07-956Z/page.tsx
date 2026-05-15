@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
@@ -267,7 +267,7 @@ function formatDate(value?: string | null) {
 }
 
 function formatCpf(value?: string | null) {
-  const digits = onlyDigits(value).slice(0, 11);
+  const digits = onlyDigits(value);
 
   if (!digits) return "-";
   if (digits.length <= 3) return digits;
@@ -690,7 +690,6 @@ export default function CustomerOrderDetailPage() {
   const [transferSourceTicket, setTransferSourceTicket] = useState<TicketItem | null>(null);
   const [transferTargetCpf, setTransferTargetCpf] = useState("");
   const [transferSubmitting, setTransferSubmitting] = useState(false);
-  const [transferCancelingId, setTransferCancelingId] = useState<string | null>(null);
 
   const currentUserId = currentUser?.id || null;
   const orderItems = order?.items || [];
@@ -883,7 +882,6 @@ export default function CustomerOrderDetailPage() {
 
   function canTransferTicket(ticket?: TicketItem | null) {
     if (!ticket || !currentUserId) return false;
-    if (getPendingTransferForTicket(ticket)) return false;
     return ticket.currentOwnerUserId === currentUserId && ticket.status === "AVAILABLE";
   }
 
@@ -926,91 +924,6 @@ export default function CustomerOrderDetailPage() {
       setSelectedTicketQrError("Erro ao conectar com a API do QR Code.");
     } finally {
       setSelectedTicketQrLoading(false);
-    }
-  }
-
-  function getPendingTransferForTicket(ticket?: TicketItem | null) {
-    if (!ticket || !currentUserId) return null;
-
-    return (
-      ticket.transferRequests?.find((request) => {
-        const status = String(request.status || "").toUpperCase();
-        const canControl =
-          request.fromUserId === currentUserId ||
-          request.requestedByUserId === currentUserId;
-
-        return (
-          canControl &&
-          ["PENDING_PAYMENT", "PENDING_ACCEPTANCE"].includes(status)
-        );
-      }) || null
-    );
-  }
-
-  function canCancelTicketTransfer(ticket?: TicketItem | null) {
-    return !!getPendingTransferForTicket(ticket);
-  }
-
-  function getTransferButtonLabel(ticket?: TicketItem | null) {
-    if (ticket?.receivedViaTransferLocked) {
-      return "Devolver ao comprador";
-    }
-
-    return "Transferir";
-  }
-
-async function handleCancelTicketTransfer(ticket: TicketItem) {
-    const pendingTransfer = getPendingTransferForTicket(ticket);
-    const token = localStorage.getItem("token");
-
-    if (!pendingTransfer?.id) {
-      alert("Nao encontrei transferencia pendente para cancelar.");
-      return;
-    }
-
-    if (!token || token === "undefined") {
-      window.location.href = "/login";
-      return;
-    }
-
-    const confirmed = window.confirm(
-      "Cancelar esta transferencia? O convite some para a pessoa que iria aceitar e o ingresso volta para sua conta.",
-    );
-
-    if (!confirmed) return;
-
-    setTransferCancelingId(pendingTransfer.id);
-
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/tickets/customer/transfers/${pendingTransfer.id}/cancel`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : "Erro ao cancelar transferencia",
-        );
-        return;
-      }
-
-      alert("Transferencia cancelada.");
-      await loadData();
-    } catch (error) {
-      console.error("CANCEL TICKET TRANSFER ERROR:", error);
-      alert("Erro ao conectar com a API");
-    } finally {
-      setTransferCancelingId(null);
     }
   }
 
@@ -1162,13 +1075,6 @@ async function handleCancelTicketTransfer(ticket: TicketItem) {
       return;
     }
 
-    const cleanTransferCpf = onlyDigits(transferTargetCpf).slice(0, 11);
-
-    if (cleanTransferCpf.length !== 11) {
-      alert("Informe um CPF completo para transferir o ingresso.");
-      return;
-    }
-
     if (!transferSourceTicket?.id) {
       alert("Ingresso inválido para transferência");
       return;
@@ -1242,17 +1148,33 @@ async function handleCancelTicketTransfer(ticket: TicketItem) {
   }
 
   async function handlePrintDigitalTicket(mode: "tickets" | "qr" = "tickets") {
-    if (isTransferPage) {
-      alert("Para imprimir ingresso recebido por transferência, abra o pedido original em Meus ingressos.");
-      return;
+    setPrintMode(mode);
+
+    if (mode === "tickets") {
+      const ticketsToPrint = isTransferPage && transfer?.ticket
+        ? [transfer.ticket]
+        : ticketGroups.flatMap((group) => group.tickets.map((entry) => entry.ticket));
+
+      setPreparingPrint(true);
+
+      try {
+        const tokenPairs = await Promise.all(
+          ticketsToPrint.map(async (ticket) => [ticket.id, await fetchTicketQrTokenForPrint(ticket)] as const),
+        );
+
+        setPrintTokensByTicketId((current) => {
+          const next = { ...current };
+          tokenPairs.forEach(([ticketId, qrToken]) => {
+            if (qrToken) next[ticketId] = qrToken;
+          });
+          return next;
+        });
+      } finally {
+        setPreparingPrint(false);
+      }
     }
 
-    if (!order?.id) {
-      alert("Pedido inválido para impressão.");
-      return;
-    }
-
-    window.open(`/orders/${order.id}/print`, "_blank");
+    window.setTimeout(() => window.print(), 140);
   }
 
   function canRequestTicketWalletRefund(ticket?: TicketItem | null) {
@@ -1724,7 +1646,7 @@ async function handleCancelTicketTransfer(ticket: TicketItem) {
               <span className="text-sm font-bold text-slate-700">CPF do destinatário</span>
               <input
                 value={transferTargetCpf}
-                onChange={(event) => setTransferTargetCpf(formatCpf(event.target.value))}
+                onChange={(event) => setTransferTargetCpf(event.target.value)}
                 className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
                 placeholder="000.000.000-00"
               />

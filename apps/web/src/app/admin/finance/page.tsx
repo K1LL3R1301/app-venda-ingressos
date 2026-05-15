@@ -553,7 +553,7 @@ export default function AdminFinancePage() {
       label: "Pagos",
       value: paidOrders.length,
       color: "#10b981",
-      className: "bg-emerald-500",
+      className: "bg-[#ff6900]",
     },
     {
       label: "Pendentes",

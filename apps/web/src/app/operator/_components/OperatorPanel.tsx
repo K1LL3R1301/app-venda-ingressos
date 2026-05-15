@@ -1051,7 +1051,7 @@ function EventOverview({
                           type="button"
                           onClick={() => respond(date, index, true)}
                           className={`rounded-xl px-3 py-2 text-xs font-black ${
-                            status === "AVAILABLE" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700 ring-1 ring-emerald-200"
+                            status === "AVAILABLE" ? "bg-[#ff6900] text-white" : "bg-white text-emerald-700 ring-1 ring-emerald-200"
                           }`}
                         >
                           Posso

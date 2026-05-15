@@ -2546,7 +2546,7 @@ export default function EditEventPage() {
                 return (
                   <button key={step.id} type="button" onClick={() => goToStep(index)} className={`rounded-2xl border p-4 text-left transition ${active ? "border-sky-400 bg-sky-50 ring-4 ring-sky-100" : done ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
                     <div className="flex items-center gap-3">
-                      <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-black ${active ? "bg-sky-600 text-white" : done ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"}`}>{index + 1}</span>
+                      <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-black ${active ? "bg-sky-600 text-white" : done ? "bg-[#ff6900] text-white" : "bg-slate-100 text-slate-500"}`}>{index + 1}</span>
                       <div>
                         <p className="text-sm font-black text-slate-950">{step.title}</p>
                         <p className="text-xs font-semibold text-slate-500">{step.description}</p>

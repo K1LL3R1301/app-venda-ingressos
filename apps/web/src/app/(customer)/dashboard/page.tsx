@@ -1326,7 +1326,7 @@ const cityTilesFromEvents = useMemo(() => buildCityTilesFromEvents(searchedEvent
         onClick={() => goTo("/support")}
         className="fixed bottom-6 right-6 z-40 rounded-full bg-[#22e45f] px-5 py-3 text-sm font-black text-[#063b16] shadow-xl hover:brightness-95"
       >
-        ? Ajuda
+        💬 Ajuda
       </button>
     </main>
   );

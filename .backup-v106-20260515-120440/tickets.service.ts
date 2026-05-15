@@ -280,11 +280,6 @@ export class TicketsService {
     tx: Prisma.TransactionClient,
     transferRequest: Awaited<ReturnType<TicketsService['getTransferRequestWithRelations']>>,
   ) {
-    // REGRA_V106H_CANCEL_RETURN:
-    // Se uma devolucao pendente for cancelada, recusada ou expirar, o ingresso continua
-    // travado com quem recebeu, permitindo apenas devolucao ao remetente original.
-    const isReturnTransfer = transferRequest.mode === 'RETURN';
-
     await tx.ticket.update({
       where: { id: transferRequest.ticketId },
       data: {
@@ -305,12 +300,8 @@ export class TicketsService {
           transferRequest.ticket.holderCpf ||
           null,
         status: 'AVAILABLE',
-        receivedViaTransferRequestId: isReturnTransfer
-          ? transferRequest.returnOfTransferRequestId ||
-            transferRequest.ticket.receivedViaTransferRequestId ||
-            null
-          : null,
-        receivedViaTransferLocked: isReturnTransfer ? true : false,
+        receivedViaTransferRequestId: null,
+        receivedViaTransferLocked: false,
       },
     });
   }
@@ -527,101 +518,6 @@ export class TicketsService {
       throw new NotFoundException('Usuario remetente nao encontrado');
     }
 
-    // REGRA_V106H_TRANSFERENCIA_UNICA:
-    // Quem recebeu ingresso por transferencia nao pode enviar para terceiros.
-    // So pode devolver para quem enviou originalmente.
-    if (ticket.receivedViaTransferLocked && ticket.receivedViaTransferRequestId) {
-      const originTransfer = await this.prisma.ticketTransferRequest.findUnique({
-        where: { id: ticket.receivedViaTransferRequestId },
-        include: {
-          fromUser: true,
-          toUser: true,
-          requestedByUser: true,
-        },
-      });
-
-      if (!originTransfer || !originTransfer.fromUserId) {
-        throw new BadRequestException(
-          'Nao foi possivel identificar quem enviou originalmente este ingresso',
-        );
-      }
-
-      const originalSender =
-        originTransfer.fromUser ||
-        (await this.prisma.user.findUnique({
-          where: { id: originTransfer.fromUserId },
-        }));
-
-      if (!originalSender) {
-        throw new BadRequestException(
-          'Nao foi possivel encontrar a conta de origem da transferencia',
-        );
-      }
-
-      const originalCpf =
-        originalSender.cpfNormalized || this.normalizeCpf(originTransfer.fromCpf);
-      const originalEmail =
-        this.normalizeEmail(originalSender.email) ||
-        this.normalizeEmail(originTransfer.fromEmail);
-
-      if (normalizedCpf && originalCpf && normalizedCpf !== originalCpf) {
-        throw new BadRequestException(
-          'Este ingresso ja foi transferido uma vez e agora so pode ser devolvido para quem enviou originalmente',
-        );
-      }
-
-      if (normalizedEmail && originalEmail && normalizedEmail !== originalEmail) {
-        throw new BadRequestException(
-          'Este ingresso ja foi transferido uma vez e agora so pode ser devolvido para quem enviou originalmente',
-        );
-      }
-
-      if (originTransfer.fromUserId === currentOwner.id) {
-        throw new BadRequestException(
-          'Este ingresso ja esta com o comprador/remetente original',
-        );
-      }
-
-      const transferExpiresAt = this.getTransferAcceptanceExpiresAt();
-
-      const returnTransfer = await this.prisma.$transaction(async (tx) => {
-        await tx.ticket.update({
-          where: { id: ticket.id },
-          data: {
-            status: 'TRANSFER_PENDING',
-          },
-        });
-
-        return tx.ticketTransferRequest.create({
-          data: {
-            ticketId: ticket.id,
-            orderId: ticket.orderItem.order.id,
-            requestedByUserId: currentOwner.id,
-            fromUserId: currentOwner.id,
-            toUserId: originTransfer.fromUserId,
-            mode: 'RETURN',
-            returnOfTransferRequestId: originTransfer.id,
-            requestedByName: currentOwner.name || null,
-            requestedByEmail: currentOwner.email || null,
-            requestedByCpf: currentOwner.cpfNormalized || null,
-            fromName: currentOwner.name || null,
-            fromEmail: currentOwner.email || null,
-            fromCpf: currentOwner.cpfNormalized || null,
-            toName: originalSender.name || originTransfer.fromName || null,
-            toEmail: originalSender.email || originTransfer.fromEmail || null,
-            toCpf:
-              originalSender.cpfNormalized ||
-              this.normalizeCpf(originTransfer.fromCpf) ||
-              null,
-            status: 'PENDING_ACCEPTANCE',
-            expiresAt: transferExpiresAt,
-          },
-        });
-      });
-
-      return this.findTransferRequestById(returnTransfer.id, userId);
-    }
-
     if (!normalizedCpf && !normalizedEmail) {
       throw new BadRequestException('Informe o CPF do destinatario');
     }
@@ -728,10 +624,6 @@ export class TicketsService {
 
     await this.ensureNoActiveTransfer(transferRequest.ticketId, transferRequest.id);
 
-    // REGRA_V106H_ACCEPT_RETURN:
-    // Quando o remetente original aceita uma devolucao, o ingresso volta destravado.
-    const isReturnTransfer = transferRequest.mode === 'RETURN';
-
     const eventId = transferRequest.ticket.orderItem.ticketType.eventId;
     const targetCpf =
       transferRequest.toCpf || transferRequest.toUser?.cpfNormalized || '';
@@ -770,8 +662,8 @@ export class TicketsService {
             transferRequest.ticket.holderCpf ||
             null,
           status: 'AVAILABLE',
-          receivedViaTransferRequestId: isReturnTransfer ? null : transferRequest.id,
-          receivedViaTransferLocked: isReturnTransfer ? false : true,
+          receivedViaTransferRequestId: transferRequest.id,
+          receivedViaTransferLocked: true,
         },
       });
 

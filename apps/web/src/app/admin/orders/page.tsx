@@ -451,7 +451,7 @@ export default function AdminOrdersPage() {
           onClick={() => setQuickStatus("PAID")}
           className={`rounded-[24px] border p-5 text-left shadow-sm transition ${
             statusFilter === "PAID"
-              ? "border-emerald-600 bg-emerald-600 text-white"
+              ? "border-emerald-600 bg-[#ff6900] text-white"
               : "border-emerald-100 bg-white text-slate-950 hover:border-emerald-300"
           }`}
         >

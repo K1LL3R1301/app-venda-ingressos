@@ -4940,7 +4940,7 @@ export default function NewEventPage() {
                     <span className="mt-1 block text-2xl font-black text-slate-950">{day}</span>
                     <span className="mt-0.5 block text-xs font-black uppercase text-slate-500">{month}</span>
                     <span className="mt-1 block text-[10px] font-black text-sky-700">{daysUntilEventLabel(session.startsAt)}</span>
-                    <span className={`mt-2 inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${complete ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"}`}>
+                    <span className={`mt-2 inline-flex rounded-full px-2 py-1 text-[9px] font-black uppercase ${complete ? "bg-[#ff6900] text-white" : "bg-slate-200 text-slate-600"}`}>
                       {complete ? "ok" : "pendente"}
                     </span>
                   </button>
@@ -4992,7 +4992,7 @@ export default function NewEventPage() {
                             key={`${session.localId}-badge-${sectorId || "open"}`}
                             className={`rounded-full px-3 py-2 text-xs font-black ${
                               done
-                                ? "bg-emerald-500 text-white"
+                                ? "bg-[#ff6900] text-white"
                                 : sessionOpen
                                   ? "bg-white/10 text-white"
                                   : "bg-slate-100 text-slate-600"
@@ -5074,7 +5074,7 @@ export default function NewEventPage() {
                                     <span
                                       key={option.value}
                                       className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${
-                                        option.done ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"
+                                        option.done ? "bg-[#ff6900] text-white" : "bg-slate-100 text-slate-500"
                                       }`}
                                     >
                                       {option.label} {option.done ? "✓" : ""}
@@ -5526,7 +5526,7 @@ export default function NewEventPage() {
                           : "border-slate-200 bg-white hover:bg-slate-50"
                     }`}
                   >
-                    <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-black ${active ? "bg-sky-600 text-white" : done ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-700"}`}>
+                    <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-black ${active ? "bg-sky-600 text-white" : done ? "bg-[#ff6900] text-white" : "bg-slate-200 text-slate-700"}`}>
                       {done ? "✓" : index + 1}
                     </span>
                     <p className="mt-3 text-sm font-black text-slate-950">{step.title}</p>
@@ -5728,7 +5728,7 @@ export default function NewEventPage() {
                   onClick={() => goToStep(index)}
                   className={`rounded-2xl border p-3 text-left transition ${active ? "border-sky-500 bg-sky-50" : done ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
                 >
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-black ${active ? "bg-sky-600 text-white" : done ? "bg-emerald-600 text-white" : "bg-slate-200"}`}>{done ? "✓" : index + 1}</span>
+                  <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-black ${active ? "bg-sky-600 text-white" : done ? "bg-[#ff6900] text-white" : "bg-slate-200"}`}>{done ? "✓" : index + 1}</span>
                   <p className="mt-3 text-xs font-black">{step.title}</p>
                   <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-500">{step.description}</p>
                 </button>

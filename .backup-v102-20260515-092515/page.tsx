@@ -128,21 +128,6 @@ type PromoterRefInfo = {
   eventTitle?: string | null;
 };
 
-async function readJsonSafe<T>(response: Response): Promise<T | null> {
-  try {
-    return (await response.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-function getApiErrorMessage(data: any, fallback: string) {
-  if (typeof data?.message === "string" && data.message.trim()) return data.message;
-  if (Array.isArray(data?.message) && data.message.length > 0) return data.message.join("\n");
-  if (typeof data?.error === "string" && data.error.trim()) return data.error;
-  return fallback;
-}
-
 function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
@@ -464,11 +449,7 @@ export default function CustomerCheckoutPage() {
         const unitPrice = toNumber(ticketType.price) + toNumber(ticketType.feeAmount);
         const relatedPlaces = placeSelections.filter((selection) => selection.ticketTypeId === item.ticketTypeId);
         const placeQuantity = relatedPlaces.reduce((sum, selection) => sum + getPlaceQuantity(selection), 0);
-        const placeTotal = relatedPlaces.reduce((sum, selection) => {
-          const placeAmount = getPlaceAmount(selection);
-          const placeQuantityForAmount = getPlaceQuantity(selection);
-          return sum + (placeAmount > 0 ? placeAmount : placeQuantityForAmount * unitPrice);
-        }, 0);
+        const placeTotal = relatedPlaces.reduce((sum, selection) => sum + getPlaceAmount(selection), 0);
         const commonQuantity = Math.max(0, item.quantity - placeQuantity);
         const totalPrice = placeTotal + commonQuantity * unitPrice;
 
@@ -684,9 +665,9 @@ export default function CustomerCheckoutPage() {
         }),
       });
 
-      const data = await readJsonSafe<CreateCustomerOrderResponse>(res);
+      const data: CreateCustomerOrderResponse = await res.json();
       if (!res.ok) {
-        alert(getApiErrorMessage(data, "Erro ao criar pedido"));
+        alert(typeof data?.message === "string" ? data.message : "Erro ao criar pedido");
         return;
       }
 

@@ -276,14 +276,15 @@ export class TicketsService {
     }
   }
 
-  private async restoreTicketFromTransfer(
+  private private async restoreTicketFromTransfer(
     tx: Prisma.TransactionClient,
     transferRequest: Awaited<ReturnType<TicketsService['getTransferRequestWithRelations']>>,
   ) {
-    // REGRA_V106H_CANCEL_RETURN:
-    // Se uma devolucao pendente for cancelada, recusada ou expirar, o ingresso continua
-    // travado com quem recebeu, permitindo apenas devolucao ao remetente original.
     const isReturnTransfer = transferRequest.mode === 'RETURN';
+    const originTransferId =
+      transferRequest.returnOfTransferRequestId ||
+      transferRequest.ticket.receivedViaTransferRequestId ||
+      null;
 
     await tx.ticket.update({
       where: { id: transferRequest.ticketId },
@@ -305,11 +306,7 @@ export class TicketsService {
           transferRequest.ticket.holderCpf ||
           null,
         status: 'AVAILABLE',
-        receivedViaTransferRequestId: isReturnTransfer
-          ? transferRequest.returnOfTransferRequestId ||
-            transferRequest.ticket.receivedViaTransferRequestId ||
-            null
-          : null,
+        receivedViaTransferRequestId: isReturnTransfer ? originTransferId : null,
         receivedViaTransferLocked: isReturnTransfer ? true : false,
       },
     });
@@ -527,22 +524,29 @@ export class TicketsService {
       throw new NotFoundException('Usuario remetente nao encontrado');
     }
 
-    // REGRA_V106H_TRANSFERENCIA_UNICA:
-    // Quem recebeu ingresso por transferencia nao pode enviar para terceiros.
-    // So pode devolver para quem enviou originalmente.
-    if (ticket.receivedViaTransferLocked && ticket.receivedViaTransferRequestId) {
-      const originTransfer = await this.prisma.ticketTransferRequest.findUnique({
-        where: { id: ticket.receivedViaTransferRequestId },
-        include: {
-          fromUser: true,
-          toUser: true,
-          requestedByUser: true,
-        },
-      });
+    const originTransfer =
+      ticket.receivedViaTransferLocked && ticket.receivedViaTransferRequestId
+        ? await this.prisma.ticketTransferRequest.findUnique({
+            where: { id: ticket.receivedViaTransferRequestId },
+            include: {
+              requestedByUser: true,
+              fromUser: true,
+              toUser: true,
+              order: {
+                include: {
+                  event: true,
+                  customerUser: true,
+                },
+              },
+              ticket: true,
+            },
+          })
+        : null;
 
-      if (!originTransfer || !originTransfer.fromUserId) {
+    if (originTransfer) {
+      if (!originTransfer.fromUserId) {
         throw new BadRequestException(
-          'Nao foi possivel identificar quem enviou originalmente este ingresso',
+          'Nao foi possivel identificar o comprador original para devolucao',
         );
       }
 
@@ -552,25 +556,27 @@ export class TicketsService {
           where: { id: originTransfer.fromUserId },
         }));
 
-      if (!originalSender) {
-        throw new BadRequestException(
-          'Nao foi possivel encontrar a conta de origem da transferencia',
-        );
-      }
-
       const originalCpf =
-        originalSender.cpfNormalized || this.normalizeCpf(originTransfer.fromCpf);
+        originalSender?.cpfNormalized || this.normalizeCpf(originTransfer.fromCpf);
       const originalEmail =
-        this.normalizeEmail(originalSender.email) ||
+        this.normalizeEmail(originalSender?.email) ||
         this.normalizeEmail(originTransfer.fromEmail);
 
-      if (normalizedCpf && originalCpf && normalizedCpf !== originalCpf) {
+      if (
+        normalizedCpf &&
+        originalCpf &&
+        normalizedCpf !== originalCpf
+      ) {
         throw new BadRequestException(
           'Este ingresso ja foi transferido uma vez e agora so pode ser devolvido para quem enviou originalmente',
         );
       }
 
-      if (normalizedEmail && originalEmail && normalizedEmail !== originalEmail) {
+      if (
+        normalizedEmail &&
+        originalEmail &&
+        normalizedEmail !== originalEmail
+      ) {
         throw new BadRequestException(
           'Este ingresso ja foi transferido uma vez e agora so pode ser devolvido para quem enviou originalmente',
         );
@@ -578,7 +584,7 @@ export class TicketsService {
 
       if (originTransfer.fromUserId === currentOwner.id) {
         throw new BadRequestException(
-          'Este ingresso ja esta com o comprador/remetente original',
+          'Este ingresso ja esta com o comprador original',
         );
       }
 
@@ -607,10 +613,16 @@ export class TicketsService {
             fromName: currentOwner.name || null,
             fromEmail: currentOwner.email || null,
             fromCpf: currentOwner.cpfNormalized || null,
-            toName: originalSender.name || originTransfer.fromName || null,
-            toEmail: originalSender.email || originTransfer.fromEmail || null,
+            toName:
+              originalSender?.name ||
+              originTransfer.fromName ||
+              null,
+            toEmail:
+              originalSender?.email ||
+              originTransfer.fromEmail ||
+              null,
             toCpf:
-              originalSender.cpfNormalized ||
+              originalSender?.cpfNormalized ||
               this.normalizeCpf(originTransfer.fromCpf) ||
               null,
             status: 'PENDING_ACCEPTANCE',
@@ -620,6 +632,125 @@ export class TicketsService {
       });
 
       return this.findTransferRequestById(returnTransfer.id, userId);
+    }
+
+    if (!normalizedCpf && !normalizedEmail) {
+      throw new BadRequestException('Informe o CPF do destinatario');
+    }
+
+    const targetUser = await this.findUserByCpfOrEmail({
+      cpf: normalizedCpf,
+      email: normalizedEmail,
+    });
+
+    if (!targetUser) {
+      throw new BadRequestException(
+        'O destinatario precisa possuir conta cadastrada',
+      );
+    }
+
+    if (targetUser.id === currentOwner.id) {
+      throw new BadRequestException(
+        'Voce nao pode transferir o ingresso para a sua propria conta',
+      );
+    }
+
+    const eventId = ticket.orderItem.ticketType.eventId;
+
+    await this.ensureCpfCanReceiveTicket({
+      eventId,
+      cpf: targetUser.cpfNormalized || normalizedCpf,
+      quantity: 1,
+    });
+
+    const transferExpiresAt = this.getTransferAcceptanceExpiresAt();
+
+    const transferRequest = await this.prisma.$transaction(async (tx) => {
+      await this.ensureCpfCanReceiveTicket({
+        eventId,
+        cpf: targetUser.cpfNormalized || normalizedCpf,
+        quantity: 1,
+        db: tx,
+      });
+
+      await tx.ticket.update({
+        where: { id: ticket.id },
+        data: {
+          status: 'TRANSFER_PENDING',
+        },
+      });
+
+      return tx.ticketTransferRequest.create({
+        data: {
+          ticketId: ticket.id,
+          orderId: ticket.orderItem.order.id,
+          requestedByUserId: currentOwner.id,
+          fromUserId: currentOwner.id,
+          toUserId: targetUser.id,
+          mode: 'FORWARD',
+          returnOfTransferRequestId: null,
+          requestedByName: currentOwner.name || null,
+          requestedByEmail: currentOwner.email || null,
+          requestedByCpf: currentOwner.cpfNormalized || null,
+          fromName: currentOwner.name || null,
+          fromEmail: currentOwner.email || null,
+          fromCpf: currentOwner.cpfNormalized || null,
+          toName: targetUser.name || null,
+          toEmail: targetUser.email || null,
+          toCpf: targetUser.cpfNormalized || null,
+          status: 'PENDING_ACCEPTANCE',
+          expiresAt: transferExpiresAt,
+        },
+      });
+    });
+
+    return this.findTransferRequestById(transferRequest.id, userId);
+  },
+  ) {
+    const normalizedCpf = this.normalizeCpf(body?.targetCpf);
+    const normalizedEmail = this.normalizeEmail(body?.targetEmail);
+    const ticket = await this.getTicketWithRelations(ticketId);
+
+    if (!ticket.currentOwnerUserId || ticket.currentOwnerUserId !== userId) {
+      throw new ForbiddenException(
+        'Somente o dono atual do ingresso pode transferi-lo',
+      );
+    }
+
+    if (ticket.status === 'CANCELED') {
+      throw new BadRequestException(
+        'Nao e possivel transferir um ingresso cancelado',
+      );
+    }
+
+    if (ticket.status === 'USED') {
+      throw new BadRequestException(
+        'Nao e possivel transferir um ingresso ja utilizado',
+      );
+    }
+
+    if (ticket.status === 'TRANSFER_PENDING') {
+      throw new BadRequestException(
+        'Este ingresso ja esta com transferencia pendente',
+      );
+    }
+
+    if (ticket.status !== 'AVAILABLE') {
+      throw new BadRequestException(
+        'Somente ingressos disponiveis podem ser transferidos',
+      );
+    }
+
+    await this.ensureNoActiveTransfer(ticket.id);
+
+    const currentOwner = await this.prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+
+    if (!currentOwner) {
+      throw new NotFoundException('Usuario remetente nao encontrado');
     }
 
     if (!normalizedCpf && !normalizedEmail) {
@@ -728,10 +859,6 @@ export class TicketsService {
 
     await this.ensureNoActiveTransfer(transferRequest.ticketId, transferRequest.id);
 
-    // REGRA_V106H_ACCEPT_RETURN:
-    // Quando o remetente original aceita uma devolucao, o ingresso volta destravado.
-    const isReturnTransfer = transferRequest.mode === 'RETURN';
-
     const eventId = transferRequest.ticket.orderItem.ticketType.eventId;
     const targetCpf =
       transferRequest.toCpf || transferRequest.toUser?.cpfNormalized || '';
@@ -770,8 +897,8 @@ export class TicketsService {
             transferRequest.ticket.holderCpf ||
             null,
           status: 'AVAILABLE',
-          receivedViaTransferRequestId: isReturnTransfer ? null : transferRequest.id,
-          receivedViaTransferLocked: isReturnTransfer ? false : true,
+          receivedViaTransferRequestId: transferRequest.id,
+          receivedViaTransferLocked: true,
         },
       });
 

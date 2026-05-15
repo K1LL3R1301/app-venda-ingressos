@@ -883,7 +883,6 @@ export default function CustomerOrderDetailPage() {
 
   function canTransferTicket(ticket?: TicketItem | null) {
     if (!ticket || !currentUserId) return false;
-    if (getPendingTransferForTicket(ticket)) return false;
     return ticket.currentOwnerUserId === currentUserId && ticket.status === "AVAILABLE";
   }
 
@@ -929,37 +928,7 @@ export default function CustomerOrderDetailPage() {
     }
   }
 
-  function getPendingTransferForTicket(ticket?: TicketItem | null) {
-    if (!ticket || !currentUserId) return null;
-
-    return (
-      ticket.transferRequests?.find((request) => {
-        const status = String(request.status || "").toUpperCase();
-        const canControl =
-          request.fromUserId === currentUserId ||
-          request.requestedByUserId === currentUserId;
-
-        return (
-          canControl &&
-          ["PENDING_PAYMENT", "PENDING_ACCEPTANCE"].includes(status)
-        );
-      }) || null
-    );
-  }
-
-  function canCancelTicketTransfer(ticket?: TicketItem | null) {
-    return !!getPendingTransferForTicket(ticket);
-  }
-
-  function getTransferButtonLabel(ticket?: TicketItem | null) {
-    if (ticket?.receivedViaTransferLocked) {
-      return "Devolver ao comprador";
-    }
-
-    return "Transferir";
-  }
-
-async function handleCancelTicketTransfer(ticket: TicketItem) {
+  async function handleCancelTicketTransfer(ticket: TicketItem) {
     const pendingTransfer = getPendingTransferForTicket(ticket);
     const token = localStorage.getItem("token");
 

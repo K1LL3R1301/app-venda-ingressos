@@ -2377,7 +2377,7 @@ function MapStudio({
             MAPA
           </div>
           <div>
-            <p className="text-sm font-black">Criador de mapa do evento <span className="ml-2 rounded-lg bg-emerald-500 px-2 py-1 text-[10px] text-white">v30</span></p>
+            <p className="text-sm font-black">Criador de mapa do evento <span className="ml-2 rounded-lg bg-[#ff6900] px-2 py-1 text-[10px] text-white">v30</span></p>
             <p className="text-xs font-semibold text-slate-400">
               Tudo editável: arraste objetos, use alças azuis para redimensionar, pontos brancos para formas e painel lateral para campos.
             </p>
@@ -2409,7 +2409,7 @@ function MapStudio({
           <button
             type="button"
             onClick={() => onSave(objects)}
-            className="rounded-2xl bg-emerald-500 px-5 py-3 text-xs font-black text-white hover:bg-emerald-400"
+            className="rounded-2xl bg-[#ff6900] px-5 py-3 text-xs font-black text-white hover:bg-[#ff6900]"
           >
             Salvar mapa e voltar
           </button>
@@ -2961,7 +2961,7 @@ function MapStudio({
                       setAssistantLoading(false);
                     }
                   }}
-                  className="rounded-2xl bg-emerald-500 px-4 py-3 text-xs font-black text-white hover:bg-emerald-400"
+                  className="rounded-2xl bg-[#ff6900] px-4 py-3 text-xs font-black text-white hover:bg-[#ff6900]"
                 >
                   Gerar sugestão no mapa
                 </button>
@@ -2985,7 +2985,7 @@ function MapStudio({
 
             {selectedObject ? (
               <div className="mt-4 space-y-3">
-                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-xs font-black leading-5 text-emerald-100">
+                <div className="rounded-2xl border border-emerald-400/20 bg-[#ff6900]/10 p-3 text-xs font-black leading-5 text-emerald-100">
                   Tudo que aparece no mapa é editável: arraste para mover, use as alças azuis para redimensionar, ou ajuste os campos abaixo.
                 </div>
 
@@ -3260,7 +3260,7 @@ function MapStudio({
                     <button
                       type="button"
                       onClick={focusSelectedObject}
-                      className="rounded-xl bg-emerald-600 px-2 py-2 text-[10px] font-black text-white hover:bg-emerald-500"
+                      className="rounded-xl bg-[#ff6900] px-2 py-2 text-[10px] font-black text-white hover:bg-[#ff6900]"
                     >
                       Focar
                     </button>
