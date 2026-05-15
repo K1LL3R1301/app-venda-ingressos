@@ -1,0 +1,6 @@
+export class AssignOperatorToEventDto {
+  eventId!: string;
+  notes?: string;
+  canValidateTickets?: boolean;
+  canAnswerSupport?: boolean;
+}

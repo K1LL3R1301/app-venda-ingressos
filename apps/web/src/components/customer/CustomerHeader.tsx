@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -15,6 +15,8 @@ type CustomerHeaderProps = {
   activeNav?: "dashboard" | "orders" | "wallet" | "support";
   showSearch?: boolean;
   searchPlaceholder?: string;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
   searchAppearsOnScroll?: boolean;
   showLocationButton?: boolean;
 };
@@ -86,6 +88,8 @@ export default function CustomerHeader({
   activeNav = "dashboard",
   showSearch = false,
   searchPlaceholder = "Buscar experiências",
+  searchValue,
+  onSearchChange,
   searchAppearsOnScroll = false,
   showLocationButton = false,
 }: CustomerHeaderProps) {
@@ -164,35 +168,36 @@ export default function CustomerHeader({
   }, [createEventPath]);
 
   const superAdminLinks: HeaderLink[] = [
-    { label: "Painel administrativo", href: "/admin/dashboard" },
-    { label: "Solicitações de criador", href: "/admin/support" },
-    { label: "Organizadores", href: "/admin/organizers" },
-    { label: "Eventos", href: "/admin/events" },
+    { label: "Visão geral do site", href: "/admin/super" },
+    { label: "Organizadores", href: "/admin/super/organizers" },
+    { label: "Eventos globais", href: "/admin/super/events" },
+    { label: "Pedidos globais", href: "/admin/super/orders" },
+    { label: "Receita global", href: "/admin/super/finance" },
+    { label: "Operadores globais", href: "/admin/super/operators" },
+    { label: "Taxas por produtor", href: "/admin/super/fees" },
+    { label: "Meu painel admin", href: "/admin/dashboard" },
+    { label: "Meus eventos", href: "/admin/events" },
     { label: "Criar evento", href: "/admin/events/new" },
     { label: "Impulsionar evento", href: "/admin/boosts" },
-    { label: "Pedidos", href: "/admin/orders" },
-    { label: "Financeiro", href: "/admin/finance" },
     { label: "Suporte", href: "/admin/support" },
     { label: "Validação / Check-in", href: "/admin/validation" },
-    { label: "Tela principal", href: "/dashboard" },
   ];
 
   const adminLinks: HeaderLink[] = [
     { label: "Painel administrativo", href: "/admin/dashboard" },
+    { label: "Meus eventos", href: "/admin/events" },
     { label: "Criar evento", href: "/admin/events/new" },
     { label: "Impulsionar evento", href: "/admin/boosts" },
-    { label: "Eventos", href: "/admin/events" },
     { label: "Pedidos", href: "/admin/orders" },
     { label: "Financeiro", href: "/admin/finance" },
+    { label: "Operadores", href: "/admin/operators" },
+    { label: "Promoters e cupons", href: "/admin/promoters" },
     { label: "Suporte", href: "/admin/support" },
     { label: "Validação / Check-in", href: "/admin/validation" },
-    { label: "Tela principal", href: "/dashboard" },
   ];
 
   const operatorLinks: HeaderLink[] = [
-    { label: "Painel operador", href: "/operator/dashboard" },
-    { label: "Validação / Check-in", href: "/operator/validation" },
-    { label: "Tela principal", href: "/dashboard" },
+    { label: "Operadores", href: "/operator/dashboard" },
   ];
 
   function isActivePath(href: string) {
@@ -240,8 +245,12 @@ export default function CustomerHeader({
         <span className="mr-3 text-sm text-neutral-400">⌕</span>
         <input
           type="text"
-          value={localSearch}
-          onChange={(event) => setLocalSearch(event.target.value)}
+          value={searchValue ?? localSearch}
+          onChange={(event) => {
+            const nextValue = event.target.value;
+            setLocalSearch(nextValue);
+            onSearchChange?.(nextValue);
+          }}
           placeholder={searchPlaceholder}
           className="w-full bg-transparent text-sm font-semibold text-neutral-700 outline-none placeholder:text-neutral-400"
         />
@@ -249,22 +258,98 @@ export default function CustomerHeader({
     );
   }
 
+  const [superAdminSectionOpen, setSuperAdminSectionOpen] = useState(true);
+  const [adminSectionOpen, setAdminSectionOpen] = useState(true);
+
+  const [operatorSectionOpen, setOperatorSectionOpen] = useState(true);
+  function renderMenuGroup({
+    title,
+    description,
+    links,
+    open,
+    onToggle,
+  }: {
+    title: string;
+    description: string;
+    links: HeaderLink[];
+    open: boolean;
+    onToggle: () => void;
+  }) {
+    return (
+      <section className="rounded-2xl border border-neutral-200 bg-white p-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="w-full rounded-xl px-2 py-2 text-left transition hover:bg-neutral-50"
+        >
+          <span className="block text-[10px] font-black uppercase tracking-[0.22em] text-neutral-500">
+            {title}
+          </span>
+          <span className="mt-1 block text-[11px] font-bold text-neutral-400">
+            {description}
+          </span>
+        </button>
+
+        {open ? (
+          <div className="mt-2 space-y-1">
+            {links.map((item) => (
+              <MenuLink key={item.href} href={item.href} active={isActivePath(item.href)}>
+                {item.label}
+              </MenuLink>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
   function renderAdminOnlyMenu() {
-    const links = isSuperAdmin ? superAdminLinks : adminLinks;
-    const title = isSuperAdmin ? "Super administração" : "Administração";
+    if (isSuperAdmin) {
+      const globalSuperAdminLinks = superAdminLinks.filter((item) => item.href.startsWith("/admin/super"));
+      const personalAdminLinks = superAdminLinks.filter((item) => !item.href.startsWith("/admin/super"));
+
+      return (
+        <div className="space-y-2 px-2 pb-2 pt-1">
+          {renderMenuGroup({
+            title: "SUPER ADM",
+            description: "Controle geral do site",
+            links: globalSuperAdminLinks,
+            open: superAdminSectionOpen,
+            onToggle: () => setSuperAdminSectionOpen((value) => !value),
+          })}
+
+          {renderMenuGroup({
+            title: "ADM",
+            description: "Painel normal da sua conta",
+            links: personalAdminLinks,
+            open: adminSectionOpen,
+            onToggle: () => setAdminSectionOpen((value) => !value),
+          })}
+
+          <div className="border-t border-neutral-100 pt-2">
+            <MenuLink href="/dashboard" active={activeNav === "dashboard"}>
+              Tela principal
+            </MenuLink>
+          </div>
+        </div>
+      );
+    }
 
     return (
-      <div className="px-2 pb-2 pt-1">
-        <p className="px-2 text-[10px] font-black uppercase tracking-[0.22em] text-neutral-400">
-          {title}
-        </p>
+      <div className="space-y-2 px-2 pb-2 pt-1">
+        {renderMenuGroup({
+          title: "ADM",
+          description: "Painel do produtor logado",
+          links: adminLinks,
+          open: adminSectionOpen,
+          onToggle: () => setAdminSectionOpen((value) => !value),
+        })}
 
-        <div className="mt-2 space-y-1">
-          {links.map((item) => (
-            <MenuLink key={item.href} href={item.href} active={isActivePath(item.href)}>
-              {item.label}
-            </MenuLink>
-          ))}
+        <div className="border-t border-neutral-100 pt-2">
+          <MenuLink href="/dashboard" active={activeNav === "dashboard"}>
+            Tela principal
+          </MenuLink>
         </div>
       </div>
     );
@@ -272,17 +357,19 @@ export default function CustomerHeader({
 
   function renderOperatorOnlyMenu() {
     return (
-      <div className="px-2 pb-2 pt-1">
-        <p className="px-2 text-[10px] font-black uppercase tracking-[0.22em] text-neutral-400">
-          Operação
-        </p>
+      <div className="space-y-2 px-2 pb-2 pt-1">
+        {renderMenuGroup({
+          title: "OPERAÇÃO",
+          description: "Ferramentas do operador",
+          links: operatorLinks,
+          open: operatorSectionOpen,
+          onToggle: () => setOperatorSectionOpen((value) => !value),
+        })}
 
-        <div className="mt-2 space-y-1">
-          {operatorLinks.map((item) => (
-            <MenuLink key={item.href} href={item.href} active={isActivePath(item.href)}>
-              {item.label}
-            </MenuLink>
-          ))}
+        <div className="border-t border-neutral-100 pt-2">
+          <MenuLink href="/dashboard" active={activeNav === "dashboard"}>
+            Tela principal
+          </MenuLink>
         </div>
       </div>
     );
@@ -421,6 +508,7 @@ export default function CustomerHeader({
     </header>
   );
 }
+
 
 
 

@@ -104,6 +104,30 @@ type CreateCustomerOrderResponse = {
   message?: string;
 };
 
+type AppliedCoupon = {
+  valid?: boolean;
+  couponId?: string;
+  couponCode?: string;
+  promoterId?: string | null;
+  promoterName?: string | null;
+  discountType?: string;
+  discountValue?: string | number;
+  grossAmount?: string | number;
+  discountAmount?: string | number;
+  totalAmount?: string | number;
+  message?: string;
+};
+
+type PromoterRefInfo = {
+  valid?: boolean;
+  ref?: string;
+  linkId?: string;
+  promoterId?: string;
+  promoterName?: string | null;
+  eventId?: string | null;
+  eventTitle?: string | null;
+};
+
 function onlyDigits(value?: string | null) {
   return String(value || "").replace(/\D/g, "");
 }
@@ -127,6 +151,21 @@ function formatMoney(value?: string | number | null) {
     style: "currency",
     currency: "BRL",
   }).format(toNumber(value));
+}
+
+function normalizeCouponCode(value?: string | null) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9_-]/g, "");
+}
+
+function normalizeRef(value?: string | null) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9_-]/g, "");
 }
 
 function formatDate(value?: string | null) {
@@ -272,6 +311,14 @@ export default function CustomerCheckoutPage() {
   const [useWalletBalance, setUseWalletBalance] = useState(true);
   const [holdersByTicketType, setHoldersByTicketType] = useState<Record<string, CheckoutHolderForm[]>>({});
 
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<AppliedCoupon | null>(null);
+  const [couponMessage, setCouponMessage] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
+
+  const [promoterRef, setPromoterRef] = useState("");
+  const [promoterRefInfo, setPromoterRefInfo] = useState<PromoterRefInfo | null>(null);
+
   const searchParams = useMemo(() => {
     if (typeof window === "undefined") return new URLSearchParams();
     return new URLSearchParams(window.location.search);
@@ -280,6 +327,35 @@ export default function CustomerCheckoutPage() {
   const eventId = searchParams.get("eventId") || "";
   const requestedItems = useMemo(() => parseRequestedItems(searchParams), [searchParams]);
   const requestedPlaces = useMemo(() => parsePlaceSelections(searchParams), [searchParams]);
+
+  useEffect(() => {
+    const refFromUrl = normalizeRef(searchParams.get("ref"));
+    const refFromStorage = typeof window !== "undefined" ? normalizeRef(localStorage.getItem("astro_promoter_ref")) : "";
+    const resolvedRef = refFromUrl || refFromStorage;
+
+    if (!resolvedRef) return;
+
+    setPromoterRef(resolvedRef);
+    localStorage.setItem("astro_promoter_ref", resolvedRef);
+
+    fetch(`${API_BASE_URL}/promoters/checkout/resolve-ref`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ref: resolvedRef }),
+    })
+      .then(async (response) => {
+        const result = await response.json().catch(() => null);
+        if (response.ok && result?.valid) {
+          setPromoterRefInfo(result);
+          localStorage.setItem("astro_promoter_ref", result.ref || resolvedRef);
+        }
+      })
+      .catch(() => {
+        // O checkout não pode quebrar se o ref estiver inválido.
+      });
+  }, [searchParams]);
 
   useEffect(() => {
     async function loadCheckoutBase() {
@@ -398,10 +474,23 @@ export default function CustomerCheckoutPage() {
   }, [cartItems, activeTicketTypes, placeSelections]);
 
   const subtotal = selectedItemsDetailed.reduce((sum, item) => sum + item.totalPrice, 0);
+
+  useEffect(() => {
+    if (!appliedCoupon) return;
+
+    const couponGross = toNumber(appliedCoupon.grossAmount);
+    if (Math.abs(couponGross - subtotal) > 0.01) {
+      setAppliedCoupon(null);
+      setCouponMessage("O carrinho mudou. Aplique o cupom novamente.");
+    }
+  }, [subtotal, appliedCoupon]);
+
+  const couponDiscount = appliedCoupon ? Math.min(subtotal, toNumber(appliedCoupon.discountAmount)) : 0;
+  const subtotalAfterDiscount = Math.max(0, subtotal - couponDiscount);
   const totalTickets = selectedItemsDetailed.reduce((sum, item) => sum + item.quantity, 0);
   const walletBalanceNumber = toNumber(wallet?.balance);
-  const walletApplied = useWalletBalance ? Math.min(walletBalanceNumber, subtotal) : 0;
-  const remainingAmount = Math.max(0, subtotal - walletApplied);
+  const walletApplied = useWalletBalance ? Math.min(walletBalanceNumber, subtotalAfterDiscount) : 0;
+  const remainingAmount = Math.max(0, subtotalAfterDiscount - walletApplied);
 
   useEffect(() => {
     setHoldersByTicketType((prev) => {
@@ -433,6 +522,66 @@ export default function CustomerCheckoutPage() {
         ),
       };
     });
+  }
+
+  async function applyCoupon() {
+    if (!event?.id) {
+      alert("Evento não encontrado para validar o cupom.");
+      return;
+    }
+
+    const normalizedCode = normalizeCouponCode(couponCode);
+
+    if (!normalizedCode) {
+      alert("Digite o código do cupom.");
+      return;
+    }
+
+    setCouponLoading(true);
+    setCouponMessage("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/promoters/checkout/validate-coupon`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          eventId: event.id,
+          code: normalizedCode,
+          subtotal: String(subtotal),
+          customerCpf: onlyDigits(customerCpf),
+        }),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setAppliedCoupon(null);
+        setCouponMessage(
+          typeof result?.message === "string"
+            ? result.message
+            : "Não foi possível aplicar este cupom.",
+        );
+        return;
+      }
+
+      setAppliedCoupon(result);
+      setCouponCode(result?.couponCode || normalizedCode);
+      setCouponMessage(result?.message || "Cupom aplicado com sucesso.");
+    } catch (error) {
+      console.error("APPLY COUPON ERROR:", error);
+      setAppliedCoupon(null);
+      setCouponMessage("Erro ao conectar com a API para validar o cupom.");
+    } finally {
+      setCouponLoading(false);
+    }
+  }
+
+  function removeCoupon() {
+    setAppliedCoupon(null);
+    setCouponMessage("");
+    setCouponCode("");
   }
 
   async function handleCreateOrder(e: FormEvent) {
@@ -489,6 +638,9 @@ export default function CustomerCheckoutPage() {
 
     setCreatingOrder(true);
     try {
+      const cleanCoupon = appliedCoupon?.couponCode || normalizeCouponCode(couponCode);
+      const cleanRef = normalizeRef(promoterRef || promoterRefInfo?.ref || localStorage.getItem("astro_promoter_ref"));
+
       const res = await fetch(`${API_BASE_URL}/orders/customer`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -498,6 +650,8 @@ export default function CustomerCheckoutPage() {
           customerEmail: customerEmail.trim(),
           customerCpf: customerCpfDigits,
           useWalletBalance,
+          couponCode: cleanCoupon || undefined,
+          promoterRef: cleanRef || undefined,
           placeSelections,
           items: selectedItemsDetailed.map((item) => ({
             ticketTypeId: item.ticketTypeId,
@@ -578,6 +732,16 @@ export default function CustomerCheckoutPage() {
                 <div className={readOnlyBoxClass()}>{formatDate(event.startDate || event.eventDate)}</div>
                 <div className={readOnlyBoxClass()}>{getLocationLabel(event)}</div>
               </div>
+              {promoterRefInfo?.promoterName ? (
+                <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-4">
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-600">
+                    Indicação ativa
+                  </p>
+                  <p className="mt-1 text-sm font-black text-slate-950">
+                    Você chegou por {promoterRefInfo.promoterName}
+                  </p>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>
@@ -681,6 +845,57 @@ export default function CustomerCheckoutPage() {
               ))}
             </div>
 
+            <div className="mt-5 rounded-[24px] border border-orange-200 bg-orange-50 p-4">
+              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-orange-600">
+                Cupom de desconto
+              </p>
+              <div className="mt-3 flex gap-2">
+                <input
+                  value={couponCode}
+                  disabled={Boolean(appliedCoupon) || couponLoading}
+                  onChange={(e) => setCouponCode(normalizeCouponCode(e.target.value))}
+                  placeholder="EX: JOAO10"
+                  className="min-w-0 flex-1 rounded-2xl border border-orange-200 bg-white px-4 py-3 text-sm font-black uppercase outline-none focus:border-orange-400"
+                />
+                {appliedCoupon ? (
+                  <button
+                    type="button"
+                    onClick={removeCoupon}
+                    className="rounded-2xl bg-slate-950 px-4 py-3 text-xs font-black text-white"
+                  >
+                    Remover
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={applyCoupon}
+                    disabled={couponLoading}
+                    className="rounded-2xl bg-orange-600 px-4 py-3 text-xs font-black text-white disabled:bg-slate-300"
+                  >
+                    {couponLoading ? "..." : "Aplicar"}
+                  </button>
+                )}
+              </div>
+              {couponMessage ? (
+                <p className={`mt-3 text-xs font-bold leading-5 ${appliedCoupon ? "text-emerald-700" : "text-red-700"}`}>
+                  {couponMessage}
+                </p>
+              ) : (
+                <p className="mt-3 text-xs font-bold leading-5 text-orange-800">
+                  O desconto será validado na API e aplicado antes da wallet.
+                </p>
+              )}
+              {promoterRefInfo?.promoterName ? (
+                <p className="mt-2 rounded-2xl bg-white p-3 text-xs font-bold text-slate-700">
+                  Indicação: {promoterRefInfo.promoterName}
+                </p>
+              ) : promoterRef ? (
+                <p className="mt-2 rounded-2xl bg-white p-3 text-xs font-bold text-slate-700">
+                  Ref salva: {promoterRef}
+                </p>
+              ) : null}
+            </div>
+
             <div className="mt-5 space-y-3 rounded-2xl border border-slate-200 p-4">
               <div className="flex justify-between text-sm font-bold text-slate-600">
                 <span>Ingressos</span>
@@ -690,6 +905,12 @@ export default function CustomerCheckoutPage() {
                 <span>Subtotal</span>
                 <span>{formatMoney(subtotal)}</span>
               </div>
+              {couponDiscount > 0 ? (
+                <div className="flex justify-between text-sm font-bold text-emerald-700">
+                  <span>Cupom {appliedCoupon?.couponCode}</span>
+                  <span>- {formatMoney(couponDiscount)}</span>
+                </div>
+              ) : null}
               <label className="flex items-center justify-between gap-3 text-sm font-bold text-slate-600">
                 <span>Usar wallet</span>
                 <input type="checkbox" checked={useWalletBalance} onChange={(e) => setUseWalletBalance(e.target.checked)} />
@@ -715,7 +936,7 @@ export default function CustomerCheckoutPage() {
             </button>
 
             <p className="mt-4 text-center text-xs font-bold leading-5 text-slate-500">
-              A API confere CPF, estoque, mesa, cadeira e reserva temporária antes de criar o pedido.
+              A API confere CPF, estoque, mesa, cadeira, cupom, indicação e reserva temporária antes de criar o pedido.
             </p>
           </aside>
         </form>

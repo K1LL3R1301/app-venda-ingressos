@@ -1,0 +1,3 @@
+import { OperatorDashboardPage } from "../_components/OperatorPanel";
+
+export default OperatorDashboardPage;

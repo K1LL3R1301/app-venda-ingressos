@@ -1,4 +1,4 @@
-﻿import { Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AiModule } from './ai/ai.module';
 import { AppController } from './app.controller';
@@ -21,8 +21,16 @@ import { UsersModule } from './users/users.module';
 
 import { AdminAccessRequestsModule } from './admin-access-requests/admin-access-requests.module';
 import { PromotionBoostsModule } from './promotion-boosts/promotion-boosts.module';
-import { AdminSupportTicketsModule } from './admin-support-tickets/admin-support-tickets.module';@Module({
+import { AdminSupportTicketsModule } from './admin-support-tickets/admin-support-tickets.module';
+import { OperatorAssignmentsModule } from './operator-assignments/operator-assignments.module';
+import { PromotersModule } from './promoters/promoters.module';
+import { CommercialCheckoutModule } from './commercial-checkout/commercial-checkout.module';
+
+@Module({
   imports: [
+    CommercialCheckoutModule,
+    PromotersModule,
+    OperatorAssignmentsModule,
     AdminSupportTicketsModule,
     PromotionBoostsModule,
     AdminAccessRequestsModule,

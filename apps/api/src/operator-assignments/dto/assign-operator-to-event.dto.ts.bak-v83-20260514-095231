@@ -1,0 +1,18 @@
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
+
+export class AssignOperatorToEventDto {
+  @IsString()
+  eventId!: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  canValidateTickets?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  canAnswerSupport?: boolean;
+}

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -145,12 +145,51 @@ const categories: CategoryItem[] = [
   },
 ];
 
-const cityTiles = [
-  { label: "São Paulo", hint: "Shows, teatro e experiências" },
-  { label: "Rio de Janeiro", hint: "Festas, tours e cultura" },
-  { label: "Belo Horizonte", hint: "Eventos e gastronomia" },
-  { label: "Curitiba", hint: "Passeios e congressos" },
+type CityTile = {
+  label: string;
+  state?: string;
+  hint: string;
+  eventCount: number;
+};
+
+const fallbackCityTiles: CityTile[] = [
+  { label: "São Paulo", state: "SP", hint: "Shows, teatro e experiências", eventCount: 0 },
+  { label: "Rio de Janeiro", state: "RJ", hint: "Festas, tours e cultura", eventCount: 0 },
+  { label: "Belo Horizonte", state: "MG", hint: "Eventos e gastronomia", eventCount: 0 },
+  { label: "Curitiba", state: "PR", hint: "Passeios e congressos", eventCount: 0 },
 ];
+
+function getCityKey(city?: string | null, state?: string | null) {
+  return [normalizeText(city), normalizeText(state)].filter(Boolean).join("|");
+}
+
+function getCityHint(city: CityTile) {
+  if (city.eventCount <= 0) return city.hint;
+  const eventLabel = city.eventCount === 1 ? "evento" : "eventos";
+  return [`${city.eventCount} ${eventLabel}`, city.state].filter(Boolean).join(" • ");
+}
+
+function buildCityTilesFromEvents(events: EventItem[]): CityTile[] {
+  const byCity = new Map<string, CityTile>();
+
+  for (const event of events) {
+    const city = String(event.location?.city || "").trim();
+    if (!city) continue;
+
+    const state = String(event.location?.state || "").trim();
+    const key = getCityKey(city, state);
+    if (!key) continue;
+
+    const current = byCity.get(key);
+    if (current) current.eventCount += 1;
+    else byCity.set(key, { label: city, state, hint: "", eventCount: 1 });
+  }
+
+  return Array.from(byCity.values()).sort((first, second) => {
+    if (second.eventCount !== first.eventCount) return second.eventCount - first.eventCount;
+    return first.label.localeCompare(second.label, "pt-BR");
+  });
+}
 
 const faqItems = [
   "Como encontro um evento perto de mim?",
@@ -628,14 +667,29 @@ function PromoBanner({
   );
 }
 
-function CitySection({ onOpenCity }: { onOpenCity: (city: string) => void }) {
+function CitySection({
+  cities,
+  onOpenCity,
+}: {
+  cities: CityTile[];
+  onOpenCity: (city: string) => void;
+}) {
+  const safeCities = cities.length > 0 ? cities : fallbackCityTiles;
+  const visibleCities = safeCities.slice(0, 4);
+
   return (
     <section className="mb-10">
       <div className="mb-4 flex items-center justify-between gap-4">
-        <h2 className="text-[22px] font-black text-neutral-900">Descubra o que fazer na sua cidade</h2>
+        <div>
+          <h2 className="text-[22px] font-black text-neutral-900">Descubra o que fazer na sua cidade</h2>
+          <p className="mt-1 text-sm font-semibold text-neutral-500">
+            As cidades aparecem automaticamente conforme os eventos cadastrados.
+          </p>
+        </div>
+
         <button
           type="button"
-          onClick={() => onOpenCity("")}
+          onClick={() => (window.location.href = "/events/cities")}
           className="text-[14px] font-black text-[#19002f] hover:text-orange-700"
         >
           Ver tudo
@@ -643,17 +697,17 @@ function CitySection({ onOpenCity }: { onOpenCity: (city: string) => void }) {
       </div>
 
       <div className="grid grid-cols-4 gap-5">
-        {cityTiles.map((city, index) => (
+        {visibleCities.map((city, index) => (
           <button
             type="button"
-            key={city.label}
+            key={`${city.label}-${city.state || "sem-uf"}`}
             onClick={() => onOpenCity(city.label)}
             className={`relative h-[150px] overflow-hidden rounded-[9px] bg-gradient-to-r ${getEventGradient(index)} p-4 text-left text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md`}
           >
             <div className="absolute inset-0 bg-black/25" />
             <div className="relative z-10 flex h-full flex-col justify-end">
               <h3 className="text-[19px] font-black">{city.label}</h3>
-              <p className="mt-1 text-xs font-semibold text-white/80">{city.hint}</p>
+              <p className="mt-1 text-xs font-semibold text-white/80">{getCityHint(city)}</p>
             </div>
           </button>
         ))}
@@ -828,7 +882,7 @@ export default function CustomerDashboardPage() {
   const searchedEvents = useMemo(() => {
     return sortedEvents.filter((event) => eventMatchesSearch(event, search));
   }, [sortedEvents, search]);
-
+const cityTilesFromEvents = useMemo(() => buildCityTilesFromEvents(searchedEvents), [searchedEvents]);
   const heroEvents = searchedEvents.slice(0, 9);
   const activeHero = heroEvents.length > 0 ? heroEvents[activeHeroIndex % heroEvents.length] : undefined;
 
@@ -918,7 +972,7 @@ export default function CustomerDashboardPage() {
         id: "section-last-call",
         title: "Última chamada",
         view: "last-call",
-        variant: "compact",
+        variant: "compact" as const,
         events: lastCall,
       },
       {
@@ -1159,7 +1213,10 @@ export default function CustomerDashboardPage() {
             );
           })}
 
-          <CitySection onOpenCity={(city) => goTo(city ? `/events?city=${encodeURIComponent(city)}` : "/events")} />
+          <CitySection
+            cities={cityTilesFromEvents}
+            onOpenCity={(city) => goTo(city ? `/events?city=${encodeURIComponent(city)}` : "/events")}
+          />
 
           {sections.slice(7).map((section) => {
             const page = sectionPages[section.id] || 0;

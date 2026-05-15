@@ -141,6 +141,13 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderPlaceSelectionDto)
   placeSelections?: CreateOrderPlaceSelectionDto[];
+  @IsOptional()
+  @IsString()
+  couponCode?: string;
+
+  @IsOptional()
+  @IsString()
+  promoterRef?: string;
 
   @IsOptional()
   @IsBoolean()

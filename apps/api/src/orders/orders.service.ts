@@ -105,9 +105,100 @@ type RawTicketHolderRow = {
   currentOwnerUserId: string | null;
 };
 
+
+
+type ScopeUser = {
+  sub?: string;
+  email?: string;
+  role?: string;
+  cpf?: string;
+};
 @Injectable()
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
+  
+
+  private organizerScopeWhere(user?: ScopeUser): Prisma.OrganizerWhereInput {
+    const normalizedEmail = this.normalizeEmail(user?.email);
+    const normalizedCpf = this.normalizeCpf(user?.cpf);
+    const or: Prisma.OrganizerWhereInput[] = [];
+
+    if (user?.sub) or.push({ ownerUserId: user.sub });
+    if (normalizedEmail) or.push({ email: normalizedEmail });
+    if (normalizedCpf) or.push({ document: normalizedCpf });
+
+    return or.length > 0 ? { OR: or } : { id: '__NO_ORGANIZER_SCOPE__' };
+  }
+private async astroResolveCommercialForOrder(data: any, subtotal: Prisma.Decimal, db: DbClient = this.prisma) {
+    const couponCode = String(data?.couponCode || '').trim().toUpperCase();
+    const promoterRef = String(data?.promoterRef || data?.ref || '').trim();
+    let coupon: any = null;
+    let link: any = null;
+    let promoterId: string | null = null;
+    let discountAmount = new Prisma.Decimal(0);
+
+    if (couponCode) {
+      coupon = await (db as any).astroCoupon.findFirst({
+        where: { code: couponCode, status: 'ACTIVE', OR: [{ eventId: data.eventId }, { eventId: null }] },
+        include: { promoter: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!coupon) throw new BadRequestException('Cupom invalido ou inativo para este evento');
+      const now = Date.now();
+      if (coupon.startsAt && new Date(coupon.startsAt).getTime() > now) throw new BadRequestException('Cupom ainda nao esta valido');
+      if (coupon.endsAt && new Date(coupon.endsAt).getTime() < now) throw new BadRequestException('Cupom expirado');
+      if (coupon.usageLimit && Number(coupon.usedCount || 0) >= Number(coupon.usageLimit)) throw new BadRequestException('Cupom atingiu limite total');
+      const customerCpf = this.normalizeCpf(data.customerCpf);
+      if (coupon.perCpfLimit && customerCpf) {
+        const usedByCpf = await (db as any).astroPromoterSale.count({ where: { couponId: coupon.id, customerCpf, status: 'PAID' } });
+        if (usedByCpf >= Number(coupon.perCpfLimit)) throw new BadRequestException('CPF ja atingiu limite de uso deste cupom');
+      }
+      const subtotalNumber = Number(subtotal);
+      const discountType = String(coupon.discountType || 'PERCENT').toUpperCase();
+      const discountValue = Number(coupon.discountValue || 0);
+      const maxDiscount = Number(coupon.maxDiscount || 0);
+      let discountNumber = discountType === 'FREE' ? subtotalNumber : discountType === 'FIXED' ? Math.min(subtotalNumber, discountValue) : (subtotalNumber * discountValue) / 100;
+      if (maxDiscount > 0) discountNumber = Math.min(discountNumber, maxDiscount);
+      discountAmount = new Prisma.Decimal(Math.max(0, Math.min(subtotalNumber, discountNumber)));
+      promoterId = coupon.promoterId || null;
+    }
+
+    if (!coupon && promoterRef) {
+      link = await (db as any).astroPromoterLink.findUnique({ where: { slug: promoterRef }, include: { promoter: true } });
+      if (link && link.status === 'ACTIVE') promoterId = link.promoterId || null;
+    }
+
+    const totalAmount = subtotal.sub(discountAmount).lt(0) ? new Prisma.Decimal(0) : subtotal.sub(discountAmount);
+    return { totalAmount, grossAmount: subtotal, discountAmount, couponCode: coupon?.code || couponCode || null, promoterRef: link?.slug || promoterRef || null, promoterId, couponId: coupon?.id || null, promoterLinkId: link?.id || null };
+  }
+
+  private async astroCreateCommercialSaleFromPaidOrder(orderId: string, db: any) {
+    const order = await db.order.findUnique({ where: { id: orderId }, include: { event: true } });
+    if (!order || order.status !== 'PAID') return;
+    const existing = await db.astroPromoterSale.findFirst({ where: { orderId: order.id, source: 'CHECKOUT' } });
+    if (existing) return;
+    const coupon = order.couponId ? await db.astroCoupon.findUnique({ where: { id: order.couponId }, include: { promoter: true } }) : null;
+    const link = order.promoterLinkId ? await db.astroPromoterLink.findUnique({ where: { id: order.promoterLinkId }, include: { promoter: true } }) : null;
+    const promoterId = order.promoterId || coupon?.promoterId || link?.promoterId || null;
+    if (!promoterId) return;
+    const promoter = await db.astroPromoter.findUnique({ where: { id: promoterId } });
+    const grossAmount = Number(order.grossAmount || order.totalAmount || 0);
+    const discountAmount = Number(order.discountAmount || 0);
+    const netAmount = Number(order.totalAmount || 0);
+    const commissionValue = Number(promoter?.commissionValue || 0);
+    const type = String(promoter?.commissionType || 'PERCENT').toUpperCase();
+    const base = String(promoter?.commissionBase || 'NET_AMOUNT').toUpperCase();
+    const baseAmount = base === 'GROSS_AMOUNT' ? grossAmount : base === 'AFTER_DISCOUNT' ? Math.max(0, grossAmount - discountAmount) : netAmount;
+    const commissionAmount = type === 'FIXED_PER_ORDER' || type === 'FIXED_PER_TICKET' ? commissionValue : type === 'NONE' ? 0 : Math.round(((baseAmount * commissionValue) / 100) * 100) / 100;
+    await db.astroPromoterSale.create({ data: { protocol: `ASTRO-VEN-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`, adminUserId: promoter?.adminUserId || coupon?.adminUserId || link?.adminUserId || 'SYSTEM', eventId: order.eventId, eventTitle: order.event?.name || null, promoterId, couponId: coupon?.id || order.couponId || null, linkId: link?.id || order.promoterLinkId || null, orderId: order.id, customerName: order.customerName || null, customerEmail: order.customerEmail || null, customerCpf: this.normalizeCpf(order.customerCpf) || null, grossAmount, discountAmount, netAmount, commissionAmount, status: 'PAID', source: 'CHECKOUT', paidAt: new Date(), notes: 'Venda criada automaticamente pelo pagamento do pedido' } });
+    if (coupon?.id) await db.astroCoupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } });
+    if (link?.id) {
+      const sales = await db.astroPromoterSale.findMany({ where: { linkId: link.id, status: 'PAID' } });
+      const revenue = sales.reduce((sum: number, sale: any) => sum + Number(sale.netAmount || 0), 0);
+      const commission = sales.reduce((sum: number, sale: any) => sum + Number(sale.commissionAmount || 0), 0);
+      await db.astroPromoterLink.update({ where: { id: link.id }, data: { ordersPaid: sales.length, revenue, commission } });
+    }
+  }
 
   private orderInclude = {
     event: {
@@ -1872,7 +1963,9 @@ export class OrdersService {
       customerCpf: normalizedCustomerCpf || undefined,
     };
 
-    const { itemsData, totalAmount } = await this.prepareOrderItems(mergedData);
+    const { itemsData, totalAmount: rawTotalAmount } = await this.prepareOrderItems(mergedData);
+    const commercial = await this.astroResolveCommercialForOrder(mergedData, rawTotalAmount);
+    const totalAmount = commercial.totalAmount;
     const pendingExpiresAt = this.getPendingOrderExpiresAt();
 
     return this.prisma.$transaction(async (tx) => {
@@ -1892,6 +1985,13 @@ export class OrdersService {
           customerCpf:
             purchaserUser?.cpfNormalized || normalizedCustomerCpf || null,
           totalAmount,
+          grossAmount: commercial.grossAmount,
+          discountAmount: commercial.discountAmount,
+          couponCode: commercial.couponCode,
+          promoterRef: commercial.promoterRef,
+          promoterId: commercial.promoterId,
+          couponId: commercial.couponId,
+          promoterLinkId: commercial.promoterLinkId,
           status: 'PENDING',
           expiresAt: pendingExpiresAt,
           items: {
@@ -1971,7 +2071,9 @@ export class OrdersService {
       customerCpf: purchaserUser.cpfNormalized || undefined,
     };
 
-    const { itemsData, totalAmount } = await this.prepareOrderItems(mergedData);
+    const { itemsData, totalAmount: rawTotalAmount } = await this.prepareOrderItems(mergedData);
+    const commercial = await this.astroResolveCommercialForOrder(mergedData, rawTotalAmount);
+    const totalAmount = commercial.totalAmount;
     const walletBalance = mergedData.useWalletBalance
       ? await this.getWalletBalance(userId)
       : new Prisma.Decimal(0);
@@ -1999,6 +2101,13 @@ export class OrdersService {
           customerEmail: normalizedCustomerEmail,
           customerCpf: purchaserUser.cpfNormalized || null,
           totalAmount,
+          grossAmount: commercial.grossAmount,
+          discountAmount: commercial.discountAmount,
+          couponCode: commercial.couponCode,
+          promoterRef: commercial.promoterRef,
+          promoterId: commercial.promoterId,
+          couponId: commercial.couponId,
+          promoterLinkId: commercial.promoterLinkId,
           status: orderStatus,
           expiresAt: pendingExpiresAt,
           items: {
@@ -2071,6 +2180,7 @@ export class OrdersService {
 
       if (orderStatus === 'PAID') {
         await this.activateOrderTransferRequests(order.id, tx);
+        await this.astroCreateCommercialSaleFromPaidOrder(order.id, tx);
       }
 
       const updatedOrder = await tx.order.findUnique({
@@ -2183,6 +2293,33 @@ export class OrdersService {
     );
 
     return [...heldReservations, ...soldFromTickets];
+  }
+
+
+  async findAdminScope(user: ScopeUser) {
+    const role = String(user?.role || '').toUpperCase();
+
+    if (role === 'SUPER_ADMIN') {
+      return this.findAll();
+    }
+
+    await this.expirePendingOrders({
+      event: {
+        organizer: this.organizerScopeWhere(user),
+      },
+    });
+
+    return this.prisma.order.findMany({
+      where: {
+        event: {
+          organizer: this.organizerScopeWhere(user),
+        },
+      },
+      include: this.orderInclude,
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
   }
 
   async findAll() {

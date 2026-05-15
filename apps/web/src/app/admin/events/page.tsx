@@ -724,7 +724,7 @@ export default function EventsPage() {
     setError("");
 
     try {
-      const response = await fetch(`${API_BASE_URL}/events`, {
+      const response = await fetch(`${API_BASE_URL}/events/admin-scope`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",

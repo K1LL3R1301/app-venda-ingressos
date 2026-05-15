@@ -1,0 +1,3 @@
+import { OperatorValidationPage } from "../_components/OperatorPanel";
+
+export default OperatorValidationPage;

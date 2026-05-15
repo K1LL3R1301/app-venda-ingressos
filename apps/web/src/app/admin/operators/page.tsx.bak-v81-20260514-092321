@@ -1,0 +1,588 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
+type EventItem = {
+  id: string;
+  name?: string | null;
+  title?: string | null;
+  eventDate?: string | null;
+  startDate?: string | null;
+};
+
+type Assignment = {
+  id: string;
+  protocol: string;
+  status: string;
+  operatorName?: string | null;
+  operatorEmail?: string | null;
+  operatorCpf?: string | null;
+  eventTitle?: string | null;
+  eventDate?: string | null;
+  invitedAt?: string | null;
+  operator?: {
+    id: string;
+    name: string;
+    email: string;
+    cpf?: string | null;
+    role: string;
+  } | null;
+  event?: {
+    id: string;
+    name: string;
+    eventDate?: string | null;
+  } | null;
+};
+
+type OperatorReport = {
+  assignment: Assignment;
+  eventHasPassed: boolean;
+  summary: {
+    ticketsTotal: number;
+    ticketsUsed: number;
+    operatorCheckins: number;
+    supportThreads: number;
+    supportThreadsClosed: number;
+    supportMessages: number;
+    paidOrders: number;
+    paidRevenue: number;
+  };
+  checkins: Array<{
+    id: string;
+    checkedAt: string;
+    gate?: string | null;
+    operatorName?: string | null;
+    ticketCode: string;
+    holderName?: string | null;
+    holderCpf?: string | null;
+    ticketTypeName: string;
+  }>;
+  supportThreads: Array<{
+    id: string;
+    subject: string;
+    status: string;
+    customerName?: string | null;
+    customerEmail: string;
+    messagesCount: number;
+    updatedAt: string;
+  }>;
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+function token() {
+  return typeof window === "undefined" ? "" : localStorage.getItem("token") || "";
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function money(value?: number | null) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(Number(value || 0));
+}
+
+function cpfDigits(value: string) {
+  return value.replace(/\D/g, "").slice(0, 11);
+}
+
+function maskCpf(value: string) {
+  const cpf = cpfDigits(value);
+  return cpf
+    .replace(/^(\d{3})(\d)/, "$1.$2")
+    .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1-$2");
+}
+
+function eventName(event: EventItem) {
+  return event.name || event.title || "Evento sem nome";
+}
+
+function Stat({
+  label,
+  value,
+  helper,
+}: {
+  label: string;
+  value: string | number;
+  helper?: string;
+}) {
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">
+        {label}
+      </p>
+      <p className="mt-3 text-3xl font-black text-slate-950">{value}</p>
+      {helper ? <p className="mt-1 text-xs font-semibold text-slate-500">{helper}</p> : null}
+    </div>
+  );
+}
+
+export default function AdminOperatorsPage() {
+  const [cpf, setCpf] = useState("");
+  const [eventId, setEventId] = useState("");
+  const [notes, setNotes] = useState("");
+  const [canValidateTickets, setCanValidateTickets] = useState(true);
+  const [canAnswerSupport, setCanAnswerSupport] = useState(true);
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [report, setReport] = useState<OperatorReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    const auth = token();
+
+    if (!auth || auth === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const [eventsRes, assignmentsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/events`, {
+          headers: { Authorization: `Bearer ${auth}` },
+        }),
+        fetch(`${API_BASE_URL}/operator-assignments`, {
+          headers: { Authorization: `Bearer ${auth}` },
+        }),
+      ]);
+
+      const eventsJson = await eventsRes.json().catch(() => []);
+      const assignmentsJson = await assignmentsRes.json().catch(() => []);
+
+      setEvents(Array.isArray(eventsJson) ? eventsJson : []);
+      setAssignments(Array.isArray(assignmentsJson) ? assignmentsJson : []);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const sortedEvents = useMemo(() => {
+    return [...events].sort((a, b) => {
+      const aDate = new Date(a.eventDate || a.startDate || 0).getTime();
+      const bDate = new Date(b.eventDate || b.startDate || 0).getTime();
+      return bDate - aDate;
+    });
+  }, [events]);
+
+  const activeAssignments = assignments.filter((assignment) => assignment.status === "ACTIVE");
+  const finishedAssignments = assignments.filter((assignment) => {
+    const date = new Date(assignment.eventDate || assignment.event?.eventDate || 0);
+    return Number.isFinite(date.getTime()) && date.getTime() < Date.now();
+  });
+
+  async function inviteOperator(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const auth = token();
+
+    if (!auth) {
+      window.location.href = "/login";
+      return;
+    }
+
+    if (cpfDigits(cpf).length !== 11) {
+      alert("Informe um CPF válido com 11 dígitos.");
+      return;
+    }
+
+    if (!eventId) {
+      alert("Selecione o evento.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/operator-assignments/invite`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${auth}`,
+        },
+        body: JSON.stringify({
+          cpf: cpfDigits(cpf),
+          eventId,
+          notes,
+          canValidateTickets,
+          canAnswerSupport,
+        }),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        alert(typeof result?.message === "string" ? result.message : "Erro ao convidar operador.");
+        return;
+      }
+
+      setCpf("");
+      setEventId("");
+      setNotes("");
+      setCanValidateTickets(true);
+      setCanAnswerSupport(true);
+      await load();
+      alert("Operador convidado e atribuído ao evento.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function loadReport(assignmentId: string) {
+    const auth = token();
+
+    const response = await fetch(`${API_BASE_URL}/operator-assignments/${assignmentId}/report`, {
+      headers: { Authorization: `Bearer ${auth}` },
+    });
+
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      alert(typeof result?.message === "string" ? result.message : "Erro ao carregar relatório.");
+      return;
+    }
+
+    setReport(result);
+  }
+
+  return (
+    <main className="mx-auto max-w-[1500px] space-y-6 px-4 py-6">
+      <section
+        className="relative overflow-hidden rounded-[34px] text-white shadow-sm"
+        style={{
+          background:
+            "linear-gradient(135deg, #ff6900 0%, #7c2d12 18%, #111827 50%, #020617 100%)",
+        }}
+      >
+        <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-orange-400/25 blur-3xl" />
+        <div className="absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-black/60 blur-3xl" />
+        <div className="absolute inset-0 bg-black/25" />
+
+        <div className="relative z-10 grid gap-6 p-7 lg:grid-cols-[1.1fr_0.9fr] lg:p-9">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.34em] text-orange-200">
+              Operadores de evento
+            </p>
+            <h1 className="mt-4 max-w-4xl text-4xl font-black leading-tight md:text-5xl">
+              Convide clientes para operar eventos.
+            </h1>
+            <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/80">
+              Use o CPF da conta customer para transformar em operator, atribuir a um evento
+              e acompanhar relatório de ingressos validados, chats atendidos e operação pós-evento.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-5">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/55">
+                Ativos
+              </p>
+              <p className="mt-3 text-3xl font-black">{activeAssignments.length}</p>
+            </div>
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-5">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/55">
+                Eventos
+              </p>
+              <p className="mt-3 text-3xl font-black">{events.length}</p>
+            </div>
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-5">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/55">
+                Pós-evento
+              </p>
+              <p className="mt-3 text-3xl font-black">{finishedAssignments.length}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-[440px_1fr]">
+        <form
+          onSubmit={inviteOperator}
+          className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+            Novo convite
+          </p>
+          <h2 className="mt-2 text-2xl font-black text-slate-950">Convidar por CPF</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            A conta precisa existir como customer. Ao confirmar, ela vira operator e fica vinculada
+            ao evento selecionado.
+          </p>
+
+          <div className="mt-6 space-y-4">
+            <label className="block">
+              <span className="text-sm font-black text-slate-700">CPF da conta customer</span>
+              <input
+                value={cpf}
+                onChange={(event) => setCpf(maskCpf(event.target.value))}
+                placeholder="000.000.000-00"
+                className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none transition focus:border-orange-400 focus:bg-white"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-black text-slate-700">Evento</span>
+              <select
+                value={eventId}
+                onChange={(event) => setEventId(event.target.value)}
+                className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none transition focus:border-orange-400 focus:bg-white"
+              >
+                <option value="">Selecione um evento</option>
+                {sortedEvents.map((event) => (
+                  <option key={event.id} value={event.id}>
+                    {eventName(event)} • {formatDate(event.eventDate || event.startDate)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={canValidateTickets}
+                  onChange={(event) => setCanValidateTickets(event.target.checked)}
+                />
+                Validar ingressos
+              </label>
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={canAnswerSupport}
+                  onChange={(event) => setCanAnswerSupport(event.target.checked)}
+                />
+                Atender chats
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="text-sm font-black text-slate-700">Observações internas</span>
+              <textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                rows={4}
+                placeholder="Ex: responsável pela portaria principal."
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none transition focus:border-orange-400 focus:bg-white"
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={saving}
+              className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? "Convidando..." : "Convidar e atribuir operador"}
+            </button>
+          </div>
+        </form>
+
+        <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+                Equipe operacional
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">
+                Operadores atribuídos
+              </h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Acompanhe quem está vinculado a cada evento.
+              </p>
+            </div>
+
+            <Link
+              href="/admin/dashboard"
+              className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+            >
+              Voltar ao painel
+            </Link>
+          </div>
+
+          <div className="mt-6 overflow-x-auto">
+            {loading ? (
+              <div className="rounded-3xl bg-slate-50 p-6 text-sm font-bold text-slate-500">
+                Carregando operadores...
+              </div>
+            ) : assignments.length === 0 ? (
+              <div className="rounded-3xl bg-slate-50 p-8 text-center">
+                <p className="font-black text-slate-950">Nenhum operador atribuído.</p>
+                <p className="mt-2 text-sm text-slate-500">
+                  Convide uma conta customer usando o CPF.
+                </p>
+              </div>
+            ) : (
+              <table className="w-full min-w-[860px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
+                    <th className="px-4 py-3">Operador</th>
+                    <th className="px-4 py-3">Evento</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Convite</th>
+                    <th className="px-4 py-3 text-right">Relatório</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assignments.map((assignment) => {
+                    const eventDate = assignment.eventDate || assignment.event?.eventDate;
+                    const passed = eventDate ? new Date(eventDate).getTime() < Date.now() : false;
+
+                    return (
+                      <tr key={assignment.id} className="border-b border-slate-100">
+                        <td className="px-4 py-4">
+                          <p className="font-black text-slate-950">
+                            {assignment.operator?.name || assignment.operatorName || "-"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {assignment.operator?.email || assignment.operatorEmail || "-"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-400">
+                            CPF: {assignment.operator?.cpf || assignment.operatorCpf || "-"}
+                          </p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="font-bold text-slate-950">
+                            {assignment.event?.name || assignment.eventTitle || "-"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">{formatDate(eventDate)}</p>
+                          {passed ? (
+                            <span className="mt-2 inline-flex rounded-full bg-orange-50 px-3 py-1 text-xs font-black text-orange-700">
+                              Pós-evento
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="px-4 py-4">
+                          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">
+                            {assignment.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4 text-xs text-slate-500">
+                          <p>{assignment.protocol}</p>
+                          <p>{formatDate(assignment.invitedAt)}</p>
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => loadReport(assignment.id)}
+                            className="rounded-2xl bg-slate-950 px-4 py-3 text-xs font-black text-white transition hover:bg-slate-800"
+                          >
+                            Ver relatório
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
+      </section>
+
+      {report ? (
+        <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+                Relatório do operador
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">
+                {report.assignment.operator?.name || report.assignment.operatorName}
+              </h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Evento: {report.assignment.event?.name || report.assignment.eventTitle} •{" "}
+                {report.eventHasPassed ? "pós-evento" : "evento em andamento ou futuro"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReport(null)}
+              className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+            >
+              Fechar relatório
+            </button>
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <Stat label="Ingressos do evento" value={report.summary.ticketsTotal} helper="Total emitido/encontrado" />
+            <Stat label="Passados no evento" value={report.summary.ticketsUsed} helper="Total geral de ingressos usados" />
+            <Stat label="Passados por operador" value={report.summary.operatorCheckins} helper="Check-ins deste operador" />
+            <Stat label="Chats atendidos" value={report.summary.supportThreadsClosed} helper={`${report.summary.supportThreads} chat(s) atribuídos`} />
+            <Stat label="Mensagens" value={report.summary.supportMessages} helper="Mensagens nos chats" />
+            <Stat label="Pedidos pagos" value={report.summary.paidOrders} helper="Pedidos pagos do evento" />
+            <Stat label="Receita paga" value={money(report.summary.paidRevenue)} helper="Receita do evento" />
+            <Stat label="Status" value={report.eventHasPassed ? "Pós-evento" : "Aberto"} helper="Relatório sempre disponível" />
+          </div>
+
+          <div className="mt-7 grid gap-6 xl:grid-cols-2">
+            <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+              <h3 className="text-xl font-black text-slate-950">Últimos ingressos passados</h3>
+              <div className="mt-4 max-h-[420px] space-y-3 overflow-auto">
+                {report.checkins.length === 0 ? (
+                  <p className="text-sm font-semibold text-slate-500">
+                    Nenhum check-in atribuído a este operador ainda.
+                  </p>
+                ) : (
+                  report.checkins.map((checkin) => (
+                    <div key={checkin.id} className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="font-black text-slate-950">{checkin.ticketTypeName}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Código: {checkin.ticketCode} • {formatDate(checkin.checkedAt)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Titular: {checkin.holderName || "-"} • CPF: {checkin.holderCpf || "-"}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+              <h3 className="text-xl font-black text-slate-950">Chats e atendimentos</h3>
+              <div className="mt-4 max-h-[420px] space-y-3 overflow-auto">
+                {report.supportThreads.length === 0 ? (
+                  <p className="text-sm font-semibold text-slate-500">
+                    Nenhum chat atribuído a este operador.
+                  </p>
+                ) : (
+                  report.supportThreads.map((thread) => (
+                    <div key={thread.id} className="rounded-2xl bg-white p-4 shadow-sm">
+                      <p className="font-black text-slate-950">{thread.subject}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Cliente: {thread.customerName || thread.customerEmail}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Status: {thread.status} • Mensagens: {thread.messagesCount}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+    </main>
+  );
+}

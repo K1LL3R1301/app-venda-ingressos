@@ -11,6 +11,33 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 @Injectable()
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService) {}
+  private async astroCreateCommercialSaleFromPaidOrder(orderId: string, db: any) {
+    const order = await db.order.findUnique({ where: { id: orderId }, include: { event: true } });
+    if (!order || order.status !== 'PAID') return;
+    const existing = await db.astroPromoterSale.findFirst({ where: { orderId: order.id, source: 'CHECKOUT' } });
+    if (existing) return;
+    const coupon = order.couponId ? await db.astroCoupon.findUnique({ where: { id: order.couponId }, include: { promoter: true } }) : null;
+    const link = order.promoterLinkId ? await db.astroPromoterLink.findUnique({ where: { id: order.promoterLinkId }, include: { promoter: true } }) : null;
+    const promoterId = order.promoterId || coupon?.promoterId || link?.promoterId || null;
+    if (!promoterId) return;
+    const promoter = await db.astroPromoter.findUnique({ where: { id: promoterId } });
+    const grossAmount = Number(order.grossAmount || order.totalAmount || 0);
+    const discountAmount = Number(order.discountAmount || 0);
+    const netAmount = Number(order.totalAmount || 0);
+    const commissionValue = Number(promoter?.commissionValue || 0);
+    const type = String(promoter?.commissionType || 'PERCENT').toUpperCase();
+    const base = String(promoter?.commissionBase || 'NET_AMOUNT').toUpperCase();
+    const baseAmount = base === 'GROSS_AMOUNT' ? grossAmount : base === 'AFTER_DISCOUNT' ? Math.max(0, grossAmount - discountAmount) : netAmount;
+    const commissionAmount = type === 'FIXED_PER_ORDER' || type === 'FIXED_PER_TICKET' ? commissionValue : type === 'NONE' ? 0 : Math.round(((baseAmount * commissionValue) / 100) * 100) / 100;
+    await db.astroPromoterSale.create({ data: { protocol: `ASTRO-VEN-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`, adminUserId: promoter?.adminUserId || coupon?.adminUserId || link?.adminUserId || 'SYSTEM', eventId: order.eventId, eventTitle: order.event?.name || null, promoterId, couponId: coupon?.id || order.couponId || null, linkId: link?.id || order.promoterLinkId || null, orderId: order.id, customerName: order.customerName || null, customerEmail: order.customerEmail || null, customerCpf: String(order.customerCpf || '').replace(/\D/g, '') || null, grossAmount, discountAmount, netAmount, commissionAmount, status: 'PAID', source: 'CHECKOUT', paidAt: new Date(), notes: 'Venda criada automaticamente pelo pagamento do pedido' } });
+    if (coupon?.id) await db.astroCoupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } });
+    if (link?.id) {
+      const sales = await db.astroPromoterSale.findMany({ where: { linkId: link.id, status: 'PAID' } });
+      const revenue = sales.reduce((sum: number, sale: any) => sum + Number(sale.netAmount || 0), 0);
+      const commission = sales.reduce((sum: number, sale: any) => sum + Number(sale.commissionAmount || 0), 0);
+      await db.astroPromoterLink.update({ where: { id: link.id }, data: { ordersPaid: sales.length, revenue, commission } });
+    }
+  }
 
   private getPaidTotal(payments: { amount: Prisma.Decimal; status: string }[]) {
     let paidTotal = new Prisma.Decimal(0);
@@ -143,6 +170,7 @@ export class PaymentsService {
       if (orderWillBePaid) {
         await this.markOrderPlacesAsSold(data.orderId, tx);
         await this.activateOrderTransferRequests(data.orderId, tx);
+        await this.astroCreateCommercialSaleFromPaidOrder(data.orderId, tx);
       }
 
       return createdPayment;
@@ -214,6 +242,7 @@ export class PaymentsService {
 
       await this.markOrderPlacesAsSold(order.id, tx);
       await this.activateOrderTransferRequests(order.id, tx);
+      await this.astroCreateCommercialSaleFromPaidOrder(order.id, tx);
 
       return createdPayment;
     });

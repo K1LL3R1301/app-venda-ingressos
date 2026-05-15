@@ -1,0 +1,674 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState, type FormEvent } from "react";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+type AnyItem = Record<string, any>;
+
+function token() {
+  return typeof window === "undefined" ? "" : localStorage.getItem("token") || "";
+}
+
+function money(value?: number | string | null) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
+}
+
+function code(value: string) {
+  return value.toUpperCase().replace(/\s+/g, "").replace(/[^A-Z0-9_-]/g, "");
+}
+
+async function apiError(response: Response) {
+  const text = await response.text().catch(() => "");
+  try {
+    const json = JSON.parse(text);
+    if (Array.isArray(json?.message)) return json.message.join("\n");
+    if (typeof json?.message === "string") return json.message;
+    if (typeof json?.error === "string") return json.error;
+  } catch {}
+  return text || `Erro ${response.status}`;
+}
+
+function Field(props: any) {
+  return <input {...props} className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-orange-400" />;
+}
+
+function Select(props: any) {
+  return <select {...props} className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none focus:border-orange-400" />;
+}
+
+function Metric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">{label}</p>
+      <p className="mt-3 text-3xl font-black text-slate-950">{value}</p>
+    </div>
+  );
+}
+
+export default function AdminPromotersPage() {
+  const [tab, setTab] = useState("promoters");
+  const [events, setEvents] = useState<AnyItem[]>([]);
+  const [overview, setOverview] = useState<AnyItem>({});
+  const [reports, setReports] = useState<AnyItem>({});
+  const [promoters, setPromoters] = useState<AnyItem[]>([]);
+  const [coupons, setCoupons] = useState<AnyItem[]>([]);
+  const [links, setLinks] = useState<AnyItem[]>([]);
+  const [sales, setSales] = useState<AnyItem[]>([]);
+  const [promoterForm, setPromoterForm] = useState({
+    name: "",
+    document: "",
+    email: "",
+    whatsapp: "",
+    pixKey: "",
+    eventId: "",
+    commissionType: "PERCENT",
+    commissionValue: "10",
+    commissionBase: "NET_AMOUNT",
+    notes: "",
+  });
+  const [couponForm, setCouponForm] = useState({
+    code: "",
+    eventId: "",
+    promoterId: "",
+    discountType: "PERCENT",
+    discountValue: "10",
+    usageLimit: "100",
+    perCpfLimit: "1",
+    validChannels: "online,admin,pdv",
+  });
+  const [linkForm, setLinkForm] = useState({ promoterId: "", eventId: "", label: "", slug: "", url: "" });
+  const [saleForm, setSaleForm] = useState({
+    eventId: "",
+    promoterId: "",
+    couponId: "",
+    linkId: "",
+    orderId: "",
+    customerName: "",
+    grossAmount: "",
+    discountAmount: "",
+    netAmount: "",
+    status: "PAID",
+  });
+  const [paymentForms, setPaymentForms] = useState<Record<string, AnyItem>>({});
+
+  async function load() {
+    const auth = token();
+    if (!auth || auth === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+    const headers = { Authorization: `Bearer ${auth}` };
+    const [eventsRes, overviewRes, promotersRes, couponsRes, linksRes, salesRes, reportsRes] = await Promise.all([
+      fetch(`${API_BASE_URL}/events`, { headers }),
+      fetch(`${API_BASE_URL}/promoters/overview`, { headers }),
+      fetch(`${API_BASE_URL}/promoters`, { headers }),
+      fetch(`${API_BASE_URL}/promoters/coupons`, { headers }),
+      fetch(`${API_BASE_URL}/promoters/links`, { headers }),
+      fetch(`${API_BASE_URL}/promoters/sales`, { headers }),
+      fetch(`${API_BASE_URL}/promoters/reports`, { headers }),
+    ]);
+    setEvents(await eventsRes.json().catch(() => []));
+    setOverview(await overviewRes.json().catch(() => ({})));
+    setPromoters(await promotersRes.json().catch(() => []));
+    setCoupons(await couponsRes.json().catch(() => []));
+    setLinks(await linksRes.json().catch(() => []));
+    setSales(await salesRes.json().catch(() => []));
+    setReports(await reportsRes.json().catch(() => ({})));
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  function eventTitle(eventId: string) {
+    const event = events.find((item) => item.id === eventId);
+    return event?.name || event?.title || "";
+  }
+
+  async function post(path: string, payload: AnyItem, message: string) {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      alert(await apiError(response));
+      return false;
+    }
+    await load();
+    alert(message);
+    return true;
+  }
+
+  async function createPromoter(event: FormEvent) {
+    event.preventDefault();
+    const ok = await post("/promoters", { ...promoterForm, eventTitle: eventTitle(promoterForm.eventId) }, "Promoter criado.");
+    if (ok) setPromoterForm({ ...promoterForm, name: "", document: "", email: "", whatsapp: "", pixKey: "", notes: "" });
+  }
+
+  async function createCoupon(event: FormEvent) {
+    event.preventDefault();
+    const ok = await post("/promoters/coupons", { ...couponForm, code: code(couponForm.code), eventTitle: eventTitle(couponForm.eventId) }, "Cupom criado.");
+    if (ok) setCouponForm({ ...couponForm, code: "" });
+  }
+
+  async function createLink(event: FormEvent) {
+    event.preventDefault();
+    const ok = await post("/promoters/links", { ...linkForm, eventTitle: eventTitle(linkForm.eventId) }, "Link criado.");
+    if (ok) setLinkForm({ promoterId: "", eventId: "", label: "", slug: "", url: "" });
+  }
+
+  async function createSale(event: FormEvent) {
+    event.preventDefault();
+    const ok = await post("/promoters/sales/manual", { ...saleForm, eventTitle: eventTitle(saleForm.eventId) }, "Venda registrada.");
+    if (ok) setSaleForm({ ...saleForm, orderId: "", customerName: "", grossAmount: "", discountAmount: "", netAmount: "" });
+  }
+
+  function patchPayment(id: string, patch: AnyItem) {
+    setPaymentForms((current) => ({ ...current, [id]: { ...(current[id] || {}), ...patch } }));
+  }
+
+  function handleProof(id: string, file?: File | null) {
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      alert("Use um comprovante de até 4 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => patchPayment(id, { paymentProofName: file.name, paymentProofDataUrl: String(reader.result || "") });
+    reader.readAsDataURL(file);
+  }
+
+  async function markPaid(promoter: AnyItem) {
+    const form = paymentForms[promoter.id] || {};
+    if (!form.paymentProofDataUrl && !promoter.paymentProofDataUrl && !confirm("Marcar como pago sem comprovante?")) return;
+    await post(`/promoters/${promoter.id}/commission/mark-paid`, form, "Comissão marcada como paga.");
+  }
+
+  function copy(text?: string | null) {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    alert("Copiado.");
+  }
+
+  const tabs = [
+    ["promoters", "Promoters"],
+    ["coupons", "Cupons"],
+    ["links", "Links"],
+    ["commissions", "Comissões"],
+    ["sales", "Vendas"],
+    ["reports", "Relatórios"],
+    ["settings", "Configurações"],
+  ];
+
+  return (
+    <main className="mx-auto max-w-[1500px] space-y-6 px-4 py-6">
+      <section className="relative overflow-hidden rounded-[34px] text-white shadow-sm" style={{ background: "linear-gradient(135deg, #ff6900 0%, #7c2d12 18%, #111827 50%, #020617 100%)" }}>
+        <div className="absolute inset-0 bg-black/25" />
+        <div className="relative z-10 grid gap-6 p-7 lg:grid-cols-[1.15fr_0.85fr] lg:p-9">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.34em] text-orange-200">Comercial</p>
+            <h1 className="mt-4 max-w-4xl text-4xl font-black leading-tight md:text-5xl">Promoters, cupons, links e comissões.</h1>
+            <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/80">Crie divulgadores, cupons, links rastreáveis, acompanhe vendas e controle pagamento de comissão.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/55">Receita</p><p className="mt-3 text-3xl font-black">{money(overview.trackedRevenue || 0)}</p></div>
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/55">Comissão pendente</p><p className="mt-3 text-3xl font-black">{money(overview.commissionPending || 0)}</p></div>
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/55">Promoters</p><p className="mt-3 text-3xl font-black">{overview.activePromoters || 0}</p></div>
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/55">Cupons</p><p className="mt-3 text-3xl font-black">{overview.activeCoupons || 0}</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[30px] border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex gap-2 overflow-x-auto">
+          {tabs.map(([key, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={`shrink-0 rounded-2xl px-5 py-3 text-sm font-black transition ${tab === key ? "bg-slate-950 text-white" : "bg-slate-50 text-slate-600 hover:bg-slate-100"}`}>{label}</button>)}
+        </div>
+      </section>
+
+      {tab === "promoters" && (
+        <section className="grid gap-6 xl:grid-cols-[430px_1fr]">
+          <form onSubmit={createPromoter} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Novo promoter</p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">Cadastrar divulgador</h2>
+            <div className="mt-6 space-y-3">
+              <Field value={promoterForm.name} onChange={(e: any) => setPromoterForm({ ...promoterForm, name: e.target.value })} placeholder="Nome do promoter" />
+              <Field value={promoterForm.document} onChange={(e: any) => setPromoterForm({ ...promoterForm, document: e.target.value })} placeholder="CPF/CNPJ" />
+              <Field value={promoterForm.email} onChange={(e: any) => setPromoterForm({ ...promoterForm, email: e.target.value })} placeholder="E-mail" />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field value={promoterForm.whatsapp} onChange={(e: any) => setPromoterForm({ ...promoterForm, whatsapp: e.target.value })} placeholder="WhatsApp" />
+                <Field value={promoterForm.pixKey} onChange={(e: any) => setPromoterForm({ ...promoterForm, pixKey: e.target.value })} placeholder="Chave Pix" />
+              </div>
+              <Select value={promoterForm.eventId} onChange={(e: any) => setPromoterForm({ ...promoterForm, eventId: e.target.value })}>
+                <option value="">Todos os eventos</option>
+                {events.map((event) => <option key={event.id} value={event.id}>{event.name || event.title}</option>)}
+              </Select>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Select value={promoterForm.commissionType} onChange={(e: any) => setPromoterForm({ ...promoterForm, commissionType: e.target.value })}>
+                  <option value="PERCENT">%</option>
+                  <option value="FIXED_PER_ORDER">Fixo/pedido</option>
+                  <option value="FIXED_PER_TICKET">Fixo/ingresso</option>
+                  <option value="NONE">Sem comissão</option>
+                </Select>
+                <Field value={promoterForm.commissionValue} onChange={(e: any) => setPromoterForm({ ...promoterForm, commissionValue: e.target.value })} placeholder="Valor" />
+                <Select value={promoterForm.commissionBase} onChange={(e: any) => setPromoterForm({ ...promoterForm, commissionBase: e.target.value })}>
+                  <option value="NET_AMOUNT">Líquido</option>
+                  <option value="GROSS_AMOUNT">Bruto</option>
+                  <option value="AFTER_DISCOUNT">Após desconto</option>
+                </Select>
+              </div>
+              <textarea value={promoterForm.notes} onChange={(e) => setPromoterForm({ ...promoterForm, notes: e.target.value })} rows={3} placeholder="Observações" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-orange-400" />
+              <button className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white">Criar promoter</button>
+            </div>
+          </form>
+
+          <section className="grid gap-4">
+            {promoters.map((promoter) => (
+              <article key={promoter.id} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">{promoter.protocol}</p>
+                    <h3 className="mt-2 text-2xl font-black text-slate-950">{promoter.name}</h3>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">{promoter.email || "Sem e-mail"} • {promoter.whatsapp || promoter.phone || "Sem telefone"}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">Evento: {promoter.eventTitle || "Todos"} • Comissão: {promoter.commissionType === "PERCENT" ? `${Number(promoter.commissionValue || 0)}%` : money(promoter.commissionValue)}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => post(`/promoters/${promoter.id}/status`, { status: promoter.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" }, "Status atualizado.")} className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700">{promoter.status === "ACTIVE" ? "Desativar" : "Ativar"}</button>
+                    <button onClick={() => { setCouponForm({ ...couponForm, promoterId: promoter.id, eventId: promoter.eventId || "" }); setTab("coupons"); }} className="rounded-2xl bg-orange-600 px-4 py-2 text-xs font-black text-white">Criar cupom</button>
+                    <button onClick={() => { setLinkForm({ ...linkForm, promoterId: promoter.id, eventId: promoter.eventId || "" }); setTab("links"); }} className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white">Gerar link</button>
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-3 md:grid-cols-5">
+                  <Metric label="Vendas" value={promoter.metrics?.paidSales || 0} />
+                  <Metric label="Receita" value={money(promoter.metrics?.revenue || 0)} />
+                  <Metric label="Comissão" value={money(promoter.metrics?.commission || 0)} />
+                  <Metric label="Cupons" value={promoter.metrics?.coupons || 0} />
+                  <Metric label="Links" value={promoter.metrics?.links || 0} />
+                </div>
+              </article>
+            ))}
+          </section>
+        </section>
+      )}
+
+      {tab === "coupons" && (
+        <section className="grid gap-6 xl:grid-cols-[430px_1fr]">
+          <form onSubmit={createCoupon} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Novo cupom</p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">Criar desconto</h2>
+            <div className="mt-6 space-y-3">
+              <Field value={couponForm.code} onChange={(e: any) => setCouponForm({ ...couponForm, code: code(e.target.value) })} placeholder="Código: JOAO10" />
+              <Select value={couponForm.eventId} onChange={(e: any) => setCouponForm({ ...couponForm, eventId: e.target.value })}><option value="">Sem evento fixo</option>{events.map((event) => <option key={event.id} value={event.id}>{event.name || event.title}</option>)}</Select>
+              <Select value={couponForm.promoterId} onChange={(e: any) => setCouponForm({ ...couponForm, promoterId: e.target.value })}><option value="">Sem promoter</option>{promoters.map((promoter) => <option key={promoter.id} value={promoter.id}>{promoter.name}</option>)}</Select>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Select value={couponForm.discountType} onChange={(e: any) => setCouponForm({ ...couponForm, discountType: e.target.value })}><option value="PERCENT">Porcentagem</option><option value="FIXED">Valor fixo</option><option value="FREE">Cortesia 100%</option></Select>
+                <Field value={couponForm.discountValue} onChange={(e: any) => setCouponForm({ ...couponForm, discountValue: e.target.value })} placeholder="Valor" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field value={couponForm.usageLimit} onChange={(e: any) => setCouponForm({ ...couponForm, usageLimit: e.target.value })} placeholder="Limite total" />
+                <Field value={couponForm.perCpfLimit} onChange={(e: any) => setCouponForm({ ...couponForm, perCpfLimit: e.target.value })} placeholder="Limite por CPF" />
+              </div>
+              <Field value={couponForm.validChannels} onChange={(e: any) => setCouponForm({ ...couponForm, validChannels: e.target.value })} placeholder="Canais: online,admin,pdv" />
+              <button className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white">Criar cupom</button>
+            </div>
+          </form>
+          <section className="grid gap-4">
+            {coupons.map((coupon) => (
+              <article key={coupon.id} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Cupom</p>
+                    <h3 className="mt-2 text-3xl font-black text-slate-950">{coupon.code}</h3>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">{coupon.discountType === "PERCENT" ? `${Number(coupon.discountValue)}%` : money(coupon.discountValue)} • Evento: {coupon.eventTitle || "Todos"}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">Promoter: {coupon.promoter?.name || "Não vinculado"} • Uso: {coupon.usedCount}/{coupon.usageLimit || "∞"}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => copy(coupon.code)} className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700">Copiar</button>
+                    <button onClick={() => post(`/promoters/coupons/${coupon.id}/status`, { status: coupon.status === "ACTIVE" ? "INACTIVE" : "ACTIVE" }, "Status atualizado.")} className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white">{coupon.status === "ACTIVE" ? "Desativar" : "Ativar"}</button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </section>
+        </section>
+      )}
+
+      {tab === "links" && (
+        <section className="grid gap-6 xl:grid-cols-[430px_1fr]">
+          <form onSubmit={async (e) => { e.preventDefault(); const ok = await post("/promoters/links", { ...linkForm, eventTitle: eventTitle(linkForm.eventId) }, "Link criado."); if (ok) setLinkForm({ promoterId: "", eventId: "", label: "", slug: "", url: "" }); }} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Novo link</p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">Gerar link rastreável</h2>
+            <div className="mt-6 space-y-3">
+              <Select value={linkForm.promoterId} onChange={(e: any) => setLinkForm({ ...linkForm, promoterId: e.target.value })}><option value="">Selecione promoter</option>{promoters.map((promoter) => <option key={promoter.id} value={promoter.id}>{promoter.name}</option>)}</Select>
+              <Select value={linkForm.eventId} onChange={(e: any) => setLinkForm({ ...linkForm, eventId: e.target.value })}><option value="">Evento</option>{events.map((event) => <option key={event.id} value={event.id}>{event.name || event.title}</option>)}</Select>
+              <Field value={linkForm.label} onChange={(e: any) => setLinkForm({ ...linkForm, label: e.target.value })} placeholder="Nome do link" />
+              <Field value={linkForm.slug} onChange={(e: any) => setLinkForm({ ...linkForm, slug: e.target.value })} placeholder="Slug opcional" />
+              <button className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white">Gerar link</button>
+            </div>
+          </form>
+          <section className="grid gap-4">
+            {links.map((link) => (
+              <article key={link.id} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">{link.label || "Link rastreável"}</p>
+                    <h3 className="mt-2 break-all text-xl font-black text-slate-950">{link.url}</h3>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">Promoter: {link.promoter?.name || "-"} • Slug: {link.slug}</p>
+                  </div>
+                  <button onClick={() => copy(link.url || link.slug)} className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white">Copiar</button>
+                </div>
+                <div className="mt-5 grid gap-3 md:grid-cols-5">
+                  <Metric label="Cliques" value={link.clicks} />
+                  <Metric label="Pedidos pagos" value={link.ordersPaid} />
+                  <Metric label="Receita" value={money(link.revenue)} />
+                  <Metric label="Comissão" value={money(link.commission)} />
+                  <Metric label="Status" value={link.status} />
+                </div>
+              </article>
+            ))}
+          </section>
+        </section>
+      )}
+
+      {tab === "commissions" && (
+        <section className="grid gap-4">
+          {promoters.map((promoter) => {
+            const form = paymentForms[promoter.id] || { paymentNotes: "", paymentProofName: "", paymentProofDataUrl: "" };
+            return (
+              <article key={promoter.id} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="grid gap-5 lg:grid-cols-[1fr_420px]">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Comissão</p>
+                    <h3 className="mt-2 text-2xl font-black text-slate-950">{promoter.name}</h3>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">Receita: {money(promoter.metrics?.revenue || 0)} • Comissão: {money(promoter.metrics?.commission || 0)}</p>
+                    <div className="mt-5 grid gap-3 md:grid-cols-4">
+                      <Metric label="Vendas" value={promoter.metrics?.paidSales || 0} />
+                      <Metric label="Comissão" value={money(promoter.metrics?.commission || 0)} />
+                      <Metric label="Status" value={promoter.paymentStatus === "PAID" ? "Pago" : "Pendente"} />
+                      <Metric label="Pix" value={promoter.pixKey || "-"} />
+                    </div>
+                  </div>
+                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                    <textarea value={form.paymentNotes || ""} onChange={(e) => patchPayment(promoter.id, { paymentNotes: e.target.value })} rows={3} placeholder="Observação do pagamento" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-orange-400" />
+                    <input type="file" accept="image/*,.pdf" onChange={(e) => handleProof(promoter.id, e.target.files?.[0])} className="mt-3 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-600" />
+                    {(form.paymentProofName || promoter.paymentProofName) ? <div className="mt-3 rounded-2xl bg-white p-3 text-xs font-bold text-slate-600">Comprovante: {form.paymentProofName || promoter.paymentProofName}</div> : null}
+                    <button onClick={() => markPaid(promoter)} disabled={promoter.paymentStatus === "PAID"} className="mt-4 w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white disabled:opacity-50">{promoter.paymentStatus === "PAID" ? "Comissão paga" : "Marcar comissão como paga"}</button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      )}
+
+      {tab === "sales" && (
+        <section className="grid gap-6 xl:grid-cols-[430px_1fr]">
+          <form onSubmit={async (e) => { e.preventDefault(); const ok = await post("/promoters/sales/manual", { ...saleForm, eventTitle: eventTitle(saleForm.eventId) }, "Venda registrada."); if (ok) setSaleForm({ ...saleForm, orderId: "", customerName: "", grossAmount: "", discountAmount: "", netAmount: "" }); }} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Venda manual</p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">Simular/rastrear venda</h2>
+            <div className="mt-6 space-y-3">
+              <Select value={saleForm.eventId} onChange={(e: any) => setSaleForm({ ...saleForm, eventId: e.target.value })}><option value="">Evento</option>{events.map((event) => <option key={event.id} value={event.id}>{event.name || event.title}</option>)}</Select>
+              <Select value={saleForm.promoterId} onChange={(e: any) => setSaleForm({ ...saleForm, promoterId: e.target.value })}><option value="">Promoter</option>{promoters.map((promoter) => <option key={promoter.id} value={promoter.id}>{promoter.name}</option>)}</Select>
+              <Select value={saleForm.couponId} onChange={(e: any) => setSaleForm({ ...saleForm, couponId: e.target.value })}><option value="">Cupom</option>{coupons.map((coupon) => <option key={coupon.id} value={coupon.id}>{coupon.code}</option>)}</Select>
+              <Select value={saleForm.linkId} onChange={(e: any) => setSaleForm({ ...saleForm, linkId: e.target.value })}><option value="">Link</option>{links.map((link) => <option key={link.id} value={link.id}>{link.label || link.slug}</option>)}</Select>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Field value={saleForm.grossAmount} onChange={(e: any) => setSaleForm({ ...saleForm, grossAmount: e.target.value })} placeholder="Valor bruto" />
+                <Field value={saleForm.discountAmount} onChange={(e: any) => setSaleForm({ ...saleForm, discountAmount: e.target.value })} placeholder="Desconto" />
+                <Field value={saleForm.netAmount} onChange={(e: any) => setSaleForm({ ...saleForm, netAmount: e.target.value })} placeholder="Valor líquido" />
+              </div>
+              <Field value={saleForm.orderId} onChange={(e: any) => setSaleForm({ ...saleForm, orderId: e.target.value })} placeholder="Pedido / referência" />
+              <Field value={saleForm.customerName} onChange={(e: any) => setSaleForm({ ...saleForm, customerName: e.target.value })} placeholder="Cliente" />
+              <button className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white">Registrar venda</button>
+            </div>
+          </form>
+          <section className="grid gap-4">
+            {sales.map((sale) => (
+              <article key={sale.id} className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">{sale.protocol}</p>
+                    <h3 className="mt-2 text-xl font-black text-slate-950">{sale.customerName || sale.orderId || "Venda rastreada"}</h3>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">Promoter: {sale.promoter?.name || "-"} • Cupom: {sale.coupon?.code || "-"} • Link: {sale.link?.slug || "-"}</p>
+                  </div>
+                  <div className="text-right"><p className="text-2xl font-black text-slate-950">{money(sale.netAmount)}</p><p className="text-xs font-bold text-slate-500">Comissão: {money(sale.commissionAmount)}</p></div>
+                </div>
+              </article>
+            ))}
+          </section>
+        </section>
+      )}
+
+      {tab === "reports" && (
+        <section className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-4">
+            <Metric label="Receita" value={money(reports.revenue || 0)} />
+            <Metric label="Comissão" value={money(reports.commission || 0)} />
+            <Metric label="Vendas pagas" value={reports.salesPaid || 0} />
+            <Metric label="Links" value={reports.links || 0} />
+          </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Ranking</p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">Promoters por receita</h2>
+              <div className="mt-5 space-y-3">
+                {(reports.promoterRanking || []).map((item: AnyItem) => <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex justify-between gap-3"><p className="font-black text-slate-950">{item.name}</p><p className="font-black text-orange-600">{money(item.revenue)}</p></div><p className="mt-1 text-xs font-bold text-slate-500">{item.sales} vendas • comissão {money(item.commission)}</p></div>)}
+              </div>
+            </section>
+            <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Cupons</p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">Cupons mais usados</h2>
+              <div className="mt-5 space-y-3">
+                {(reports.couponRanking || []).map((item: AnyItem) => <div key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex justify-between gap-3"><p className="font-black text-slate-950">{item.code}</p><p className="font-black text-orange-600">{money(item.revenue)}</p></div><p className="mt-1 text-xs font-bold text-slate-500">{item.sales} vendas • {item.usedCount} usos</p></div>)}
+              </div>
+            </section>
+          </div>
+        </section>
+      )}
+
+      {tab === "settings" && (
+        <section className="space-y-6">
+          <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+                  Central de regras comerciais
+                </p>
+                <h2 className="mt-2 text-3xl font-black text-slate-950">
+                  O motor de promoters e cupons está aqui.
+                </h2>
+                <p className="mt-3 max-w-3xl text-sm font-semibold leading-7 text-slate-600">
+                  Esta tela agora serve para conferir o que já está ativo, testar regras comerciais e orientar o fluxo correto
+                  entre checkout, cupom, link rastreável, pedido pago, comissão e pagamento ao promoter.
+                </p>
+              </div>
+
+              <div className="grid min-w-[280px] gap-3 rounded-[26px] border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                    Receita rastreada
+                  </span>
+                  <span className="text-lg font-black text-slate-950">{money(overview.trackedRevenue || 0)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                    Comissão pendente
+                  </span>
+                  <span className="text-lg font-black text-orange-600">{money(overview.commissionPending || 0)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                    Cupons ativos
+                  </span>
+                  <span className="text-lg font-black text-slate-950">{overview.activeCoupons || 0}</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-4">
+            {[
+              {
+                label: "Cupom no checkout",
+                status: "Ativo",
+                detail: "O checkout envia couponCode no pedido.",
+                tone: "emerald",
+              },
+              {
+                label: "Ref de promoter",
+                status: "Ativo",
+                detail: "Links com ?ref= podem ser rastreados.",
+                tone: "emerald",
+              },
+              {
+                label: "Comissão automática",
+                status: "Ligada",
+                detail: "Pedido pago pode gerar venda e comissão.",
+                tone: "emerald",
+              },
+              {
+                label: "Exportação fiscal",
+                status: "Próximo",
+                detail: "Ainda falta exportar CSV/PDF/Excel.",
+                tone: "amber",
+              },
+            ].map((item) => (
+              <div key={item.label} className="rounded-[26px] border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">{item.label}</p>
+                <p
+                  className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-black ${
+                    item.tone === "emerald"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {item.status}
+                </p>
+                <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">{item.detail}</p>
+              </div>
+            ))}
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
+            <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+                Regras que o sistema deve cumprir
+              </p>
+              <h3 className="mt-2 text-2xl font-black text-slate-950">Checklist comercial</h3>
+
+              <div className="mt-6 grid gap-3">
+                {[
+                  {
+                    title: "Comissão somente sobre pedido pago",
+                    desc: "Venda pendente não entra no valor a pagar ao promoter.",
+                    active: true,
+                  },
+                  {
+                    title: "Cancelado ou estornado zera comissão",
+                    desc: "A venda comercial pode ser sincronizada como CANCELED.",
+                    active: true,
+                  },
+                  {
+                    title: "Cupom não acumula com outro cupom",
+                    desc: "Cada pedido deve carregar apenas um couponCode.",
+                    active: true,
+                  },
+                  {
+                    title: "Limite total e limite por CPF",
+                    desc: "O cupom valida usedCount, usageLimit e perCpfLimit.",
+                    active: true,
+                  },
+                  {
+                    title: "Promoter com cupom e link",
+                    desc: "Cupom tem prioridade sobre ref quando os dois existem.",
+                    active: true,
+                  },
+                  {
+                    title: "Pagamento manual com comprovante",
+                    desc: "Admin paga por fora e anexa comprovante na aba Comissões.",
+                    active: true,
+                  },
+                  {
+                    title: "Exportação para conferência financeira",
+                    desc: "Próxima melhoria: baixar CSV, Excel e PDF.",
+                    active: false,
+                  },
+                ].map((rule) => (
+                  <div
+                    key={rule.title}
+                    className="flex gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                  >
+                    <div
+                      className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-black ${
+                        rule.active ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"
+                      }`}
+                    >
+                      {rule.active ? "✓" : "!"}
+                    </div>
+                    <div>
+                      <p className="font-black text-slate-950">{rule.title}</p>
+                      <p className="mt-1 text-sm font-semibold leading-6 text-slate-600">{rule.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+                  Fluxo correto
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-slate-950">Como testar do jeito certo</h3>
+
+                <div className="mt-5 space-y-3">
+                  {[
+                    "Criar promoter.",
+                    "Criar cupom vinculado ao promoter.",
+                    "Gerar link/ref do promoter.",
+                    "Entrar no checkout real do evento.",
+                    "Aplicar o cupom no resumo da compra.",
+                    "Criar pedido e confirmar pagamento.",
+                    "Voltar em Vendas/Comissões e conferir comissão.",
+                  ].map((step, index) => (
+                    <div key={step} className="flex gap-3 rounded-2xl bg-slate-50 p-3">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-950 text-xs font-black text-white">
+                        {index + 1}
+                      </span>
+                      <p className="text-sm font-bold leading-6 text-slate-700">{step}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-[30px] border border-orange-200 bg-orange-50 p-6 shadow-sm">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-700">
+                  Próxima melhoria recomendada
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-slate-950">Exportação financeira</h3>
+                <p className="mt-3 text-sm font-semibold leading-7 text-slate-700">
+                  O próximo passo útil desta aba é criar botões para exportar relatórios de promoters, cupons,
+                  vendas e comissões em CSV/Excel/PDF para conferência contábil.
+                </p>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  {["CSV", "Excel", "PDF"].map((format) => (
+                    <button
+                      key={format}
+                      type="button"
+                      onClick={() => alert(`Exportação ${format} será ligada na próxima versão.`)}
+                      className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-slate-950 shadow-sm"
+                    >
+                      Exportar {format}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </section>
+        </section>
+      )}
+    </main>
+  );
+}

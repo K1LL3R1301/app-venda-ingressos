@@ -1,0 +1,1330 @@
+// @ts-nocheck
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+
+type EventItem = {
+  id: string;
+  name?: string | null;
+  title?: string | null;
+  eventDate?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  date?: string | null;
+  sessions?: Array<{ date?: string | null; startDate?: string | null; eventDate?: string | null }>;
+  dates?: Array<string | { date?: string | null; startDate?: string | null; eventDate?: string | null }>;
+  schedules?: Array<{ date?: string | null; startDate?: string | null; eventDate?: string | null }>;
+  occurrences?: Array<{ date?: string | null; startDate?: string | null; eventDate?: string | null }>;
+};
+
+type WorkDate = {
+  id: string;
+  date: string;
+  amount: number;
+  functions: string;
+  status: string;
+  available: boolean | null;
+  responseNote?: string | null;
+};
+
+type PaymentSummary = {
+  proposedDays: number;
+  availableDays: number;
+  unavailableDays: number;
+  pendingDays: number;
+  proposedTotal: number;
+  approvedTotal: number;
+};
+
+type Assignment = {
+  id: string;
+  protocol: string;
+  status: string;
+  workPlanStatus?: string | null;
+  paymentStatus?: string | null;
+  invitationMessage?: string | null;
+  notes?: string | null;
+  operatorName?: string | null;
+  operatorEmail?: string | null;
+  operatorCpf?: string | null;
+  eventTitle?: string | null;
+  eventDate?: string | null;
+  invitedAt?: string | null;
+  assignedAt?: string | null;
+  workPlanRespondedAt?: string | null;
+  workDates?: WorkDate[];
+  paymentSummary?: PaymentSummary;
+  operator?: {
+    id: string;
+    name: string;
+    email: string;
+    cpf?: string | null;
+    role: string;
+  } | null;
+  event?: {
+    id: string;
+    name: string;
+    eventDate?: string | null;
+  } | null;
+};
+
+type AssignForm = {
+  eventId: string;
+  notes: string;
+  canValidateTickets: boolean;
+  canAnswerSupport: boolean;
+  workDates: Array<{
+    date: string;
+    amount: string;
+    functions: string;
+    startTime: string;
+    endTime: string;
+  }>;
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+function token() {
+  return typeof window === "undefined" ? "" : localStorage.getItem("token") || "";
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function money(value?: number | null) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(Number(value || 0));
+}
+
+function cpfDigits(value: string) {
+  return value.replace(/\D/g, "").slice(0, 11);
+}
+
+function maskCpf(value: string) {
+  const cpf = cpfDigits(value);
+  return cpf
+    .replace(/^(\d{3})(\d)/, "$1.$2")
+    .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1-$2");
+}
+
+function eventName(event: EventItem) {
+  return event.name || event.title || "Evento sem nome";
+}
+
+function onlyDate(value?: string | null) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toISOString().slice(0, 10);
+}
+
+function extractEventDates(event?: EventItem | null) {
+  if (!event) return [];
+
+  const candidates: Array<string | null | undefined> = [
+    event.eventDate,
+    event.startDate,
+    event.date,
+  ];
+
+  for (const key of ["sessions", "dates", "schedules", "occurrences"] as const) {
+    const value = event[key];
+
+    if (!Array.isArray(value)) continue;
+
+    for (const item of value) {
+      if (typeof item === "string") {
+        candidates.push(item);
+      } else {
+        candidates.push(item?.date, item?.startDate, item?.eventDate);
+      }
+    }
+  }
+
+  return candidates
+    .map((item) => onlyDate(item))
+    .filter(Boolean)
+    .filter((item, index, array) => array.indexOf(item) === index)
+    .sort();
+}
+
+function getEventById(events: EventItem[], eventId: string) {
+  return events.find((event) => event.id === eventId) || null;
+}
+
+function getDefaultWorkDatesForEvent(event: EventItem | null): AssignForm["workDates"] {
+  const dates = extractEventDates(event);
+
+  if (dates.length === 0) {
+    return [
+      {
+        date: "",
+        amount: "",
+        functions: "",
+        startTime: "",
+        endTime: "",
+      },
+    ];
+  }
+
+  return dates.map((date) => ({
+    date,
+    amount: "",
+    functions: "",
+    startTime: "",
+    endTime: "",
+  }));
+}
+
+
+function personName(assignment: Assignment) {
+  return assignment.operator?.name || assignment.operatorName || "Pessoa sem nome";
+}
+
+function personEmail(assignment: Assignment) {
+  return assignment.operator?.email || assignment.operatorEmail || "-";
+}
+
+function personCpf(assignment: Assignment) {
+  return assignment.operator?.cpf || assignment.operatorCpf || "-";
+}
+
+async function parseApiError(response: Response) {
+  const text = await response.text().catch(() => "");
+
+  try {
+    const json = JSON.parse(text);
+
+    if (Array.isArray(json?.message)) return json.message.join("\n");
+    if (typeof json?.message === "string") return json.message;
+    if (typeof json?.error === "string") return json.error;
+  } catch {}
+
+  if (text && text.length < 300) return text;
+
+  return `Erro ${response.status}: não foi possível concluir.`;
+}
+
+function emptyForm(): AssignForm {
+  return {
+    eventId: "",
+    notes: "",
+    canValidateTickets: true,
+    canAnswerSupport: true,
+    workDates: [
+      {
+        date: "",
+        amount: "",
+        functions: "",
+        startTime: "",
+        endTime: "",
+      },
+    ],
+  };
+}
+
+
+type PaymentForm = {
+  paymentNotes: string;
+  paymentProofName: string;
+  paymentProofDataUrl: string;
+};
+
+function emptyPaymentForm(): PaymentForm {
+  return {
+    paymentNotes: "",
+    paymentProofName: "",
+    paymentProofDataUrl: "",
+  };
+}
+
+function statusBadge(status?: string | null) {
+  const normalized = (status || "PENDING").toUpperCase();
+
+  if (normalized === "PAID") {
+    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
+
+  return "bg-amber-50 text-amber-700 border-amber-200";
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+export default function AdminOperatorsPage() {
+  const [cpf, setCpf] = useState("");
+  const [message, setMessage] = useState("");
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [forms, setForms] = useState<Record<string, AssignForm>>({});
+  const [paymentForms, setPaymentForms] = useState<Record<string, PaymentForm>>({});
+  const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(true);
+  const [savingInvite, setSavingInvite] = useState(false);
+  const [savingAssignmentId, setSavingAssignmentId] = useState<string | null>(null);
+  const [savingPaymentId, setSavingPaymentId] = useState<string | null>(null);
+
+  async function load() {
+    const auth = token();
+
+    if (!auth || auth === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const [eventsRes, assignmentsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/events`, {
+          headers: { Authorization: `Bearer ${auth}` },
+        }),
+        fetch(`${API_BASE_URL}/operator-assignments`, {
+          headers: { Authorization: `Bearer ${auth}` },
+        }),
+      ]);
+
+      const eventsJson = await eventsRes.json().catch(() => []);
+      const assignmentsJson = await assignmentsRes.json().catch(() => []);
+
+      setEvents(Array.isArray(eventsJson) ? eventsJson : []);
+      setAssignments(Array.isArray(assignmentsJson) ? assignmentsJson : []);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const sortedEvents = useMemo(() => {
+    return [...events].sort((a, b) => {
+      const aDate = new Date(a.eventDate || a.startDate || 0).getTime();
+      const bDate = new Date(b.eventDate || b.startDate || 0).getTime();
+      return bDate - aDate;
+    });
+  }, [events]);
+
+  const invited = assignments.filter((assignment) => assignment.status === "INVITED");
+  const accepted = assignments.filter((assignment) => assignment.status === "ACCEPTED");
+  const schedulePending = assignments.filter((assignment) => assignment.status === "SCHEDULE_PENDING");
+  const active = assignments.filter((assignment) => assignment.status === "ACTIVE");
+  const declined = assignments.filter((assignment) => assignment.status === "DECLINED");
+
+  const totalToPay = active.reduce(
+    (sum, assignment) => sum + Number(assignment.paymentSummary?.approvedTotal || 0),
+    0,
+  );
+  const totalPaid = active
+    .filter((assignment) => assignment.paymentStatus === "PAID")
+    .reduce((sum, assignment) => sum + Number(assignment.paymentSummary?.approvedTotal || 0), 0);
+  const totalTicketsValidated = active.reduce(
+    (sum, assignment) => sum + Number(assignment.operationalSummary?.ticketsValidated || 0),
+    0,
+  );
+
+
+  function getForm(id: string): AssignForm {
+    return forms[id] || emptyForm();
+  }
+
+  function patchForm(id: string, patch: Partial<AssignForm>) {
+    setForms((current) => ({
+      ...current,
+      [id]: {
+        ...getForm(id),
+        ...patch,
+      },
+    }));
+  }
+
+  function isExpanded(id: string, fallback = false) {
+    return expandedCards[id] ?? fallback;
+  }
+
+  function toggleCard(id: string) {
+    setExpandedCards((current) => ({
+      ...current,
+      [id]: !(current[id] ?? false),
+    }));
+  }
+
+  function handleEventChange(assignmentId: string, eventId: string) {
+    const selectedEvent = getEventById(events, eventId);
+
+    patchForm(assignmentId, {
+      eventId,
+      workDates: getDefaultWorkDatesForEvent(selectedEvent),
+    });
+  }
+
+  function availableDatesForAssignment(assignmentId: string) {
+    const form = getForm(assignmentId);
+    const event = getEventById(events, form.eventId);
+
+    return extractEventDates(event);
+  }
+
+  function patchWorkDate(
+    id: string,
+    index: number,
+    patch: Partial<AssignForm["workDates"][number]>,
+  ) {
+    const form = getForm(id);
+
+    patchForm(id, {
+      workDates: form.workDates.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item,
+      ),
+    });
+  }
+
+  function addWorkDate(id: string) {
+    const form = getForm(id);
+    const eventDates = availableDatesForAssignment(id);
+    const usedDates = form.workDates.map((item) => item.date);
+    const nextDate = eventDates.find((date) => !usedDates.includes(date));
+
+    if (!nextDate) {
+      alert(
+        eventDates.length === 0
+          ? "Selecione um evento antes de adicionar datas."
+          : "Todas as datas disponíveis deste evento já foram adicionadas.",
+      );
+      return;
+    }
+
+    patchForm(id, {
+      workDates: [
+        ...form.workDates,
+        {
+          date: nextDate,
+          amount: "",
+          functions: "",
+          startTime: "",
+          endTime: "",
+        },
+      ],
+    });
+  }
+
+  function removeWorkDate(id: string, index: number) {
+    const form = getForm(id);
+
+    patchForm(id, {
+      workDates: form.workDates.filter((_, itemIndex) => itemIndex !== index),
+    });
+  }
+
+  async function inviteOperator(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const auth = token();
+
+    if (!auth) {
+      window.location.href = "/login";
+      return;
+    }
+
+    if (cpfDigits(cpf).length !== 11) {
+      alert("Informe um CPF válido com 11 dígitos.");
+      return;
+    }
+
+    setSavingInvite(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/operator-assignments/invite`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${auth}`,
+        },
+        body: JSON.stringify({
+          cpf: cpfDigits(cpf),
+          message,
+        }),
+      });
+
+      if (!response.ok) {
+        alert(await parseApiError(response));
+        return;
+      }
+
+      setCpf("");
+      setMessage("");
+      await load();
+      alert("Convite enviado. Ele agora aparece na aba Suporte da pessoa convidada.");
+    } catch {
+      alert("Erro ao enviar convite. Confira se a API está ligada e tente novamente.");
+    } finally {
+      setSavingInvite(false);
+    }
+  }
+
+  async function assignEvent(assignmentId: string) {
+    const auth = token();
+    const form = getForm(assignmentId);
+
+    if (!form.eventId) {
+      alert("Selecione o evento.");
+      return;
+    }
+
+    if (
+      form.workDates.some(
+        (item) => !item.date || !item.amount || !item.functions.trim(),
+      )
+    ) {
+      alert("Preencha data, valor e funções em todos os dias.");
+      return;
+    }
+
+    setSavingAssignmentId(assignmentId);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/operator-assignments/${assignmentId}/assign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${auth}`,
+        },
+        body: JSON.stringify(form),
+      });
+
+      if (!response.ok) {
+        alert(await parseApiError(response));
+        return;
+      }
+
+      await load();
+      alert("Proposta enviada. Agora a pessoa precisa responder quais dias pode trabalhar.");
+    } finally {
+      setSavingAssignmentId(null);
+    }
+  }
+
+
+  function getPaymentForm(id: string): PaymentForm {
+    return paymentForms[id] || emptyPaymentForm();
+  }
+
+  function patchPaymentForm(id: string, patch: Partial<PaymentForm>) {
+    setPaymentForms((current) => ({
+      ...current,
+      [id]: {
+        ...getPaymentForm(id),
+        ...patch,
+      },
+    }));
+  }
+
+  function handleProofFile(assignmentId: string, file?: File | null) {
+    if (!file) return;
+
+    if (file.size > 4 * 1024 * 1024) {
+      alert("Use um comprovante de até 4 MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      patchPaymentForm(assignmentId, {
+        paymentProofName: file.name,
+        paymentProofDataUrl: String(reader.result || ""),
+      });
+    };
+
+    reader.readAsDataURL(file);
+  }
+
+  async function markAsPaid(assignment: Assignment) {
+    const auth = token();
+    const form = getPaymentForm(assignment.id);
+
+    if (!form.paymentProofDataUrl && !assignment.paymentProofDataUrl) {
+      const proceed = confirm("Marcar como pago sem anexar comprovante?");
+      if (!proceed) return;
+    }
+
+    setSavingPaymentId(assignment.id);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/operator-assignments/${assignment.id}/payment/mark-paid`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${auth}`,
+        },
+        body: JSON.stringify(form),
+      });
+
+      if (!response.ok) {
+        alert(await parseApiError(response));
+        return;
+      }
+
+      await load();
+      alert("Pagamento marcado como pago.");
+    } finally {
+      setSavingPaymentId(null);
+    }
+  }
+
+  function exportReportPdf(assignment: Assignment) {
+    const workDates = assignment.workDates || [];
+    const paymentSummary = assignment.paymentSummary;
+    const operational = assignment.operationalSummary;
+
+    const rows = workDates
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(formatDateOnly(item.date))}</td>
+            <td>${escapeHtml(item.startTime || "-")} às ${escapeHtml(item.endTime || "-")}</td>
+            <td>${escapeHtml(item.available === true ? "Pode trabalhar" : item.available === false ? "Não pode" : "Pendente")}</td>
+            <td>${escapeHtml(money(item.amount))}</td>
+            <td>${escapeHtml(item.functions || "-")}</td>
+            <td>${escapeHtml(item.responseNote || "-")}</td>
+          </tr>
+        `,
+      )
+      .join("");
+
+    const html = `
+      <html>
+        <head>
+          <title>Relatório ${escapeHtml(personName(assignment))}</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #0f172a; padding: 32px; }
+            .hero { background: linear-gradient(135deg, #ff6900, #111827 55%, #020617); color: white; padding: 28px; border-radius: 24px; }
+            h1 { margin: 0; font-size: 28px; }
+            .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0; }
+            .card { border: 1px solid #e2e8f0; border-radius: 18px; padding: 16px; }
+            .label { font-size: 10px; text-transform: uppercase; letter-spacing: .16em; color: #64748b; font-weight: 800; }
+            .value { font-size: 22px; font-weight: 900; margin-top: 6px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 12px; }
+            th, td { border-bottom: 1px solid #e2e8f0; text-align: left; padding: 10px; vertical-align: top; }
+            th { background: #f8fafc; font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
+            .section { margin-top: 26px; }
+            @media print { button { display: none; } body { padding: 0; } }
+          </style>
+        </head>
+        <body>
+          <div class="hero">
+            <div class="label" style="color: #fed7aa;">Astro Ingressos</div>
+            <h1>Relatório do operador</h1>
+            <p>${escapeHtml(personName(assignment))} • ${escapeHtml(personEmail(assignment))}</p>
+            <p>Evento: ${escapeHtml(assignment.event?.name || assignment.eventTitle || "-")}</p>
+          </div>
+
+          <div class="grid">
+            <div class="card"><div class="label">Dias aceitos</div><div class="value">${paymentSummary?.availableDays || 0}</div></div>
+            <div class="card"><div class="label">Horas previstas</div><div class="value">${paymentSummary?.scheduledHours || 0}h</div></div>
+            <div class="card"><div class="label">Valor a pagar</div><div class="value">${escapeHtml(money(paymentSummary?.approvedTotal || 0))}</div></div>
+            <div class="card"><div class="label">Pagamento</div><div class="value">${escapeHtml(assignment.paymentStatus === "PAID" ? "Pago" : "Pendente")}</div></div>
+          </div>
+
+          <div class="grid">
+            <div class="card"><div class="label">Ingressos validados</div><div class="value">${operational?.ticketsValidated || 0}</div></div>
+            <div class="card"><div class="label">Chats atendidos</div><div class="value">${operational?.supportThreadsHandled || 0}</div></div>
+            <div class="card"><div class="label">Mensagens</div><div class="value">${operational?.supportMessagesHandled || 0}</div></div>
+            <div class="card"><div class="label">Protocolo</div><div class="value" style="font-size: 14px;">${escapeHtml(assignment.protocol)}</div></div>
+          </div>
+
+          <div class="section">
+            <h2>Dias, horários, funções e valores</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Horário</th>
+                  <th>Status</th>
+                  <th>Valor</th>
+                  <th>Funções</th>
+                  <th>Observação</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+
+          <div class="section">
+            <h2>Pagamento</h2>
+            <p>Status: <strong>${escapeHtml(assignment.paymentStatus === "PAID" ? "Pago" : "Pendente")}</strong></p>
+            <p>Pago em: ${escapeHtml(formatDate(assignment.paymentPaidAt))}</p>
+            <p>Marcado por: ${escapeHtml(assignment.paymentPaidByName || "-")}</p>
+            <p>Comprovante: ${escapeHtml(assignment.paymentProofName || "Não anexado")}</p>
+            <p>Observações: ${escapeHtml(assignment.paymentNotes || "-")}</p>
+          </div>
+
+          <script>
+            window.onload = function() { window.print(); };
+          </script>
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open("", "_blank", "width=1100,height=800");
+
+    if (!printWindow) {
+      alert("O navegador bloqueou a janela de impressão. Libere pop-ups para exportar o PDF.");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+  }
+
+  return (
+    <main className="mx-auto max-w-[1500px] space-y-6 px-4 py-6">
+      <section
+        className="relative overflow-hidden rounded-[34px] text-white shadow-sm"
+        style={{
+          background:
+            "linear-gradient(135deg, #ff6900 0%, #7c2d12 18%, #111827 50%, #020617 100%)",
+        }}
+      >
+        <div className="absolute inset-0 bg-black/25" />
+        <div className="relative z-10 grid gap-6 p-7 lg:grid-cols-[1.1fr_0.9fr] lg:p-9">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.34em] text-orange-200">
+              Operadores de evento
+            </p>
+            <h1 className="mt-4 max-w-4xl text-4xl font-black leading-tight md:text-5xl">
+              Convite, proposta de dias e acerto de pagamento.
+            </h1>
+            <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/80">
+              O admin propõe apenas datas do evento. O operador responde quais dias pode trabalhar.
+              O relatório soma somente os dias aceitos.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-5">
+            {[
+              ["Convites", invited.length],
+              ["Aceitos", accepted.length],
+              ["Propostas", schedulePending.length],
+              ["Ativos", active.length],
+              ["Recusados", declined.length],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="rounded-3xl border border-white/10 bg-white/10 p-5">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/55">
+                  {label}
+                </p>
+                <p className="mt-3 text-3xl font-black">{value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-[420px_1fr]">
+        <form
+          onSubmit={inviteOperator}
+          className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+            Etapa 1
+          </p>
+          <h2 className="mt-2 text-2xl font-black text-slate-950">Enviar convite por CPF</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            A pessoa aceita primeiro no Suporte. Só depois você monta a proposta de trabalho.
+          </p>
+
+          <div className="mt-6 space-y-4">
+            <label className="block">
+              <span className="text-sm font-black text-slate-700">CPF da conta</span>
+              <input
+                value={cpf}
+                onChange={(event) => setCpf(maskCpf(event.target.value))}
+                placeholder="000.000.000-00"
+                className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold outline-none transition focus:border-orange-400 focus:bg-white"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-black text-slate-700">Mensagem do convite</span>
+              <textarea
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+                rows={4}
+                placeholder="Ex: gostaríamos de convidar você para trabalhar como operador nos eventos da nossa equipe."
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none transition focus:border-orange-400 focus:bg-white"
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={savingInvite}
+              className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingInvite ? "Enviando convite..." : "Enviar convite"}
+            </button>
+          </div>
+        </form>
+
+        <section className="space-y-6">
+          <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+              Etapa 2
+            </p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Aceitos aguardando proposta
+            </h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Informe evento, dias, valor por data e funções. A pessoa ainda precisará confirmar os dias.
+            </p>
+
+            <div className="mt-6 grid gap-4">
+              {loading ? (
+                <div className="rounded-3xl bg-slate-50 p-6 text-sm font-bold text-slate-500">
+                  Carregando...
+                </div>
+              ) : accepted.length === 0 ? (
+                <div className="rounded-3xl bg-slate-50 p-8 text-center">
+                  <p className="font-black text-slate-950">Nenhum aceite aguardando proposta.</p>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Envie um convite e aguarde a pessoa responder Sim no suporte.
+                  </p>
+                </div>
+              ) : (
+                accepted.map((assignment, index) => {
+                  const form = getForm(assignment.id);
+                  const expanded = isExpanded(assignment.id, accepted.length === 1 && index === 0);
+                  const eventDates = availableDatesForAssignment(assignment.id);
+
+                  return (
+                    <article
+                      key={assignment.id}
+                      className="rounded-[26px] border border-orange-200 bg-orange-50 p-5"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleCard(assignment.id)}
+                        className="flex w-full items-start justify-between gap-3 text-left"
+                      >
+                        <div>
+                          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-700">
+                            Aceitou no suporte
+                          </p>
+                          <h3 className="mt-2 text-xl font-black text-slate-950">
+                            {personName(assignment)}
+                          </h3>
+                          <p className="mt-1 text-sm font-semibold text-slate-600">
+                            {personEmail(assignment)} • CPF: {personCpf(assignment)}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-2">
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-orange-700">
+                            {assignment.protocol}
+                          </span>
+                          <span className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white">
+                            {expanded ? "Fechar card" : "Abrir card"}
+                          </span>
+                        </div>
+                      </button>
+
+                      {expanded ? (
+                        <div className="mt-5 space-y-4">
+                          <label className="block">
+                            <span className="text-sm font-black text-slate-700">Evento</span>
+                            <select
+                              value={form.eventId}
+                              onChange={(event) => handleEventChange(assignment.id, event.target.value)}
+                              className="mt-2 h-12 w-full rounded-2xl border border-orange-200 bg-white px-4 text-sm font-semibold outline-none transition focus:border-orange-400"
+                            >
+                              <option value="">Selecione um evento</option>
+                              {sortedEvents.map((event) => (
+                                <option key={event.id} value={event.id}>
+                                  {eventName(event)} • {formatDate(event.eventDate || event.startDate)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <div className="rounded-3xl border border-orange-200 bg-white p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-black text-slate-950">
+                                  Datas, valores e funções
+                                </p>
+                                <p className="mt-1 text-xs font-semibold text-slate-500">
+                                  Só aparecem datas existentes no evento selecionado.
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => addWorkDate(assignment.id)}
+                                className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white"
+                              >
+                                + Data
+                              </button>
+                            </div>
+
+                            <div className="mt-4 space-y-4">
+                              {form.workDates.map((workDate, workIndex) => (
+                                <div
+                                  key={`${workIndex}-${workDate.date}`}
+                                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                                >
+                                  <div className="grid gap-3 md:grid-cols-[1.2fr_0.8fr_0.8fr_1fr_auto]">
+                                    <label className="block">
+                                      <span className="text-xs font-black text-slate-600">Data do evento</span>
+                                      <select
+                                        value={workDate.date}
+                                        disabled={!form.eventId || eventDates.length === 0}
+                                        onChange={(event) =>
+                                          patchWorkDate(assignment.id, workIndex, {
+                                            date: event.target.value,
+                                          })
+                                        }
+                                        className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-orange-400 disabled:bg-slate-100"
+                                      >
+                                        <option value="">
+                                          {form.eventId
+                                            ? "Selecione uma data do evento"
+                                            : "Selecione primeiro o evento"}
+                                        </option>
+                                        {eventDates.map((date) => (
+                                          <option key={date} value={date}>
+                                            {formatDateOnly(date)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+
+                                    <label className="block">
+                                      <span className="text-xs font-black text-slate-600">Início</span>
+                                      <input
+                                        type="time"
+                                        value={workDate.startTime}
+                                        onChange={(event) =>
+                                          patchWorkDate(assignment.id, workIndex, {
+                                            startTime: event.target.value,
+                                          })
+                                        }
+                                        className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-orange-400"
+                                      />
+                                    </label>
+
+                                    <label className="block">
+                                      <span className="text-xs font-black text-slate-600">Fim</span>
+                                      <input
+                                        type="time"
+                                        value={workDate.endTime}
+                                        onChange={(event) =>
+                                          patchWorkDate(assignment.id, workIndex, {
+                                            endTime: event.target.value,
+                                          })
+                                        }
+                                        className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-orange-400"
+                                      />
+                                    </label>
+
+                                    <label className="block">
+                                      <span className="text-xs font-black text-slate-600">Valor da data</span>
+                                      <input
+                                        value={workDate.amount}
+                                        onChange={(event) =>
+                                          patchWorkDate(assignment.id, workIndex, {
+                                            amount: event.target.value,
+                                          })
+                                        }
+                                        placeholder="Ex: 120,00"
+                                        className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-orange-400"
+                                      />
+                                    </label>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => removeWorkDate(assignment.id, workIndex)}
+                                      disabled={form.workDates.length === 1}
+                                      className="self-end rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-black text-slate-700 disabled:opacity-40"
+                                    >
+                                      Remover
+                                    </button>
+                                  </div>
+
+                                  <label className="mt-3 block">
+                                    <span className="text-xs font-black text-slate-600">Funções do operador</span>
+                                    <textarea
+                                      value={workDate.functions}
+                                      onChange={(event) =>
+                                        patchWorkDate(assignment.id, workIndex, {
+                                          functions: event.target.value,
+                                        })
+                                      }
+                                      rows={2}
+                                      placeholder="Ex: validar ingressos, organizar fila, atender dúvidas."
+                                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-orange-400"
+                                    />
+                                  </label>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <label className="block">
+                            <span className="text-sm font-black text-slate-700">
+                              Observações finais
+                            </span>
+                            <textarea
+                              value={form.notes}
+                              onChange={(event) => patchForm(assignment.id, { notes: event.target.value })}
+                              rows={3}
+                              placeholder="Ex: entrada pelo portão lateral, chegar 1h antes, uniforme preto."
+                              className="mt-2 w-full rounded-2xl border border-orange-200 bg-white px-4 py-3 text-sm font-semibold outline-none transition focus:border-orange-400"
+                            />
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => assignEvent(assignment.id)}
+                            disabled={savingAssignmentId === assignment.id}
+                            className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {savingAssignmentId === assignment.id
+                              ? "Enviando proposta..."
+                              : "Enviar proposta para confirmação"}
+                          </button>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })
+              )}
+            </div>
+
+          </section>
+
+          <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+              Propostas enviadas
+            </p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Aguardando disponibilidade
+            </h2>
+
+            <div className="mt-5 grid gap-4">
+              {schedulePending.length === 0 ? (
+                <p className="rounded-2xl bg-slate-50 p-5 text-sm font-semibold text-slate-500">
+                  Nenhuma proposta aguardando resposta.
+                </p>
+              ) : (
+                schedulePending.map((assignment) => (
+                  <div key={assignment.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="font-black text-slate-950">
+                      {personName(assignment)} • {assignment.event?.name || assignment.eventTitle}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">
+                      Aguardando resposta da pessoa sobre os dias de trabalho.
+                    </p>
+
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      {(assignment.workDates || []).map((item) => (
+                        <div key={item.id} className="rounded-xl bg-white p-3 text-xs font-bold text-slate-600">
+                          {formatDateOnly(item.date)} • {item.startTime || "--:--"} às {item.endTime || "--:--"} • {money(item.amount)}
+                          <br />
+                          {item.functions}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </section>
+      </section>
+
+      <section className="rounded-[34px] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+              Relatório profissional
+            </p>
+            <h2 className="mt-2 text-3xl font-black text-slate-950">
+              Operadores confirmados e pagamento
+            </h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Validações, chats, horários, valores, comprovante e PDF por pessoa.
+            </p>
+          </div>
+
+          <Link
+            href="/admin/dashboard"
+            className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+          >
+            Voltar ao painel
+          </Link>
+        </div>
+
+        <div className="mt-6 grid gap-4 md:grid-cols-4">
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">A pagar</p>
+            <p className="mt-3 text-3xl font-black text-slate-950">{money(totalToPay)}</p>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Pago</p>
+            <p className="mt-3 text-3xl font-black text-slate-950">{money(totalPaid)}</p>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Validações</p>
+            <p className="mt-3 text-3xl font-black text-slate-950">{totalTicketsValidated}</p>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Operadores</p>
+            <p className="mt-3 text-3xl font-black text-slate-950">{active.length}</p>
+          </div>
+        </div>
+
+        <div className="mt-6 grid gap-5">
+          {active.length === 0 ? (
+            <div className="rounded-3xl bg-slate-50 p-8 text-center">
+              <p className="font-black text-slate-950">Nenhum operador confirmado.</p>
+            </div>
+          ) : (
+            active.map((assignment) => {
+              const expanded = isExpanded(`active-${assignment.id}`, true);
+              const paymentForm = getPaymentForm(assignment.id);
+              const summary = assignment.paymentSummary;
+              const operational = assignment.operationalSummary;
+
+              return (
+                <article key={assignment.id} className="overflow-hidden rounded-[30px] border border-slate-200 bg-slate-50 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => toggleCard(`active-${assignment.id}`)}
+                    className="flex w-full flex-col gap-4 bg-white p-5 text-left md:flex-row md:items-center md:justify-between"
+                  >
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+                        {assignment.event?.name || assignment.eventTitle || "Evento"}
+                      </p>
+                      <h3 className="mt-2 text-2xl font-black text-slate-950">
+                        {personName(assignment)}
+                      </h3>
+                      <p className="mt-1 text-sm font-semibold text-slate-500">
+                        {personEmail(assignment)} • CPF: {personCpf(assignment)} • {assignment.protocol}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-4 py-2 text-xs font-black ${statusBadge(assignment.paymentStatus)}`}>
+                        {assignment.paymentStatus === "PAID" ? "Pago" : "Pagamento pendente"}
+                      </span>
+                      <span className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white">
+                        {expanded ? "Fechar relatório" : "Abrir relatório"}
+                      </span>
+                    </div>
+                  </button>
+
+                  {expanded ? (
+                    <div className="space-y-5 p-5">
+                      <div className="grid gap-4 md:grid-cols-4">
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Dias aceitos</p>
+                          <p className="mt-3 text-3xl font-black text-slate-950">{summary?.availableDays || 0}</p>
+                        </div>
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Horas previstas</p>
+                          <p className="mt-3 text-3xl font-black text-slate-950">{summary?.scheduledHours || 0}h</p>
+                        </div>
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Valor a pagar</p>
+                          <p className="mt-3 text-3xl font-black text-slate-950">{money(summary?.approvedTotal || 0)}</p>
+                        </div>
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Ingressos validados</p>
+                          <p className="mt-3 text-3xl font-black text-slate-950">{operational?.ticketsValidated || 0}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Chats atendidos</p>
+                          <p className="mt-3 text-3xl font-black text-slate-950">{operational?.supportThreadsHandled || 0}</p>
+                        </div>
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Mensagens em chats</p>
+                          <p className="mt-3 text-3xl font-black text-slate-950">{operational?.supportMessagesHandled || 0}</p>
+                        </div>
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-400">Pagamento</p>
+                          <p className="mt-3 text-3xl font-black text-slate-950">{assignment.paymentStatus === "PAID" ? "Pago" : "Pendente"}</p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-3xl border border-slate-200 bg-white p-5">
+                        <p className="text-sm font-black text-slate-950">Escala respondida</p>
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          {(assignment.workDates || []).map((item) => (
+                            <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-black text-slate-950">{formatDateOnly(item.date)}</p>
+                                  <p className="mt-1 text-xs font-bold text-slate-500">
+                                    {item.startTime || "--:--"} às {item.endTime || "--:--"} • {money(item.amount)}
+                                  </p>
+                                </div>
+                                <span
+                                  className={`rounded-full px-3 py-1 text-xs font-black ${
+                                    item.available === true
+                                      ? "bg-emerald-50 text-emerald-700"
+                                      : item.available === false
+                                        ? "bg-red-50 text-red-700"
+                                        : "bg-amber-50 text-amber-700"
+                                  }`}
+                                >
+                                  {item.available === true ? "Pode" : item.available === false ? "Não pode" : "Pendente"}
+                                </span>
+                              </div>
+                              <p className="mt-3 text-sm font-semibold leading-6 text-slate-600">{item.functions}</p>
+                              {item.responseNote ? (
+                                <p className="mt-3 rounded-xl bg-white p-3 text-xs font-bold text-slate-500">
+                                  Obs: {item.responseNote}
+                                </p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid gap-5 lg:grid-cols-[1fr_420px]">
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5">
+                          <p className="text-sm font-black text-slate-950">Pagamento e comprovante</p>
+
+                          {assignment.paymentStatus === "PAID" ? (
+                            <div className="mt-4 rounded-2xl bg-emerald-50 p-4 text-sm font-bold text-emerald-800">
+                              Pagamento marcado como pago
+                              {assignment.paymentPaidAt ? ` em ${formatDate(assignment.paymentPaidAt)}` : ""}.
+                              {assignment.paymentPaidByName ? ` Responsável: ${assignment.paymentPaidByName}.` : ""}
+                            </div>
+                          ) : (
+                            <div className="mt-4 rounded-2xl bg-amber-50 p-4 text-sm font-bold text-amber-800">
+                              Pagamento pendente. Anexe o comprovante e marque como pago.
+                            </div>
+                          )}
+
+                          <div className="mt-4 space-y-3">
+                            <textarea
+                              value={paymentForm.paymentNotes}
+                              onChange={(event) =>
+                                patchPaymentForm(assignment.id, {
+                                  paymentNotes: event.target.value,
+                                })
+                              }
+                              rows={3}
+                              placeholder="Observação do pagamento: ex. pago via Pix em 15/05."
+                              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-orange-400"
+                            />
+
+                            <input
+                              type="file"
+                              accept="image/*,.pdf"
+                              onChange={(event) =>
+                                handleProofFile(assignment.id, event.target.files?.[0])
+                              }
+                              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-600"
+                            />
+
+                            {(paymentForm.paymentProofName || assignment.paymentProofName) ? (
+                              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-600">
+                                Comprovante anexado: {paymentForm.paymentProofName || assignment.paymentProofName}
+                                {(paymentForm.paymentProofDataUrl || assignment.paymentProofDataUrl) ? (
+                                  <a
+                                    href={paymentForm.paymentProofDataUrl || assignment.paymentProofDataUrl || "#"}
+                                    target="_blank"
+                                    className="ml-2 text-orange-600 underline"
+                                  >
+                                    abrir
+                                  </a>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="rounded-3xl border border-slate-200 bg-white p-5">
+                          <p className="text-sm font-black text-slate-950">Ações do relatório</p>
+                          <div className="mt-4 space-y-3">
+                            <button
+                              type="button"
+                              onClick={() => exportReportPdf(assignment)}
+                              className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-black text-slate-800 transition hover:bg-slate-50"
+                            >
+                              Exportar relatório em PDF
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => markAsPaid(assignment)}
+                              disabled={savingPaymentId === assignment.id || assignment.paymentStatus === "PAID"}
+                              className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {assignment.paymentStatus === "PAID"
+                                ? "Pagamento já marcado"
+                                : savingPaymentId === assignment.id
+                                  ? "Marcando..."
+                                  : "Marcar como pago"}
+                            </button>
+
+                            <div className="rounded-2xl bg-slate-50 p-4 text-xs font-bold leading-5 text-slate-500">
+                              O PDF abre a janela de impressão do navegador. Escolha “Salvar como PDF”.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+    </main>
+  );
+}

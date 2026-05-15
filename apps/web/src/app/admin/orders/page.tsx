@@ -245,7 +245,7 @@ export default function AdminOrdersPage() {
       }
 
       try {
-        const response = await fetch(`${API_BASE_URL}/orders`, {
+        const response = await fetch(`${API_BASE_URL}/orders/admin-scope`, {
           method: "GET",
           headers: {
             "Content-Type": "application/json",

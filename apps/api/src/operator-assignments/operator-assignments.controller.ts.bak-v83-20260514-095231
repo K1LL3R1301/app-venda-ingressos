@@ -1,0 +1,93 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Request } from 'express';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { AssignOperatorToEventDto } from './dto/assign-operator-to-event.dto';
+import { CreateOperatorInvitationDto } from './dto/create-operator-invitation.dto';
+import { OperatorAssignmentsService } from './operator-assignments.service';
+
+type AuthenticatedRequest = Request & {
+  user: {
+    sub: string;
+    email: string;
+    role: string;
+    name?: string;
+    cpf?: string;
+  };
+};
+
+@ApiTags('Operator Assignments')
+@Controller('operator-assignments')
+export class OperatorAssignmentsController {
+  constructor(private readonly operatorAssignmentsService: OperatorAssignmentsService) {}
+
+  @Post('invite')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  invite(
+    @Body() body: CreateOperatorInvitationDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.operatorAssignmentsService.invite(req.user, body);
+  }
+
+  @Get()
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  list(@Req() req: AuthenticatedRequest) {
+    return this.operatorAssignmentsService.list(req.user);
+  }
+
+  @Get('me/invitations')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard)
+  myInvitations(@Req() req: AuthenticatedRequest) {
+    return this.operatorAssignmentsService.myInvitations(req.user);
+  }
+
+  @Post(':id/accept')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard)
+  accept(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.operatorAssignmentsService.accept(id, req.user);
+  }
+
+  @Post(':id/decline')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard)
+  decline(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.operatorAssignmentsService.decline(id, req.user);
+  }
+
+  @Post(':id/assign')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  assign(
+    @Param('id') id: string,
+    @Body() body: AssignOperatorToEventDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.operatorAssignmentsService.assign(id, req.user, body);
+  }
+
+  @Get(':id/report')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  report(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.operatorAssignmentsService.report(id, req.user);
+  }
+}

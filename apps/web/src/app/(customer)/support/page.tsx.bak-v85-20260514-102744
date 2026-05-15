@@ -1,0 +1,448 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+
+type WorkDate = {
+  id: string;
+  date: string;
+  amount: number;
+  functions: string;
+  status: string;
+  available: boolean | null;
+  responseNote?: string | null;
+};
+
+type Invitation = {
+  id: string;
+  protocol: string;
+  status: string;
+  workPlanStatus?: string | null;
+  invitationMessage?: string | null;
+  notes?: string | null;
+  adminName?: string | null;
+  adminEmail?: string | null;
+  eventTitle?: string | null;
+  eventDate?: string | null;
+  invitedAt?: string | null;
+  workDates?: WorkDate[];
+  paymentSummary?: {
+    proposedDays: number;
+    availableDays: number;
+    unavailableDays: number;
+    pendingDays: number;
+    proposedTotal: number;
+    approvedTotal: number;
+  };
+  event?: {
+    id: string;
+    name: string;
+    eventDate?: string | null;
+  } | null;
+};
+
+type ResponseState = Record<string, Record<string, { available: boolean | null; note: string }>>;
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+function token() {
+  return typeof window === "undefined" ? "" : localStorage.getItem("token") || "";
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function money(value?: number | null) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(Number(value || 0));
+}
+
+async function parseApiError(response: Response) {
+  const text = await response.text().catch(() => "");
+
+  try {
+    const json = JSON.parse(text);
+
+    if (Array.isArray(json?.message)) return json.message.join("\n");
+    if (typeof json?.message === "string") return json.message;
+    if (typeof json?.error === "string") return json.error;
+  } catch {}
+
+  if (text && text.length < 300) return text;
+
+  return `Erro ${response.status}: não foi possível responder.`;
+}
+
+export default function CustomerSupportPage() {
+  const [items, setItems] = useState<Invitation[]>([]);
+  const [responses, setResponses] = useState<ResponseState>({});
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  async function load() {
+    const auth = token();
+
+    if (!auth || auth === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/operator-assignments/me/invitations`, {
+        headers: {
+          Authorization: `Bearer ${auth}`,
+        },
+      });
+
+      const result = await response.json().catch(() => []);
+
+      setItems(Array.isArray(result) ? result : []);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  function patchDay(assignmentId: string, workDateId: string, patch: { available?: boolean; note?: string }) {
+    setResponses((current) => ({
+      ...current,
+      [assignmentId]: {
+        ...(current[assignmentId] || {}),
+        [workDateId]: {
+          available:
+            patch.available !== undefined
+              ? patch.available
+              : current[assignmentId]?.[workDateId]?.available ?? null,
+          note:
+            patch.note !== undefined
+              ? patch.note
+              : current[assignmentId]?.[workDateId]?.note || "",
+        },
+      },
+    }));
+  }
+
+  async function respondInvitation(id: string, action: "accept" | "decline") {
+    const auth = token();
+
+    setSavingId(id);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/operator-assignments/${id}/${action}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${auth}`,
+        },
+      });
+
+      if (!response.ok) {
+        alert(await parseApiError(response));
+        return;
+      }
+
+      await load();
+      alert(action === "accept" ? "Convite aceito." : "Convite recusado.");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function respondSchedule(item: Invitation) {
+    const auth = token();
+    const itemResponses = responses[item.id] || {};
+    const workDates = item.workDates || [];
+
+    const payload = workDates.map((workDate) => ({
+      id: workDate.id,
+      available: itemResponses[workDate.id]?.available,
+      note: itemResponses[workDate.id]?.note || "",
+    }));
+
+    if (payload.some((response) => typeof response.available !== "boolean")) {
+      alert("Responda Sim ou Não para todos os dias.");
+      return;
+    }
+
+    setSavingId(item.id);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/operator-assignments/${item.id}/work-plan/respond`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${auth}`,
+        },
+        body: JSON.stringify({
+          responses: payload,
+        }),
+      });
+
+      if (!response.ok) {
+        alert(await parseApiError(response));
+        return;
+      }
+
+      await load();
+      alert("Disponibilidade enviada ao administrador.");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  const pendingInvitations = items.filter((item) => item.status === "INVITED");
+  const pendingSchedules = items.filter((item) => item.status === "SCHEDULE_PENDING");
+  const answered = items.filter((item) => !["INVITED", "SCHEDULE_PENDING"].includes(item.status));
+
+  return (
+    <main className="mx-auto max-w-[1180px] space-y-6 px-4 py-6">
+      <section
+        className="relative overflow-hidden rounded-[34px] text-white shadow-sm"
+        style={{
+          background:
+            "linear-gradient(135deg, #ff6900 0%, #7c2d12 18%, #111827 50%, #020617 100%)",
+        }}
+      >
+        <div className="absolute inset-0 bg-black/25" />
+        <div className="relative z-10 p-7 lg:p-9">
+          <p className="text-[11px] font-black uppercase tracking-[0.34em] text-orange-200">
+            Central de suporte
+          </p>
+          <h1 className="mt-4 max-w-4xl text-4xl font-black leading-tight md:text-5xl">
+            Convites e disponibilidade.
+          </h1>
+          <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/80">
+            Responda se aceita virar operador e, depois, quais dias consegue trabalhar.
+          </p>
+        </div>
+      </section>
+
+      <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+              Solicitações recebidas
+            </p>
+            <h2 className="mt-2 text-2xl font-black text-slate-950">
+              Convites para virar operador
+            </h2>
+          </div>
+
+          <Link
+            href="/dashboard"
+            className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+          >
+            Voltar
+          </Link>
+        </div>
+
+        <div className="mt-6 grid gap-4">
+          {loading ? (
+            <div className="rounded-3xl bg-slate-50 p-6 text-sm font-bold text-slate-500">
+              Carregando suporte...
+            </div>
+          ) : pendingInvitations.length === 0 ? (
+            <div className="rounded-3xl bg-slate-50 p-8 text-center">
+              <p className="font-black text-slate-950">Nenhum convite pendente.</p>
+            </div>
+          ) : (
+            pendingInvitations.map((item) => (
+              <article
+                key={item.id}
+                className="rounded-[26px] border border-orange-200 bg-orange-50 p-5 shadow-sm"
+              >
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-700">
+                      Convite operacional
+                    </p>
+                    <h3 className="mt-2 text-xl font-black text-slate-950">
+                      Você aceita virar operador?
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-700">
+                      {item.invitationMessage ||
+                        "Você foi convidado para atuar como operador na plataforma Astro Ingressos."}
+                    </p>
+                    <p className="mt-2 text-xs font-bold text-slate-500">
+                      Enviado por: {item.adminName || item.adminEmail || "Administrador"} • Protocolo: {item.protocol}
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row md:flex-col">
+                    <button
+                      type="button"
+                      onClick={() => respondInvitation(item.id, "accept")}
+                      disabled={savingId === item.id}
+                      className="rounded-2xl bg-slate-950 px-6 py-3 text-sm font-black text-white transition hover:bg-slate-800 disabled:opacity-60"
+                    >
+                      Sim
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => respondInvitation(item.id, "decline")}
+                      disabled={savingId === item.id}
+                      className="rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      Não
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+          Disponibilidade
+        </p>
+        <h2 className="mt-2 text-2xl font-black text-slate-950">
+          Propostas de trabalho por data
+        </h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Responda dia por dia. Exemplo: dia 05 posso, dia 06 não posso, dia 07 posso.
+        </p>
+
+        <div className="mt-6 grid gap-4">
+          {pendingSchedules.length === 0 ? (
+            <div className="rounded-3xl bg-slate-50 p-8 text-center">
+              <p className="font-black text-slate-950">Nenhuma proposta de data pendente.</p>
+            </div>
+          ) : (
+            pendingSchedules.map((item) => (
+              <article key={item.id} className="rounded-[26px] border border-orange-200 bg-orange-50 p-5">
+                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-orange-700">
+                      Proposta de trabalho
+                    </p>
+                    <h3 className="mt-2 text-xl font-black text-slate-950">
+                      {item.event?.name || item.eventTitle || "Evento"}
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-700">
+                      {item.notes || "Confira as datas, valores e funções abaixo."}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-slate-950">
+                    Total proposto: {money(item.paymentSummary?.proposedTotal || 0)}
+                  </div>
+                </div>
+
+                <div className="mt-5 space-y-4">
+                  {(item.workDates || []).map((workDate) => {
+                    const state = responses[item.id]?.[workDate.id];
+
+                    return (
+                      <div key={workDate.id} className="rounded-2xl border border-orange-200 bg-white p-4">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="text-lg font-black text-slate-950">
+                              {formatDate(workDate.date)} • {money(workDate.amount)}
+                            </p>
+                            <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+                              {workDate.functions}
+                            </p>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => patchDay(item.id, workDate.id, { available: true })}
+                              className={`rounded-2xl px-5 py-3 text-sm font-black ${
+                                state?.available === true
+                                  ? "bg-emerald-600 text-white"
+                                  : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
+                              Posso
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => patchDay(item.id, workDate.id, { available: false })}
+                              className={`rounded-2xl px-5 py-3 text-sm font-black ${
+                                state?.available === false
+                                  ? "bg-red-600 text-white"
+                                  : "bg-slate-100 text-slate-700"
+                              }`}
+                            >
+                              Não posso
+                            </button>
+                          </div>
+                        </div>
+
+                        <textarea
+                          value={state?.note || ""}
+                          onChange={(event) => patchDay(item.id, workDate.id, { note: event.target.value })}
+                          rows={2}
+                          placeholder="Observação opcional: ex. no dia 06 tenho compromisso."
+                          className="mt-4 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-orange-400"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => respondSchedule(item)}
+                  disabled={savingId === item.id}
+                  className="mt-5 w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white transition hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {savingId === item.id ? "Enviando..." : "Enviar disponibilidade"}
+                </button>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+          Histórico
+        </p>
+        <h2 className="mt-2 text-2xl font-black text-slate-950">
+          Convites e propostas respondidas
+        </h2>
+
+        <div className="mt-5 grid gap-3">
+          {answered.length === 0 ? (
+            <p className="rounded-2xl bg-slate-50 p-5 text-sm font-semibold text-slate-500">
+              Nenhum histórico ainda.
+            </p>
+          ) : (
+            answered.map((item) => (
+              <div
+                key={item.id}
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+              >
+                <p className="font-black text-slate-950">
+                  {item.event?.name || item.eventTitle || "Evento ainda não atribuído"}
+                </p>
+                <p className="text-xs font-semibold text-slate-500">
+                  Status: {item.status} • Valor confirmado: {money(item.paymentSummary?.approvedTotal || 0)}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}

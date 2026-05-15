@@ -23,6 +23,7 @@ type AuthenticatedRequest = Request & {
     sub: string;
     email: string;
     role: string;
+    cpf?: string;
   };
 };
 

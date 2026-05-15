@@ -1,0 +1,3 @@
+import { OperatorSupportPage } from "../_components/OperatorPanel";
+
+export default OperatorSupportPage;
