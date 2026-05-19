@@ -33,7 +33,7 @@ export default function NewOrderPage() {
 
   useEffect(() => {
     async function loadTicketTypes() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";
@@ -111,7 +111,7 @@ export default function NewOrderPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

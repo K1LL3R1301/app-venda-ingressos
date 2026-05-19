@@ -180,8 +180,8 @@ export default function CustomerTicketsPage() {
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   async function loadData() {
-    const token = localStorage.getItem("token");
-    const rawUser = localStorage.getItem("user");
+    const token = sessionStorage.getItem("astro_session_token");
+    const rawUser = sessionStorage.getItem("astro_session_user");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -353,7 +353,7 @@ export default function CustomerTicketsPage() {
   }, [outgoingTransfers, search]);
 
   async function handleAcceptTransfer(transferRequestId: string) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -396,7 +396,7 @@ export default function CustomerTicketsPage() {
   }
 
   async function handleRejectTransfer(transferRequestId: string) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -447,7 +447,7 @@ export default function CustomerTicketsPage() {
   }
 
   async function handleCancelTransfer(transferRequestId: string) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -154,8 +154,8 @@ export default function AdminBoostsPage() {
   );
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const rawUser = localStorage.getItem("user");
+    const token = sessionStorage.getItem("astro_session_token");
+    const rawUser = sessionStorage.getItem("astro_session_user");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -172,7 +172,7 @@ export default function AdminBoostsPage() {
   }, []);
 
   async function loadMine() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     try {
       const response = await fetch(`${API_BASE_URL}/promotion-boosts/mine`, {
@@ -199,7 +199,7 @@ export default function AdminBoostsPage() {
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     setSubmitting(true);
     setError("");

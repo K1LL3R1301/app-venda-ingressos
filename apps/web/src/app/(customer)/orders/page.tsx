@@ -454,8 +454,8 @@ export default function CustomerOrdersPage() {
 
   useEffect(() => {
     async function loadEverything() {
-      const token = localStorage.getItem("token");
-      const rawUser = localStorage.getItem("user");
+      const token = sessionStorage.getItem("astro_session_token");
+      const rawUser = sessionStorage.getItem("astro_session_user");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";
@@ -591,7 +591,7 @@ export default function CustomerOrdersPage() {
   }
 
   async function handleAcceptTransferFromOrders(transferRequestId: string) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -634,7 +634,7 @@ export default function CustomerOrdersPage() {
   }
 
   async function handleRejectTransferFromOrders(transferRequestId: string) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

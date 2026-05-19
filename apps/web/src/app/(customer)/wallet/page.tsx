@@ -14,7 +14,7 @@ function toNumber(value?: string | number | null) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 function money(value?: string | number | null) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(toNumber(value)); }
-function userFromStorage(): StoredUser { try { return JSON.parse(localStorage.getItem("user") || "{}"); } catch { return {}; } }
+function userFromStorage(): StoredUser { try { return JSON.parse(sessionStorage.getItem("astro_session_user") || "{}"); } catch { return {}; } }
 function withdrawalKey(user: StoredUser) { return `astro_wallet_withdrawals_${user.id || user.email || "anon"}`; }
 function loadWithdrawals(user: StoredUser): Movement[] { try { return JSON.parse(localStorage.getItem(withdrawalKey(user)) || "[]"); } catch { return []; } }
 function saveWithdrawals(user: StoredUser, list: Movement[]) { localStorage.setItem(withdrawalKey(user), JSON.stringify(list)); }
@@ -34,7 +34,7 @@ export default function WalletPage() {
     const storedUser = userFromStorage();
     setUser(storedUser);
     setWithdrawals(loadWithdrawals(storedUser));
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
     if (!token || token === "undefined") { window.location.href = "/login"; return; }
 
     try {

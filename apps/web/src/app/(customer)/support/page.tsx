@@ -86,12 +86,12 @@ const API_BASE_URL =
   "http://localhost:3001/v1";
 
 function getToken() {
-  return localStorage.getItem("token") || "";
+  return sessionStorage.getItem("astro_session_token") || "";
 }
 
 function getStoredUser(): StoredUser {
   try {
-    return JSON.parse(localStorage.getItem("user") || "{}");
+    return JSON.parse(sessionStorage.getItem("astro_session_user") || "{}");
   } catch {
     return {};
   }

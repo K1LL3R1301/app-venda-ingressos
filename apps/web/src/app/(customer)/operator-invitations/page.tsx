@@ -26,7 +26,7 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
 
 function token() {
-  return typeof window === "undefined" ? "" : localStorage.getItem("token") || "";
+  return typeof window === "undefined" ? "" : sessionStorage.getItem("astro_session_token") || "";
 }
 
 function formatDate(value?: string | null) {

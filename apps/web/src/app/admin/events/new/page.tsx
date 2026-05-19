@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import {
@@ -896,7 +896,7 @@ function MediaField({
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
     if (!token || token === "undefined") {
       alert("Sua sessão expirou. Faça login novamente.");
       window.location.href = "/login";
@@ -999,7 +999,7 @@ function GalleryUploadField({
       throw new Error("A galeria aceita apenas imagem ou vídeo.");
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
     if (!token || token === "undefined") {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
@@ -1172,7 +1172,7 @@ export default function NewEventPage() {
   // v60b-admin-create-event-guard
   useEffect(() => {
     try {
-      const rawUser = localStorage.getItem("user");
+      const rawUser = sessionStorage.getItem("astro_session_user");
       const storedUser = rawUser ? JSON.parse(rawUser) : null;
       const role = String(storedUser?.role || "").toUpperCase();
 
@@ -1267,7 +1267,7 @@ export default function NewEventPage() {
 
   useEffect(() => {
     async function load() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
       if (!token || token === "undefined") {
         window.location.href = "/login";
         return;
@@ -1860,7 +1860,7 @@ export default function NewEventPage() {
       current.map((item) => {
         if (item.localId !== localId) return item;
 
-        let next: TicketItem = { ...item, ...patch };
+        const next: TicketItem = { ...item, ...patch };
 
         if (patch.price !== undefined) next.price = onlyMoney(patch.price);
         if (patch.quantity !== undefined) next.quantity = onlyDigits(patch.quantity);
@@ -2277,7 +2277,7 @@ export default function NewEventPage() {
   }
 
   function snapToObjects(rect: MapRect, objectId: string, objects: MapObject[]) {
-    let nextRect = { ...rect };
+    const nextRect = { ...rect };
 
     for (const object of objects) {
       if (object.localId === objectId) continue;
@@ -2315,7 +2315,7 @@ export default function NewEventPage() {
   }
 
   function resolveCollision(proposed: MapRect, previous: MapRect, objectId: string, objects: MapObject[]) {
-    let nextRect = { ...proposed };
+    const nextRect = { ...proposed };
 
     for (const object of objects) {
       if (object.localId === objectId) continue;
@@ -2954,7 +2954,7 @@ export default function NewEventPage() {
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
     if (!token || token === "undefined") {
       window.location.href = "/login";
       return;

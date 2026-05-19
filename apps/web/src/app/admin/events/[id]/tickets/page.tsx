@@ -43,7 +43,7 @@ export default function EventTicketsPage() {
 
   useEffect(() => {
     async function loadData() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";
@@ -126,7 +126,7 @@ export default function EventTicketsPage() {
   }, [ticketTypes, search]);
 
   async function reloadTicketTypes() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -161,7 +161,7 @@ export default function EventTicketsPage() {
   async function handleCreateTicketType(e: React.FormEvent) {
     e.preventDefault();
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

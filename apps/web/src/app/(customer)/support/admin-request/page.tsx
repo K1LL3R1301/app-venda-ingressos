@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -75,7 +75,7 @@ const requiredFields: Array<keyof FormState> = [
 
 function getUserFromStorage() {
   try {
-    const rawUser = localStorage.getItem("user");
+    const rawUser = sessionStorage.getItem("astro_session_user");
     return rawUser ? (JSON.parse(rawUser) as StoredUser) : null;
   } catch {
     return null;
@@ -156,7 +156,7 @@ export default function AdminRequestPage() {
   const isAdmin = role === "ADMIN";
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -212,7 +212,7 @@ export default function AdminRequestPage() {
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

@@ -1,0 +1,72 @@
+import { NextRequest, NextResponse } from "next/server";
+
+const privateCustomerRoutes = [
+  "/dashboard",
+  "/orders",
+  "/tickets",
+  "/wallet",
+  "/support",
+];
+
+function isSameOrChild(pathname: string, route: string) {
+  return pathname === route || pathname.startsWith(`${route}/`);
+}
+
+function redirectToLogin(request: NextRequest) {
+  const url = request.nextUrl.clone();
+  const loginUrl = new URL("/login", request.url);
+
+  if (url.pathname !== "/login") {
+    loginUrl.searchParams.set("next", `${url.pathname}${url.search}`);
+  }
+
+  return NextResponse.redirect(loginUrl);
+}
+
+function redirectToDashboard(request: NextRequest) {
+  return NextResponse.redirect(new URL("/dashboard", request.url));
+}
+
+export function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const token = request.cookies.get("astro_token")?.value || "";
+  const role = decodeURIComponent(
+    request.cookies.get("astro_user_role")?.value || "",
+  ).toUpperCase();
+
+  const isPrivateCustomerRoute = privateCustomerRoutes.some((route) =>
+    isSameOrChild(pathname, route),
+  );
+  const isAdminRoute = isSameOrChild(pathname, "/admin");
+  const isOperatorRoute = isSameOrChild(pathname, "/operator");
+
+  if (!isPrivateCustomerRoute && !isAdminRoute && !isOperatorRoute) {
+    return NextResponse.next();
+  }
+
+  if (!token) {
+    return redirectToLogin(request);
+  }
+
+  if (isAdminRoute && role !== "ADMIN" && role !== "SUPER_ADMIN") {
+    return redirectToDashboard(request);
+  }
+
+  if (isOperatorRoute && role !== "OPERATOR" && role !== "SUPER_ADMIN") {
+    return redirectToDashboard(request);
+  }
+
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [
+    "/dashboard/:path*",
+    "/orders/:path*",
+    "/tickets/:path*",
+    "/wallet/:path*",
+    "/support/:path*",
+    "/admin/:path*",
+    "/operator/:path*",
+  ],
+};

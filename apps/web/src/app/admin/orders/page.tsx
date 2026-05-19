@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -237,7 +237,7 @@ export default function AdminOrdersPage() {
 
   useEffect(() => {
     async function loadOrders() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";

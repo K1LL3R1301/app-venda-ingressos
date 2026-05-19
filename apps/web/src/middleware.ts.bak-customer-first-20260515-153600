@@ -1,0 +1,12 @@
+// Middleware propositalmente simples.
+// A autenticacao fica no client usando sessionStorage.
+// Assim, fechou a aba, perdeu a sessao e precisa logar novamente.
+import { NextResponse } from "next/server";
+
+export function middleware() {
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [],
+};

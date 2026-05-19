@@ -1,0 +1,11 @@
+// Desativado de proposito.
+// A sessao precisa morrer ao fechar a aba, entao usamos sessionStorage no client.
+import { NextResponse } from "next/server";
+
+export function middleware() {
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [],
+};

@@ -51,7 +51,7 @@ export default function OrderPaymentPage() {
 
   useEffect(() => {
     async function loadOrder() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";
@@ -96,7 +96,7 @@ export default function OrderPaymentPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

@@ -59,7 +59,7 @@ export default function OrderDetailsPage() {
 
   useEffect(() => {
     async function loadOrder() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";
@@ -107,7 +107,7 @@ export default function OrderDetailsPage() {
 
     if (!confirmed) return;
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -164,7 +164,7 @@ export default function OrderDetailsPage() {
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

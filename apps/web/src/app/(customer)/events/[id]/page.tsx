@@ -1457,7 +1457,7 @@ function getReservedPointPositions(
   for (let index = 0; index < count; index += 1) {
     const column = index % columns;
     const row = Math.floor(index / columns);
-    let left = paddingX + ((column + 0.5) / columns) * usableWidth;
+    const left = paddingX + ((column + 0.5) / columns) * usableWidth;
     let top = paddingTop + ((row + 0.5) / rows) * usableHeight;
 
     if (isFreeform) {

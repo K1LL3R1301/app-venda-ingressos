@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -251,8 +251,8 @@ export default function AdminSupportPage() {
   );
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const rawUser = localStorage.getItem("user");
+    const token = sessionStorage.getItem("astro_session_token");
+    const rawUser = sessionStorage.getItem("astro_session_user");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -288,7 +288,7 @@ export default function AdminSupportPage() {
   }
 
   async function loadAllTickets() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     setLoadingTickets(true);
 
@@ -314,7 +314,7 @@ export default function AdminSupportPage() {
   }
 
   async function loadMyTickets() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     setLoadingTickets(true);
 
@@ -340,7 +340,7 @@ export default function AdminSupportPage() {
   }
 
   async function loadBoosts() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     setLoadingBoosts(true);
     setError("");
@@ -371,7 +371,7 @@ export default function AdminSupportPage() {
   }
 
   async function loadAdminRequests() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     setLoadingAdminRequests(true);
 
@@ -404,7 +404,7 @@ export default function AdminSupportPage() {
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     setCreatingTicket(true);
     setTicketSuccess("");
@@ -455,7 +455,7 @@ export default function AdminSupportPage() {
   }
 
   async function reviewTicket(id: string, status: "IN_REVIEW" | "ANSWERED" | "CLOSED") {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     const response = await fetch(`${API_BASE_URL}/admin-support-tickets/${id}/review`, {
       method: "PATCH",
@@ -480,7 +480,7 @@ export default function AdminSupportPage() {
   }
 
   async function reviewBoost(id: string, status: "APPROVED" | "REJECTED") {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     const response = await fetch(`${API_BASE_URL}/promotion-boosts/${id}/review`, {
       method: "PATCH",
@@ -505,7 +505,7 @@ export default function AdminSupportPage() {
   }
 
   async function reviewAdminRequest(id: string, status: "APPROVED" | "REJECTED") {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     const response = await fetch(`${API_BASE_URL}/admin-access-requests/${id}/review`, {
       method: "PATCH",

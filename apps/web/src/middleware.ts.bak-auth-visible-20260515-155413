@@ -1,0 +1,12 @@
+// Middleware desativado de proposito.
+// A sessao desejada e por aba usando sessionStorage.
+// Middleware roda no servidor e nao consegue ler sessionStorage.
+import { NextResponse } from "next/server";
+
+export function middleware() {
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [],
+};

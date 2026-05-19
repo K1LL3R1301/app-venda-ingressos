@@ -1,0 +1,11 @@
+// A sessao do front usa sessionStorage para expirar ao fechar a aba.
+// Por isso o bloqueio de rota fica nos layouts client-side.
+import { NextResponse } from "next/server";
+
+export function middleware() {
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [],
+};

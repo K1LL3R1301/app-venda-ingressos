@@ -132,8 +132,8 @@ export default function NewOrganizerPage() {
 
   useEffect(() => {
     async function loadInitialData() {
-      const token = localStorage.getItem("token");
-      const rawUser = localStorage.getItem("user");
+      const token = sessionStorage.getItem("astro_session_token");
+      const rawUser = sessionStorage.getItem("astro_session_user");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";
@@ -183,7 +183,7 @@ export default function NewOrganizerPage() {
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

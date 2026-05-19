@@ -720,8 +720,8 @@ export default function CustomerOrderDetailPage() {
   const remainingAmount = Math.max(0, totalAmount - totalPaid);
 
   async function loadData() {
-    const token = localStorage.getItem("token");
-    const rawUser = localStorage.getItem("user");
+    const token = sessionStorage.getItem("astro_session_token");
+    const rawUser = sessionStorage.getItem("astro_session_user");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -888,7 +888,7 @@ export default function CustomerOrderDetailPage() {
   }
 
   async function loadTicketQrToken(ticket: TicketItem) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     setSelectedTicketQrToken("");
     setSelectedTicketQrError("");
@@ -961,7 +961,7 @@ export default function CustomerOrderDetailPage() {
 
 async function handleCancelTicketTransfer(ticket: TicketItem) {
     const pendingTransfer = getPendingTransferForTicket(ticket);
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!pendingTransfer?.id) {
       alert("Nao encontrei transferencia pendente para cancelar.");
@@ -1040,7 +1040,7 @@ async function handleCancelTicketTransfer(ticket: TicketItem) {
   }
 
   async function handleFinalizePayment() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -1084,7 +1084,7 @@ async function handleCancelTicketTransfer(ticket: TicketItem) {
 
 
   async function handleRequestWalletRefund() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -1155,7 +1155,7 @@ async function handleCancelTicketTransfer(ticket: TicketItem) {
   async function handleSubmitTransfer(e: FormEvent) {
     e.preventDefault();
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -1215,7 +1215,7 @@ async function handleCancelTicketTransfer(ticket: TicketItem) {
   async function fetchTicketQrTokenForPrint(ticket: TicketItem) {
     if (printTokensByTicketId[ticket.id]) return printTokensByTicketId[ticket.id];
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -1264,7 +1264,7 @@ async function handleCancelTicketTransfer(ticket: TicketItem) {
   }
 
   async function handleRequestTicketWalletRefund(ticket: TicketItem) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

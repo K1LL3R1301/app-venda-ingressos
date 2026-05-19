@@ -143,7 +143,7 @@ export default function AdminSupportThreadPage() {
   const [message, setMessage] = useState("");
 
   async function loadThread(threadIdParam: string, silent = false) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -201,7 +201,7 @@ export default function AdminSupportThreadPage() {
   async function handleSendMessage(e: FormEvent) {
     e.preventDefault();
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -250,7 +250,7 @@ export default function AdminSupportThreadPage() {
   }
 
   async function handleCloseThread() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -290,7 +290,7 @@ export default function AdminSupportThreadPage() {
   }
 
   async function handleReopenThread() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

@@ -21,7 +21,7 @@ export default function OperatorEventsPage() {
 
   useEffect(() => {
     async function loadEvents() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";

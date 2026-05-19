@@ -327,12 +327,7 @@ export class OperatorAssignmentsService {
     });
 
     if (existingForThisAdmin) {
-      const message =
-        targetRole === 'OPERATOR'
-          ? 'Esta conta já é operador deste administrador. Nenhum novo convite foi enviado.'
-          : 'Esta conta já possui convite ou vínculo com este administrador. Nenhum novo convite foi enviado.';
-
-      throw new BadRequestException(message);
+      return this.enrichAssignment(existingForThisAdmin);
     }
 
     const existingAsOperatorElsewhere = await (this.prisma.operatorAssignment as any).findFirst({
@@ -569,23 +564,51 @@ export class OperatorAssignmentsService {
       canAnswerSupport: body.canAnswerSupport !== false,
     };
 
+    const workProposalData = {
+      eventId: event.id,
+      eventTitle: event.name,
+      eventDate: event.eventDate,
+      status: 'SCHEDULE_PENDING',
+      workPlanStatus: 'PENDING_OPERATOR_RESPONSE',
+      paymentStatus: 'PENDING',
+      notes: clean(body.notes) || null,
+      permissions,
+      workDates: proposedDates,
+      assignedAt: new Date(),
+      workPlanSubmittedAt: new Date(),
+    };
+
+    const shouldCreateNewWorkCard =
+      Boolean(clean(assignment.eventId)) ||
+      ['SCHEDULE_PENDING', 'ACTIVE'].includes(status);
+
+    if (shouldCreateNewWorkCard) {
+      const created = await (this.prisma.operatorAssignment as any).create({
+        data: {
+          protocol: makeProtocol(),
+          adminUserId: assignment.adminUserId,
+          adminName: assignment.adminName || clean(user.name) || 'Administrador',
+          adminEmail: assignment.adminEmail || clean(user.email),
+          operatorUserId: assignment.operatorUserId,
+          operatorName: assignment.operatorName,
+          operatorEmail: assignment.operatorEmail,
+          operatorCpf: assignment.operatorCpf,
+          operatorCpfNormalized: assignment.operatorCpfNormalized,
+          invitationMessage: assignment.invitationMessage || null,
+          invitedAt: new Date(),
+          acceptedAt: new Date(),
+          ...workProposalData,
+        },
+      });
+
+      return this.enrichAssignment(created);
+    }
+
     const updated = await (this.prisma.operatorAssignment as any).update({
       where: {
         id,
       },
-      data: {
-        eventId: event.id,
-        eventTitle: event.name,
-        eventDate: event.eventDate,
-        status: 'SCHEDULE_PENDING',
-        workPlanStatus: 'PENDING_OPERATOR_RESPONSE',
-        paymentStatus: 'PENDING',
-        notes: clean(body.notes) || null,
-        permissions,
-        workDates: proposedDates,
-        assignedAt: new Date(),
-        workPlanSubmittedAt: new Date(),
-      },
+      data: workProposalData,
     });
 
     return this.enrichAssignment(updated);

@@ -27,7 +27,7 @@ export default function OrderPrintPage() {
 
   useEffect(() => {
     async function load() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
       if (!token || token === "undefined") { window.location.href = "/login"; return; }
       try {
         const response = await fetch(`${API_BASE_URL}/orders/customer/${orderId}`, { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } });

@@ -209,7 +209,7 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     async function loadDashboard() {
-      const token = localStorage.getItem("token");
+      const token = sessionStorage.getItem("astro_session_token");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";

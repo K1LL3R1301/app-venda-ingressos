@@ -1157,7 +1157,7 @@ function MediaField({ label, value, kind, onChange }: { label: string; value: st
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
     if (!token || token === "undefined") {
       window.location.href = "/login";
       return;
@@ -1226,7 +1226,7 @@ function MultiImageField({ label, value, kind, onChange, helper }: { label: stri
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
     if (!token || token === "undefined") {
       window.location.href = "/login";
       return;
@@ -1674,7 +1674,7 @@ export default function EditEventPage() {
   }
 
   async function loadEvent() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
     if (!token || token === "undefined") {
       window.location.href = "/login";
       return;
@@ -1771,7 +1771,7 @@ export default function EditEventPage() {
     setSessions((current) => current.map((item) => {
       if (item.localId !== localId) return item;
 
-      let safePatch = { ...patch };
+      const safePatch = { ...patch };
 
       if (patch.startsAt !== undefined && endDate && isInputAfterLimit(patch.startsAt, endDate)) {
         alert("O início da data não pode passar da data final geral.");
@@ -2458,7 +2458,7 @@ export default function EditEventPage() {
       return;
     }
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
     if (!token || token === "undefined") {
       window.location.href = "/login";
       return;

@@ -1,0 +1,104 @@
+export type StoredAuthUser = {
+  id?: string;
+  sub?: string;
+  name?: string;
+  email?: string;
+  cpf?: string;
+  role?: string;
+  status?: string;
+  authProvider?: string;
+};
+
+function canUseBrowser() {
+  return typeof window !== "undefined";
+}
+
+function decodeBase64Url(value: string) {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = `${base64}${"=".repeat((4 - (base64.length % 4)) % 4)}`;
+
+  return atob(padded);
+}
+
+export function clearOldPersistentAuth() {
+  if (!canUseBrowser()) return;
+
+  localStorage.removeItem("token");
+  localStorage.removeItem("refreshToken");
+  localStorage.removeItem("user");
+
+  document.cookie = "astro_token=; Max-Age=0; Path=/; SameSite=Lax";
+  document.cookie = "astro_user_role=; Max-Age=0; Path=/; SameSite=Lax";
+}
+
+export function decodeJwtPayload(token: string): StoredAuthUser | null {
+  if (!canUseBrowser()) return null;
+
+  try {
+    const [, payload] = token.split(".");
+
+    if (!payload) return null;
+
+    return JSON.parse(decodeBase64Url(payload)) as StoredAuthUser;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeAuthUser(token: string, user?: StoredAuthUser | null): StoredAuthUser {
+  const tokenUser = decodeJwtPayload(token);
+
+  return {
+    id: user?.id || user?.sub || tokenUser?.id || tokenUser?.sub,
+    sub: user?.sub || tokenUser?.sub,
+    name: user?.name || tokenUser?.name,
+    email: user?.email || tokenUser?.email,
+    cpf: user?.cpf || tokenUser?.cpf,
+    role: user?.role || tokenUser?.role || "CUSTOMER",
+    status: user?.status || tokenUser?.status,
+    authProvider: user?.authProvider || tokenUser?.authProvider,
+  };
+}
+
+export function setAuthSession(token: string, user?: StoredAuthUser | null) {
+  if (!canUseBrowser()) return;
+
+  const normalizedUser = normalizeAuthUser(token, user);
+
+  clearOldPersistentAuth();
+
+  sessionStorage.setItem("token", token);
+  sessionStorage.setItem("user", JSON.stringify(normalizedUser));
+}
+
+export function getStoredAuthToken() {
+  if (!canUseBrowser()) return "";
+
+  clearOldPersistentAuth();
+
+  const token = sessionStorage.getItem("token") || "";
+  return token === "undefined" ? "" : token;
+}
+
+export function getStoredAuthUser<T extends StoredAuthUser = StoredAuthUser>(): T | null {
+  if (!canUseBrowser()) return null;
+
+  clearOldPersistentAuth();
+
+  try {
+    const rawUser = sessionStorage.getItem("user");
+    return rawUser ? (JSON.parse(rawUser) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearAuthSession() {
+  if (!canUseBrowser()) return;
+
+  sessionStorage.removeItem("token");
+  sessionStorage.removeItem("refreshToken");
+  sessionStorage.removeItem("user");
+
+  clearOldPersistentAuth();
+}

@@ -9,7 +9,7 @@ const API_BASE_URL =
 type AnyItem = Record<string, any>;
 
 function token() {
-  return typeof window === "undefined" ? "" : localStorage.getItem("token") || "";
+  return typeof window === "undefined" ? "" : sessionStorage.getItem("astro_session_token") || "";
 }
 
 function money(value?: number | string | null) {

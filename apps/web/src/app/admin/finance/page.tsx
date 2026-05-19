@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -363,8 +363,8 @@ export default function AdminFinancePage() {
 
   useEffect(() => {
     async function load() {
-      const token = localStorage.getItem("token");
-      const rawUser = localStorage.getItem("user");
+      const token = sessionStorage.getItem("astro_session_token");
+      const rawUser = sessionStorage.getItem("astro_session_user");
 
       if (!token || token === "undefined") {
         window.location.href = "/login";

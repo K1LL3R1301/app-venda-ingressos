@@ -60,7 +60,7 @@ export default function EventImageUploadField({
   } | null>(null);
 
   async function handleUpload(file: File) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

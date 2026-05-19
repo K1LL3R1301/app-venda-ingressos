@@ -1948,7 +1948,7 @@ function MapStudio({
 
   async function callRealMapAi(mode: "chat" | "generate", prompt: string) {
     const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : "";
+      typeof window !== "undefined" ? sessionStorage.getItem("astro_session_token") : "";
 
     const response = await fetch(`${API_BASE_URL}/ai/event-map/generate`, {
       method: "POST",

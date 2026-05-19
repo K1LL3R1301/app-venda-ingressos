@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
@@ -170,8 +170,8 @@ export default function AdminValidationPage() {
   const resultTheme = useMemo(() => getResultTheme(result), [result]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const rawUser = localStorage.getItem("user");
+    const token = sessionStorage.getItem("astro_session_token");
+    const rawUser = sessionStorage.getItem("astro_session_user");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -214,7 +214,7 @@ export default function AdminValidationPage() {
   async function handleValidate(e: FormEvent) {
     e.preventDefault();
 
-    const authToken = localStorage.getItem("token");
+    const authToken = sessionStorage.getItem("astro_session_token");
     const cleanToken = tokenText.trim();
 
     setError("");

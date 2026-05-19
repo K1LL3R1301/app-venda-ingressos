@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -124,7 +124,7 @@ export default function CustomerSupportThreadPage() {
   const [message, setMessage] = useState("");
 
   async function loadThread(threadIdParam: string, silent = false) {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -182,7 +182,7 @@ export default function CustomerSupportThreadPage() {
   async function handleSendMessage(e: FormEvent) {
     e.preventDefault();
 
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";
@@ -231,7 +231,7 @@ export default function CustomerSupportThreadPage() {
   }
 
   async function handleReopenThread() {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("astro_session_token");
 
     if (!token || token === "undefined") {
       window.location.href = "/login";

@@ -48,7 +48,7 @@ function csv(name: string, rows: (string | number)[][]) { const body = rows.map(
 function useData(): Data {
   const [data, setData] = useState<Data>({ user: null, organizers: [], events: [], orders: [], assignments: [], loading: true, error: "", assignmentsOk: true });
   useEffect(() => { (async () => {
-    const token = localStorage.getItem("token"); const raw = localStorage.getItem("user");
+    const token = sessionStorage.getItem("astro_session_token"); const raw = sessionStorage.getItem("astro_session_user");
     if (!token || token === "undefined") { window.location.href = "/login"; return; }
     let user: User | null = null; try { user = raw ? JSON.parse(raw) : null; } catch {}
     if (String(user?.role || "").toUpperCase() !== "SUPER_ADMIN") { setData(d => ({ ...d, user, loading: false, error: "Esta área é exclusiva do SUPER_ADMIN." })); return; }

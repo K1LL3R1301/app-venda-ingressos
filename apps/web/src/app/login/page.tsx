@@ -1,38 +1,37 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { FormEvent, KeyboardEvent, PointerEvent, useEffect, useRef, useState } from "react";
+import { clearAuthSession, setAuthSession } from "../../lib/auth-client";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3001/v1";
+
+type ApiUser = {
+  id?: string;
+  sub?: string;
+  name?: string;
+  email?: string;
+  cpf?: string;
+  role?: string;
+  status?: string;
+  authProvider?: string;
+};
 
 type LoginResponse = {
   accessToken?: string;
   access_token?: string;
   token?: string;
   jwt?: string;
-  user?: {
-    id: string;
-    name?: string;
-    email?: string;
-    cpf?: string;
-    role?: string;
-    status?: string;
-    authProvider?: string;
-  };
+  user?: ApiUser;
   data?: {
     accessToken?: string;
     access_token?: string;
     token?: string;
     jwt?: string;
-    user?: {
-      id: string;
-      name?: string;
-      email?: string;
-      cpf?: string;
-      role?: string;
-      status?: string;
-      authProvider?: string;
-    };
+    user?: ApiUser;
   };
-  message?: string;
+  message?: string | string[];
 };
 
 function onlyDigits(value: string) {
@@ -54,34 +53,73 @@ function formatCpf(value: string) {
   )}-${digits.slice(9, 11)}`;
 }
 
+function getMessage(data: LoginResponse) {
+  if (Array.isArray(data.message)) return data.message.join(" ");
+  if (typeof data.message === "string") return data.message;
+
+  return "Nao foi possivel entrar. Confira CPF, senha e se a API esta rodando.";
+}
+
+function getToken(data: LoginResponse) {
+  return (
+    data.access_token ||
+    data.accessToken ||
+    data.token ||
+    data.jwt ||
+    data.data?.access_token ||
+    data.data?.accessToken ||
+    data.data?.token ||
+    data.data?.jwt ||
+    ""
+  );
+}
+
 export default function LoginPage() {
+  const submittingRef = useRef(false);
   const [cpf, setCpf] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("Pronto para login.");
+  const [errorMessage, setErrorMessage] = useState("");
 
-  function getDefaultRedirectPath() {
-    return "/dashboard";
+  useEffect(() => {
+    clearAuthSession();
+    setStatusMessage("Sessao antiga limpa. Clique em Entrar ou pressione Enter.");
+  }, []);
+
+  function finishWithError(status: string, message: string) {
+    submittingRef.current = false;
+    setLoading(false);
+    setStatusMessage(status);
+    setErrorMessage(message);
   }
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
+  async function runLogin(origin: string) {
+    if (submittingRef.current) {
+      setStatusMessage(`Login ja esta em andamento (${origin}).`);
+      return;
+    }
+
+    submittingRef.current = true;
+    setErrorMessage("");
 
     const cpfDigits = onlyDigits(cpf);
 
     if (cpfDigits.length !== 11) {
-      alert("Informe um CPF válido com 11 dígitos");
+      finishWithError("CPF invalido.", "Informe um CPF valido com 11 digitos.");
       return;
     }
 
     if (!password.trim()) {
-      alert("Informe sua senha");
+      finishWithError("Senha nao informada.", "Informe sua senha.");
       return;
     }
 
     setLoading(true);
+    setStatusMessage(`Clique recebido por ${origin}. Enviando para API...`);
 
     try {
-      const res = await fetch("http://localhost:3001/v1/auth/login", {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -92,57 +130,64 @@ export default function LoginPage() {
         }),
       });
 
-      const rawText = await res.text();
+      setStatusMessage(`API respondeu HTTP ${response.status}. Lendo JSON...`);
 
+      const rawText = await response.text();
       let data: LoginResponse = {};
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        alert("A resposta da API não veio em JSON. Veja o console.");
-        return;
-      }
 
-      if (!res.ok) {
-        alert(
-          typeof data?.message === "string"
-            ? data.message
-            : JSON.stringify(data),
+      try {
+        data = rawText ? (JSON.parse(rawText) as LoginResponse) : {};
+      } catch {
+        finishWithError(
+          "Resposta da API nao e JSON.",
+          "A resposta da API nao veio em JSON. Veja o terminal da API.",
         );
         return;
       }
 
-      const token =
-        data.access_token ||
-        data.accessToken ||
-        data.token ||
-        data.jwt ||
-        data?.data?.access_token ||
-        data?.data?.accessToken ||
-        data?.data?.token ||
-        data?.data?.jwt;
-
-      const user = data.user || data?.data?.user;
-
-      if (!token || typeof token !== "string") {
-        alert(`Token não retornado pela API: ${JSON.stringify(data)}`);
+      if (!response.ok) {
+        finishWithError("Login recusado pela API.", getMessage(data));
         return;
       }
 
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
+      const token = getToken(data);
+      const user = data.user || data.data?.user;
 
-      localStorage.setItem("token", token);
-
-      if (user) {
-        localStorage.setItem("user", JSON.stringify(user));
+      if (!token || typeof token !== "string") {
+        finishWithError(
+          "Token nao retornado pela API.",
+          `Token nao retornado pela API: ${JSON.stringify(data)}`,
+        );
+        return;
       }
 
-      window.location.href = getDefaultRedirectPath();
-    } catch (err) {
-      console.error("LOGIN ERROR:", err);
-      alert("Erro na conexão com a API");
-    } finally {
-      setLoading(false);
+      setAuthSession(token, user);
+
+      setStatusMessage("Login OK. Sessao salva. Indo para /dashboard...");
+      window.location.href = "/dashboard";
+    } catch (error) {
+      console.error("LOGIN ERROR:", error);
+      finishWithError(
+        "Erro de conexao com a API.",
+        "Erro na conexao com a API. Confirme se o backend esta rodando na porta 3001.",
+      );
+    }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void runLogin("submit");
+  }
+
+  function handleButtonPointer(event: PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    void runLogin("botao");
+  }
+
+  function handleInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void runLogin("enter");
     }
   }
 
@@ -154,36 +199,51 @@ export default function LoginPage() {
           Entre com seu CPF para acessar a plataforma
         </p>
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold text-blue-700">
+          Status: {statusMessage}
+        </div>
+
+        {errorMessage ? (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
           <input
             type="text"
             inputMode="numeric"
+            autoComplete="username"
             placeholder="CPF"
             className="w-full rounded-xl border p-3"
             value={cpf}
-            onChange={(e) => setCpf(formatCpf(e.target.value))}
+            onChange={(event) => setCpf(formatCpf(event.target.value))}
+            onKeyDown={handleInputKeyDown}
             maxLength={14}
           />
 
           <input
             type="password"
+            autoComplete="current-password"
             placeholder="Senha"
             className="w-full rounded-xl border p-3"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(event) => setPassword(event.target.value)}
+            onKeyDown={handleInputKeyDown}
           />
 
           <button
             type="submit"
+            onPointerDown={handleButtonPointer}
             disabled={loading}
-            className="w-full rounded-xl bg-black p-3 text-white"
+            className="relative z-10 w-full rounded-xl bg-black p-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? "Entrando..." : "Entrar"}
           </button>
         </form>
 
         <div className="mt-6 text-center">
-          <p className="mb-3 text-sm text-gray-600">Ainda não tem conta?</p>
+          <p className="mb-3 text-sm text-gray-600">Ainda nao tem conta?</p>
 
           <Link
             href="/register"
@@ -191,6 +251,10 @@ export default function LoginPage() {
           >
             Criar nova conta
           </Link>
+
+          <p className="mt-4 text-[10px] font-semibold text-gray-400">
+            auth-unified-session-v1
+          </p>
         </div>
       </div>
     </div>

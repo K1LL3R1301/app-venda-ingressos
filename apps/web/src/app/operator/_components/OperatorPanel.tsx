@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
+import { clearAuthSession, getStoredAuthToken, getStoredAuthUser } from "../../../lib/auth-client";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_API_BASE_URL ||
@@ -416,25 +416,17 @@ function useOperatorData(): OperatorData {
 
   useEffect(() => {
     async function load() {
-      const token = localStorage.getItem("token");
-      const rawUser = localStorage.getItem("user");
-
+      const token = getStoredAuthToken();
       if (!token || token === "undefined") {
         window.location.href = "/login";
         return;
       }
 
-      let user: StoredUser | null = null;
-
-      try {
-        user = rawUser ? (JSON.parse(rawUser) as StoredUser) : null;
-      } catch {
-        user = null;
-      }
+      const user = getStoredAuthUser<StoredUser>();
 
       const role = String(user?.role || "").toUpperCase();
 
-      if (!["OPERATOR", "ADMIN", "SUPER_ADMIN"].includes(role)) {
+      if (!["OPERATOR", "SUPER_ADMIN"].includes(role)) {
         setState({
           user,
           assignments: [],
@@ -646,9 +638,7 @@ function Topbar({ user }: { user: StoredUser | null }) {
       : `${pieces[0].slice(0, 1)}${pieces[pieces.length - 1].slice(0, 1)}`.toUpperCase();
 
   function handleLogout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("refreshToken");
-    localStorage.removeItem("user");
+    clearAuthSession();
     window.location.assign("/login");
   }
 
@@ -963,7 +953,7 @@ function EventOverview({
 }) {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const event = getAssignmentEvent(assignment);
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token = getStoredAuthToken();
   const dates = getWorkDates(assignment);
 
   async function respond(workDate: WorkDate, index: number, available: boolean) {
@@ -1102,7 +1092,7 @@ function ValidationSection({
       return;
     }
 
-    const tokenValue = localStorage.getItem("token");
+    const tokenValue = sessionStorage.getItem("astro_session_token");
     let result: ValidationRecord["result"] = "OFFLINE";
     let reason = "Registrado localmente. Integração real de check-in pode ser ligada ao endpoint depois.";
 
