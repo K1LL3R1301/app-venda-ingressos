@@ -1,3 +1,0 @@
-import { OperatorReportsPage } from "../_components/OperatorPanel";
-
-export default OperatorReportsPage;

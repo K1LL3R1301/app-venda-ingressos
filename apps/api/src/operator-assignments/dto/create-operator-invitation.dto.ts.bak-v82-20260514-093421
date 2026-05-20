@@ -1,4 +1,0 @@
-export class CreateOperatorInvitationDto {
-  cpf!: string;
-  message?: string;
-}
