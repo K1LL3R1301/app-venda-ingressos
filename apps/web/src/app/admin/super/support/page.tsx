@@ -26,7 +26,7 @@ function fallbackUser(): StoredUser {
   return { id: "super-local", name: "Suporte Site", email: "super@local.test", role: "SUPER_ADMIN" };
 }
 
-function label(value?: string) {
+function label(value?: string | null) {
   const labels: Record<string, string> = {
     CUSTOMER: "Cliente",
     PRODUCER: "Produtor/Admin",

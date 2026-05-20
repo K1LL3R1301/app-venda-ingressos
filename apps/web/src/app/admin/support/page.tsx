@@ -43,7 +43,7 @@ function authToken() {
   );
 }
 
-function label(value?: string) {
+function label(value?: string | null) {
   const labels: Record<string, string> = {
     CUSTOMER: "Cliente",
     PRODUCER: "Produtor/Admin",
