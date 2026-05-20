@@ -347,16 +347,26 @@ private async astroResolveCommercialForOrder(data: any, subtotal: Prisma.Decimal
     return data.items.reduce((sum, item) => sum + item.quantity, 0);
   }
 
-  private getCancellationConfig(mode?: string) {
-    // Regra atual do projeto: todo reembolso cai como crédito de 80% na wallet.
-    // Reembolso bancário fica para uma etapa futura da Wallet.
+    private getCancellationConfig(mode?: string) {
+    const normalizedMode = String(mode || 'WALLET_80').toUpperCase();
+
+    if (normalizedMode === 'REFUND_60') {
+      return {
+        mode: 'REFUND_60',
+        percent: new Prisma.Decimal(0.6),
+        cancellationStatus: 'REFUND_REQUESTED',
+        createWalletCredit: false,
+      };
+    }
+
     return {
       mode: 'WALLET_80',
-      percent: new Prisma.Decimal('0.80'),
+      percent: new Prisma.Decimal(0.8),
+      cancellationStatus: 'WALLET_CREDITED',
       createWalletCredit: true,
-      cancellationStatus: 'CREDITED',
     };
   }
+
 
   private isOrderExpired(order: {
     status?: string | null;
