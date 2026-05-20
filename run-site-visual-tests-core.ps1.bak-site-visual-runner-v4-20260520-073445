@@ -1,0 +1,234 @@
+param(
+  [switch] $Headed,
+  [switch] $Audit
+)
+
+$ErrorActionPreference = if ($Audit) { "Continue" } else { "Stop" }
+
+$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$WebRoot = Join-Path $ProjectRoot "apps\web"
+$TestsDir = Join-Path $WebRoot "tests"
+$ReportDir = Join-Path $WebRoot "test-results\reports"
+$Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$ModeName = if ($Headed) { "headed" } else { "headless" }
+$ReportPath = Join-Path $ReportDir "site-visual-report-$ModeName-$Stamp.txt"
+$SummaryPath = Join-Path $ReportDir "site-visual-summary-$ModeName-$Stamp.txt"
+
+function Write-Utf8NoBom {
+  param(
+    [string] $Path,
+    [string] $LiteralPath,
+    [AllowEmptyString()][string] $Content
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    $Path = $LiteralPath
+  }
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    throw "Caminho nao informado para Write-Utf8NoBom."
+  }
+
+  $Dir = [System.IO.Path]::GetDirectoryName($Path)
+  if (![string]::IsNullOrWhiteSpace($Dir) -and ![System.IO.Directory]::Exists($Dir)) {
+    [System.IO.Directory]::CreateDirectory($Dir) | Out-Null
+  }
+
+  $encoding = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
+function Stop-ProcessTree {
+  param([int] $PidToStop)
+
+  try {
+    taskkill.exe /PID $PidToStop /T /F | Out-Null
+  } catch {
+    try {
+      Stop-Process -Id $PidToStop -Force -ErrorAction SilentlyContinue
+    } catch {}
+  }
+}
+
+if (!(Test-Path -LiteralPath $ReportDir)) {
+  New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null
+}
+
+$TranscriptStarted = $false
+$TestExitCode = 0
+$VisualSpecs = @()
+$TimeoutSeconds = if ($Headed) { 900 } else { 600 }
+
+try {
+  Start-Transcript -Path $ReportPath -Force | Out-Null
+  $TranscriptStarted = $true
+
+  Write-Host "[INFO] Projeto: $ProjectRoot"
+  Write-Host "[INFO] Rodando testes visuais do site inteiro"
+  Write-Host "[INFO] Modo: $ModeName"
+  Write-Host "[INFO] Timeout geral: $TimeoutSeconds segundos"
+  Write-Host "[INFO] Relatorio completo sera salvo em:"
+  Write-Host "       $ReportPath"
+  Write-Host ""
+
+  if (!(Test-Path -LiteralPath $WebRoot)) {
+    Write-Host "[ERRO] Pasta web nao encontrada: $WebRoot"
+    $TestExitCode = 1
+    return
+  }
+
+  Set-Location $WebRoot
+
+  $VisualSpecs = Get-ChildItem -Path $TestsDir -Filter "*.visual.spec.ts" -File -ErrorAction SilentlyContinue |
+    Sort-Object FullName |
+    ForEach-Object {
+      $relative = $_.FullName.Substring($WebRoot.Length + 1)
+      $relative.Replace("\", "/")
+    }
+
+  if (!$VisualSpecs -or $VisualSpecs.Count -eq 0) {
+    Write-Host "[ERRO] Nenhum arquivo *.visual.spec.ts encontrado em:" -ForegroundColor Red
+    Write-Host "       $TestsDir" -ForegroundColor Red
+    $TestExitCode = 1
+    return
+  }
+
+  Write-Host "[INFO] Arquivos de teste visual encontrados:"
+  foreach ($Spec in $VisualSpecs) {
+    Write-Host " - $Spec"
+  }
+
+  if (!(Test-Path -LiteralPath (Join-Path $WebRoot "node_modules\@playwright\test"))) {
+    Write-Host "[INFO] Instalando @playwright/test..."
+    npm install -D @playwright/test
+    if ($LASTEXITCODE -ne 0) {
+      $TestExitCode = $LASTEXITCODE
+      Write-Host "[ERRO] Falha ao instalar @playwright/test."
+      return
+    }
+  } else {
+    Write-Host "[OK] @playwright/test ja instalado."
+  }
+
+  Write-Host "[INFO] Conferindo navegador Chromium do Playwright..."
+  npx playwright install chromium
+  if ($LASTEXITCODE -ne 0) {
+    $TestExitCode = $LASTEXITCODE
+    Write-Host "[ERRO] Falha ao instalar/conferir navegador Chromium do Playwright."
+    return
+  }
+
+  $TestArgs = @("playwright", "test")
+  $TestArgs += $VisualSpecs
+  $TestArgs += @(
+    "--project=chromium",
+    "--timeout=30000",
+    "--workers=1",
+    "--reporter=list"
+  )
+
+  if ($Headed) {
+    $TestArgs += "--headed"
+  }
+
+  Write-Host "[INFO] Executando Playwright:"
+  Write-Host "npx $($TestArgs -join ' ')"
+  Write-Host ""
+
+  $process = Start-Process -FilePath "npx.cmd" -ArgumentList $TestArgs -NoNewWindow -PassThru
+  $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+
+  if (!$completed) {
+    Write-Host ""
+    Write-Host "[ERRO] Playwright passou do timeout de $TimeoutSeconds segundos. Vou encerrar o processo." -ForegroundColor Red
+    Stop-ProcessTree -PidToStop $process.Id
+    $TestExitCode = 124
+  } else {
+    $TestExitCode = $process.ExitCode
+  }
+
+  Write-Host ""
+  if ($TestExitCode -eq 0) {
+    Write-Host "[OK] Testes visuais do site finalizados sem falhas."
+  } elseif ($TestExitCode -eq 124) {
+    Write-Host "[ERRO] Testes encerrados por timeout."
+  } else {
+    Write-Host "[ERRO] Testes visuais do site falharam com exit code $TestExitCode."
+  }
+
+  Write-Host ""
+  Write-Host "Screenshots, videos e traces:"
+  Write-Host "  $WebRoot\test-results"
+  Write-Host ""
+  Write-Host "Relatorio HTML:"
+  Write-Host "  cd `"$WebRoot`""
+  Write-Host "  npx playwright show-report"
+} finally {
+  if ($TranscriptStarted) {
+    try {
+      Stop-Transcript | Out-Null
+    } catch {}
+  }
+
+  $Status = if ($TestExitCode -eq 0) {
+    "PASSOU"
+  } elseif ($TestExitCode -eq 124) {
+    "TIMEOUT"
+  } else {
+    "FALHOU"
+  }
+
+  $SpecsText = if ($VisualSpecs -and $VisualSpecs.Count -gt 0) {
+    ($VisualSpecs -join "`r`n - ")
+  } else {
+    "Nenhum spec encontrado"
+  }
+
+  $Summary = @"
+RELATORIO RESUMIDO - TESTES VISUAIS DO SITE
+===========================================
+
+Status final: $Status
+Exit code: $TestExitCode
+Modo: $ModeName
+Timeout geral: $TimeoutSeconds segundos
+Data/hora: $(Get-Date -Format "dd/MM/yyyy HH:mm:ss")
+
+Projeto:
+$ProjectRoot
+
+Web:
+$WebRoot
+
+Arquivos testados:
+ - $SpecsText
+
+Relatorio completo do terminal:
+$ReportPath
+
+Prints, videos e traces:
+$WebRoot\test-results
+
+Relatorio HTML do Playwright:
+cd "$WebRoot"
+npx playwright show-report
+"@
+
+  Write-Utf8NoBom -Path $SummaryPath -Content $Summary
+
+  Write-Host ""
+  Write-Host "[INFO] Relatorio completo salvo em:"
+  Write-Host "       $ReportPath"
+  Write-Host "[INFO] Resumo salvo em:"
+  Write-Host "       $SummaryPath"
+
+  try {
+    Start-Process notepad.exe $ReportPath
+  } catch {
+    Write-Host "[AVISO] Nao consegui abrir o Bloco de Notas automaticamente."
+  }
+}
+
+if (!$Audit -and $TestExitCode -ne 0) {
+  throw "Testes visuais do site nao passaram. Relatorio completo: $ReportPath"
+}

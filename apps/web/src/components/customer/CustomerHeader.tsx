@@ -174,6 +174,8 @@ export default function CustomerHeader({
     { label: "Eventos globais", href: "/admin/super/events" },
     { label: "Pedidos globais", href: "/admin/super/orders" },
     { label: "Receita global", href: "/admin/super/finance" },
+    { label: "Suporte técnico", href: "/admin/super/support" },
+    { label: "Wallet Admin", href: "/admin/wallet" },
     { label: "Operadores globais", href: "/admin/super/operators" },
     { label: "Taxas por produtor", href: "/admin/super/fees" },
     { label: "Meu painel admin", href: "/admin/dashboard" },
@@ -191,6 +193,7 @@ export default function CustomerHeader({
     { label: "Impulsionar evento", href: "/admin/boosts" },
     { label: "Pedidos", href: "/admin/orders" },
     { label: "Financeiro", href: "/admin/finance" },
+    { label: "Wallet", href: "/admin/wallet" },
     { label: "Operadores", href: "/admin/operators" },
     { label: "Promoters e cupons", href: "/admin/promoters" },
     { label: "Suporte", href: "/admin/support" },
@@ -452,6 +455,15 @@ export default function CustomerHeader({
                 </a>
               ))
             : null}
+          {isAdminArea && isAdmin ? (
+            <a
+              href="/admin/wallet"
+              className="whitespace-nowrap text-sm font-black text-[#19002f]/85 transition hover:text-[#19002f]"
+            >
+              Wallet
+            </a>
+          ) : null}
+
         </nav>
 
         <div className="relative shrink-0">

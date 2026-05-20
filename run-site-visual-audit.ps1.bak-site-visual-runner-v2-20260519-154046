@@ -1,0 +1,28 @@
+$ErrorActionPreference = "Continue"
+
+$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$WebRoot = Join-Path $ProjectRoot "apps\web"
+
+Write-Host "[INFO] Projeto: $ProjectRoot"
+Write-Host "[INFO] Rodando auditoria visual do site inteiro"
+
+Set-Location $WebRoot
+
+if (!(Test-Path -LiteralPath (Join-Path $WebRoot "node_modules\@playwright\test"))) {
+  Write-Host "[INFO] Instalando @playwright/test..."
+  npm install -D @playwright/test
+}
+
+Write-Host "[INFO] Conferindo navegador Chromium do Playwright..."
+npx playwright install chromium
+
+Write-Host "[INFO] Executando auditoria visual em modo headed..."
+npx playwright test tests/*.visual.spec.ts --headed --project=chromium
+
+Write-Host ""
+Write-Host "[INFO] Auditoria finalizada. Mesmo se houver falhas, veja:"
+Write-Host "  $WebRoot\test-results"
+Write-Host ""
+Write-Host "Para abrir relatorio:"
+Write-Host "  cd `"$WebRoot`""
+Write-Host "  npx playwright show-report"

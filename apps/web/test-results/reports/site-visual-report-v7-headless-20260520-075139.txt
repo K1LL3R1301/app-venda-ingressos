@@ -1,0 +1,85 @@
+﻿**********************
+Início da transcrição do Windows PowerShell
+Hora de início: 20260520075139
+Nome de Usuário: GABRIEL\march
+Executar como Usuário: GABRIEL\march
+Nome da Configuração: 
+Computador: GABRIEL (Microsoft Windows NT 10.0.26200.0)
+Aplicativo Host: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File .\run-site-visual-tests.ps1
+ID do Processo: 1076
+PSVersion: 5.1.26100.8457
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.8457
+BuildVersion: 10.0.26100.8457
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+[INFO] Projeto: C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos
+[INFO] Runner visual V7
+[INFO] Modo: headless
+[INFO] Timeout geral da execucao: 180 segundos
+[INFO] Relatorio completo:
+       C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\reports\site-visual-report-v7-headless-20260520-075139.txt
+
+[INFO] Arquivos de teste visual encontrados:
+ - tests/site-critical-flows.visual.spec.ts
+ - tests/site-wide-routes.visual.spec.ts
+ - tests/support-linked-flow.visual.spec.ts
+[OK] @playwright/test ja instalado.
+[INFO] Conferindo navegador Chromium do Playwright...
+
+[OK] Site ja esta respondendo em http://localhost:3000
+
+============================================================
+[INFO] Rodando suite visual completa
+[INFO] Output isolado: C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\playwright-output\20260520-075139-site-all-visual
+[INFO] Comando: C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\node_modules\.bin\playwright.cmd test --config=playwright.local.config.ts --project=chromium --timeout=25000 --global-timeout=180000 --workers=1 --reporter=list --output=C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\playwright-output\20260520-075139-site-all-visual
+============================================================
+
+[SAIDA DO PLAYWRIGHT]
+
+Running 23 tests using 1 worker
+
+  ✓   1 [chromium] › tests\site-critical-flows.visual.spec.ts:24:7 › visual: fluxos criticos fora do suporte › admin wallet abre e mostra resumo financeiro sem crash (7.1s)
+  ✓   2 [chromium] › tests\site-critical-flows.visual.spec.ts:44:7 › visual: fluxos criticos fora do suporte › login aparece limpo sem sessão (1.3s)
+  ✓   3 [chromium] › tests\site-critical-flows.visual.spec.ts:66:7 › visual: fluxos criticos fora do suporte › menu principal do admin nao quebra (7.7s)
+  ✓   4 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › login abre sem erro visual (1.4s)
+  ✓   5 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › customer-dashboard abre sem erro visual (1.3s)
+  ✓   6 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › customer-orders abre sem erro visual (1.3s)
+  ✓   7 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › customer-wallet abre sem erro visual (1.4s)
+  ✓   8 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › customer-support abre sem erro visual (1.4s)
+  ✓   9 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-dashboard abre sem erro visual (1.6s)
+  ✓  10 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-events abre sem erro visual (1.3s)
+  ✓  11 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-events-new abre sem erro visual (1.5s)
+  ✓  12 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-orders abre sem erro visual (1.5s)
+  ✓  13 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-operators abre sem erro visual (1.5s)
+  ✓  14 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-wallet abre sem erro visual (6.9s)
+  ✓  15 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-support abre sem erro visual (1.4s)
+  ✓  16 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-support-test-lab abre sem erro visual (1.4s)
+  ✓  17 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › super-admin-support abre sem erro visual (1.4s)
+  ✓  18 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › operator-dashboard abre sem erro visual (1.3s)
+  ✓  19 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › operator-wallet abre sem erro visual (1.4s)
+  ✓  20 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › operator-support abre sem erro visual (1.5s)
+  ✓  21 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › operator-checkin abre sem erro visual (1.3s)
+  ✓  22 [chromium] › tests\support-linked-flow.visual.spec.ts:57:5 › visual: laboratorio cria, encaminha, devolve e resolve o suporte interligado (2.4s)
+  ✓  23 [chromium] › tests\support-linked-flow.visual.spec.ts:123:5 › visual: paginas reais enxergam o mesmo chamado e o Super Admin devolve ao operador (2.3s)
+
+  23 passed (53.9s)
+
+[AVISO] Playwright retornou exit code 1, mas o resumo mostra todos os testes passando.
+[OK] Vou considerar como sucesso porque o log contem apenas resumo de passed.
+
+[OK] Suite visual passou.
+
+Prints, videos, traces e relatorios:
+  C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results
+
+Relatorio HTML:
+  cd "C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web"
+  npx playwright show-report
+**********************
+Fim da transcrição do Windows PowerShell
+Hora de término: 20260520075235
+**********************

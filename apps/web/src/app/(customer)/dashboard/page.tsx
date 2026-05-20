@@ -223,6 +223,39 @@ function formatDate(value?: string | null) {
   });
 }
 
+function formatLocationValue(value: unknown) {
+  if (!value) return "Local não informado";
+
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value || "").trim() || "Local não informado";
+  }
+
+  if (typeof value === "object") {
+    const item = value as {
+      venueName?: string | null;
+      name?: string | null;
+      addressLine1?: string | null;
+      neighborhood?: string | null;
+      city?: string | null;
+      state?: string | null;
+      mode?: string | null;
+    };
+
+    const parts = [
+      item.venueName || item.name,
+      item.addressLine1,
+      item.neighborhood,
+      [item.city, item.state].filter(Boolean).join(" - "),
+      item.mode,
+    ]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean);
+
+    return parts.length ? parts.join(" • ") : "Local não informado";
+  }
+
+  return String(value || "Local não informado");
+}
 function normalizeText(value?: string | null) {
   return String(value || "")
     .normalize("NFD")

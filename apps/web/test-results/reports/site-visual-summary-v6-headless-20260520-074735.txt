@@ -1,0 +1,27 @@
+RELATORIO RESUMIDO - TESTES VISUAIS DO SITE
+===========================================
+
+Status final: FALHOU
+Exit code: 1
+Modo: headless
+Timeout por spec: 120 segundos
+Data/hora: 20/05/2026 07:48:32
+
+Projeto:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos
+
+Web:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web
+
+Resultado por spec:
+ - FALHOU - tests/site-critical-flows.visual.spec.ts - exit code 1
+
+Relatorio completo do terminal:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\reports\site-visual-report-v6-headless-20260520-074735.txt
+
+Prints, videos e traces:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results
+
+Relatorio HTML do Playwright:
+cd "C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web"
+npx playwright show-report

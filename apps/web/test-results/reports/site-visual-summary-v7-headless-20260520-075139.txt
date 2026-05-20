@@ -1,0 +1,35 @@
+RELATORIO RESUMIDO - TESTES VISUAIS DO SITE
+===========================================
+
+Status final: PASSOU
+Exit code: 0
+Modo: headless
+Timeout geral: 180 segundos
+Data/hora: 20/05/2026 07:52:35
+
+Projeto:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos
+
+Web:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web
+
+Arquivos testados:
+ - tests/site-critical-flows.visual.spec.ts
+ - tests/site-wide-routes.visual.spec.ts
+ - tests/support-linked-flow.visual.spec.ts
+
+Relatorio completo do terminal:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\reports\site-visual-report-v7-headless-20260520-075139.txt
+
+Saida bruta do Playwright:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\reports\site-visual-v7-20260520-075139.out.txt
+
+Erros brutos do Playwright:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\reports\site-visual-v7-20260520-075139.err.txt
+
+Prints, videos e traces:
+C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results
+
+Relatorio HTML do Playwright:
+cd "C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web"
+npx playwright show-report

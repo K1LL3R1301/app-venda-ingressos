@@ -119,6 +119,14 @@ export class OrdersController {
     return this.ordersService.findByEvent(eventId);
   }
 
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('admin-scope')
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  findAdminScope() {
+    return this.ordersService.findAll();
+  }
+
   @Get(':id')
   findById(@Param('id') id: string) {
     return this.ordersService.findById(id);

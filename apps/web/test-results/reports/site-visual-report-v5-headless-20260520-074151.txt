@@ -1,0 +1,62 @@
+﻿**********************
+Início da transcrição do Windows PowerShell
+Hora de início: 20260520074151
+Nome de Usuário: GABRIEL\march
+Executar como Usuário: GABRIEL\march
+Nome da Configuração: 
+Computador: GABRIEL (Microsoft Windows NT 10.0.26200.0)
+Aplicativo Host: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File .\run-site-visual-tests.ps1
+ID do Processo: 8892
+PSVersion: 5.1.26100.8457
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.8457
+BuildVersion: 10.0.26100.8457
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+[INFO] Projeto: C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos
+[INFO] Runner visual V5
+[INFO] Modo: headless
+[INFO] Timeout por arquivo spec: 120 segundos
+[INFO] Relatorio completo:
+       C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\reports\site-visual-report-v5-headless-20260520-074151.txt
+
+[INFO] Arquivos de teste visual encontrados:
+ - tests/site-critical-flows.visual.spec.ts
+ - tests/site-wide-routes.visual.spec.ts
+ - tests/support-linked-flow.visual.spec.ts
+[OK] @playwright/test ja instalado.
+[INFO] Conferindo navegador Chromium do Playwright...
+
+[OK] Site ja esta respondendo em http://localhost:3000
+
+============================================================
+[INFO] Rodando spec: tests/site-critical-flows.visual.spec.ts
+[INFO] Comando: C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\node_modules\.bin\playwright.cmd test tests/site-critical-flows.visual.spec.ts --config=playwright.local.config.ts --project=chromium --timeout=25000 --global-timeout=110000 --workers=1 --reporter=list --max-failures=1
+============================================================
+[ERRO] Spec falhou: tests/site-critical-flows.visual.spec.ts - exit code
+
+[SAIDA DO SPEC]
+[31mTimed out waiting 110s for the clear output to run[39m
+[31mTimed out waiting 110s for the teardown for apply rebaselines to run[39m
+
+[INFO] Parando no primeiro erro porque nao esta em modo auditoria.
+
+============================================================
+[RESUMO DOS SPECS]
+ - FALHOU - tests/site-critical-flows.visual.spec.ts - exit code
+============================================================
+[ERRO] Pelo menos um spec falhou.
+
+Prints, videos, traces e relatorios:
+  C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results
+
+Relatorio HTML:
+  cd "C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web"
+  npx playwright show-report
+**********************
+Fim da transcrição do Windows PowerShell
+Hora de término: 20260520074343
+**********************

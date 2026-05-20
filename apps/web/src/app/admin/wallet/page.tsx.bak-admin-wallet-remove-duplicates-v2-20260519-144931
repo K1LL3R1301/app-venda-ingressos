@@ -1,0 +1,935 @@
+// @ts-nocheck
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  getStoredAuthToken,
+  getStoredAuthUser,
+} from "../../../lib/auth-client";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ||
+  "http://localhost:3001/v1";
+
+type StoredUser = {
+  id?: string;
+  sub?: string;
+  name?: string;
+  email?: string;
+  cpf?: string;
+  role?: string;
+};
+
+type EventItem = {
+  id: string;
+  name?: string;
+  title?: string;
+  eventDate?: string;
+  startDate?: string;
+  endDate?: string;
+  status?: string;
+  city?: string;
+  location?: string;
+  venue?: string;
+  organizerId?: string;
+  organizer?: {
+    id?: string;
+    name?: string;
+    email?: string;
+    ownerUserId?: string;
+    document?: string;
+  };
+  [key: string]: any;
+};
+
+type OrderItem = {
+  id: string;
+  eventId?: string;
+  event?: EventItem;
+  status?: string;
+  totalAmount?: number | string;
+  grossAmount?: number | string;
+  paidAmount?: number | string;
+  amount?: number | string;
+  paymentStatus?: string;
+  createdAt?: string;
+  customerName?: string;
+  customerEmail?: string;
+  [key: string]: any;
+};
+
+type OperatorAssignment = {
+  id: string;
+  protocol?: string;
+  eventId?: string;
+  event?: EventItem;
+  eventTitle?: string;
+  eventName?: string;
+  operatorName?: string;
+  operatorEmail?: string;
+  operatorCpf?: string;
+  paymentStatus?: string;
+  status?: string;
+  workDates?: Array<{
+    id?: string;
+    date?: string;
+    startTime?: string;
+    endTime?: string;
+    amount?: number | string;
+    functions?: string;
+    available?: boolean | null;
+    status?: string;
+  }>;
+  [key: string]: any;
+};
+
+type SettlementRecord = {
+  id: string;
+  eventId: string;
+  eventName: string;
+  grossSales: number;
+  operatorReserve: number;
+  boostReserve: number;
+  siteFeeReserve: number;
+  adminAvailableAfterClose: number;
+  createdAt: string;
+  createdBy?: string;
+  status: "PROVISIONED";
+};
+
+type EventWalletSummary = {
+  event: EventItem;
+  grossSales: number;
+  paidOrders: OrderItem[];
+  operatorReserve: number;
+  operatorAlreadyPaid: number;
+  operatorPending: number;
+  operators: OperatorAssignment[];
+  boostReserve: number;
+  siteFeeReserve: number;
+  adminAvailableAfterClose: number;
+  settlement?: SettlementRecord | null;
+};
+
+const SETTLEMENT_STORAGE_KEY = "astro_admin_wallet_settlements_v1";
+const BOOST_STORAGE_KEY = "astro_admin_wallet_boosts_v1";
+
+function normalizeText(value?: string | number | null) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function toNumber(value?: string | number | null) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const parsed = Number(
+    String(value ?? "0")
+      .replace(/[^\d,.-]/g, "")
+      .replace(/\./g, "")
+      .replace(",", "."),
+  );
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function money(value?: string | number | null) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(toNumber(value));
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "Data não informada";
+
+  const safeValue = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value;
+  const date = new Date(safeValue);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function eventName(event?: EventItem | null) {
+  return event?.name || event?.title || "Evento sem nome";
+}
+
+function eventDate(event?: EventItem | null) {
+  return event?.eventDate || event?.startDate || event?.date || "";
+}
+
+function eventLocation(event?: EventItem | null) {
+  return event?.location || event?.venue || event?.city || "Local não informado";
+}
+
+function orderEventId(order: OrderItem) {
+  return String(order.eventId || order.event?.id || "");
+}
+
+function orderIsPaid(order: OrderItem) {
+  const status = normalizeText(order.status || order.paymentStatus);
+
+  return ["paid", "pago", "approved", "aprovado", "confirmed", "confirmado", "completed"].includes(status);
+}
+
+function orderAmount(order: OrderItem) {
+  return toNumber(order.totalAmount ?? order.paidAmount ?? order.grossAmount ?? order.amount ?? 0);
+}
+
+function assignmentEventId(assignment: OperatorAssignment) {
+  return String(assignment.eventId || assignment.event?.id || "");
+}
+
+function workDateAccepted(workDate: any) {
+  const status = normalizeText(workDate?.status);
+
+  return workDate?.available === true || ["available", "accepted", "confirmed"].includes(status);
+}
+
+function assignmentWorkValue(assignment: OperatorAssignment) {
+  const dates = Array.isArray(assignment.workDates) ? assignment.workDates : [];
+
+  return dates.reduce((sum, workDate) => {
+    if (!workDateAccepted(workDate)) return sum;
+
+    return sum + toNumber(workDate.amount);
+  }, 0);
+}
+
+function assignmentPaymentPaid(assignment: OperatorAssignment) {
+  const status = normalizeText(assignment.paymentStatus);
+
+  return ["paid", "pago", "settled", "liquidado"].includes(status);
+}
+
+function loadJson<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+
+  try {
+    const raw = localStorage.getItem(key);
+
+    if (!raw) return fallback;
+
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJson<T>(key: string, value: T) {
+  if (typeof window === "undefined") return;
+
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function makeSettlementId(eventId: string) {
+  return `ASTRO-ADMIN-WALLET-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${eventId.slice(0, 6).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+async function fetchJson(path: string, token?: string | null) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: token
+      ? {
+          Authorization: `Bearer ${token}`,
+        }
+      : undefined,
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.message || `Erro ao carregar ${path}`);
+  }
+
+  return data;
+}
+
+export default function AdminWalletPage() {
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [orders, setOrders] = useState<OrderItem[]>([]);
+  const [assignments, setAssignments] = useState<OperatorAssignment[]>([]);
+  const [settlements, setSettlements] = useState<SettlementRecord[]>([]);
+  const [boosts, setBoosts] = useState<Record<string, number>>({});
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  async function load() {
+    const token = getStoredAuthToken();
+
+    if (!token || token === "undefined") {
+      window.location.assign("/login");
+      return;
+    }
+
+    setLoading(true);
+    setLoadError("");
+
+    try {
+      const storedUser = getStoredAuthUser<StoredUser>();
+      setUser(storedUser);
+
+      const [eventsData, ordersData, assignmentsData] = await Promise.all([
+        fetchJson("/events/admin-scope", token).catch(() => fetchJson("/events", token)),
+        fetchJson("/orders", token),
+        fetchJson("/operator-assignments", token).catch(() => []),
+      ]);
+
+      const nextEvents = Array.isArray(eventsData)
+        ? eventsData
+        : Array.isArray(eventsData?.items)
+          ? eventsData.items
+          : [];
+
+      const nextOrders = Array.isArray(ordersData)
+        ? ordersData
+        : Array.isArray(ordersData?.items)
+          ? ordersData.items
+          : [];
+
+      const nextAssignments = Array.isArray(assignmentsData)
+        ? assignmentsData
+        : Array.isArray(assignmentsData?.items)
+          ? assignmentsData.items
+          : [];
+
+      setEvents(nextEvents);
+      setOrders(nextOrders);
+      setAssignments(nextAssignments);
+      setSettlements(loadJson<SettlementRecord[]>(SETTLEMENT_STORAGE_KEY, []));
+      setBoosts(loadJson<Record<string, number>>(BOOST_STORAGE_KEY, {}));
+    } catch (error) {
+      console.error(error);
+      setLoadError(error instanceof Error ? error.message : "Não foi possível carregar a wallet.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const summaries = useMemo<EventWalletSummary[]>(() => {
+    return events.map((event) => {
+      const eventId = String(event.id);
+      const eventOrders = orders.filter((order) => orderEventId(order) === eventId && orderIsPaid(order));
+      const eventAssignments = assignments.filter((assignment) => assignmentEventId(assignment) === eventId);
+      const grossSales = eventOrders.reduce((sum, order) => sum + orderAmount(order), 0);
+      const operatorReserve = eventAssignments.reduce((sum, assignment) => sum + assignmentWorkValue(assignment), 0);
+      const operatorAlreadyPaid = eventAssignments
+        .filter(assignmentPaymentPaid)
+        .reduce((sum, assignment) => sum + assignmentWorkValue(assignment), 0);
+      const operatorPending = Math.max(0, operatorReserve - operatorAlreadyPaid);
+      const boostReserve = toNumber(boosts[eventId] || 0);
+      const siteFeeReserve = 0;
+      const adminAvailableAfterClose = Math.max(0, grossSales - operatorReserve - boostReserve);
+      const settlement = settlements.find((item) => item.eventId === eventId) || null;
+
+      return {
+        event,
+        grossSales,
+        paidOrders: eventOrders,
+        operatorReserve,
+        operatorAlreadyPaid,
+        operatorPending,
+        operators: eventAssignments,
+        boostReserve,
+        siteFeeReserve,
+        adminAvailableAfterClose,
+        settlement,
+      };
+    });
+  }, [events, orders, assignments, settlements, boosts]);
+
+  const filteredSummaries = useMemo(() => {
+    const term = normalizeText(search);
+
+    return summaries.filter((summary) => {
+      if (!term) return true;
+
+      return normalizeText(
+        `${eventName(summary.event)} ${eventLocation(summary.event)} ${summary.event.id}`,
+      ).includes(term);
+    });
+  }, [summaries, search]);
+
+  const selectedSummary = useMemo(() => {
+    if (!selectedEventId) return null;
+
+    return summaries.find((summary) => summary.event.id === selectedEventId) || null;
+  }, [selectedEventId, summaries]);
+
+  const visibleSummaries = useMemo(() => {
+    if (!selectedEventId) return summaries;
+
+    return selectedSummary ? [selectedSummary] : [];
+  }, [selectedEventId, selectedSummary, summaries]);
+
+  const totals = useMemo(() => {
+    return visibleSummaries.reduce(
+      (acc, summary) => {
+        acc.grossSales += summary.grossSales;
+        acc.operatorReserve += summary.operatorReserve;
+        acc.operatorPending += summary.operatorPending;
+        acc.boostReserve += summary.boostReserve;
+        acc.siteFeeReserve += summary.siteFeeReserve;
+        acc.adminAvailableAfterClose += summary.adminAvailableAfterClose;
+        acc.closed += summary.settlement ? 1 : 0;
+        acc.open += summary.settlement ? 0 : 1;
+        acc.events += 1;
+        return acc;
+      },
+      {
+        grossSales: 0,
+        operatorReserve: 0,
+        operatorPending: 0,
+        boostReserve: 0,
+        siteFeeReserve: 0,
+        adminAvailableAfterClose: 0,
+        closed: 0,
+        open: 0,
+        events: 0,
+      },
+    );
+  }, [visibleSummaries]);
+
+  function updateBoost(eventId: string, value: string) {
+    const nextBoosts = {
+      ...boosts,
+      [eventId]: Math.max(0, toNumber(value)),
+    };
+
+    setBoosts(nextBoosts);
+    saveJson(BOOST_STORAGE_KEY, nextBoosts);
+  }
+
+  function closeEvent(summary: EventWalletSummary) {
+    if (summary.settlement) {
+      alert("Este evento já foi fechado na wallet.");
+      return;
+    }
+
+    if (!confirm(`Encerrar financeiro do evento "${eventName(summary.event)}"?\n\nIsso vai registrar as reservas de equipe e separar o que pertence ao produtor e ao site.`)) {
+      return;
+    }
+
+    const record: SettlementRecord = {
+      id: makeSettlementId(summary.event.id),
+      eventId: summary.event.id,
+      eventName: eventName(summary.event),
+      grossSales: summary.grossSales,
+      operatorReserve: summary.operatorReserve,
+      boostReserve: summary.boostReserve,
+      siteFeeReserve: summary.siteFeeReserve,
+      adminAvailableAfterClose: summary.adminAvailableAfterClose,
+      createdAt: new Date().toISOString(),
+      createdBy: user?.email || user?.name || "Admin",
+      status: "PROVISIONED",
+    };
+
+    const next = [record, ...settlements];
+
+    setSettlements(next);
+    saveJson(SETTLEMENT_STORAGE_KEY, next);
+    alert("Evento fechado na wallet admin. Nesta primeira versão, o fechamento fica registrado localmente. A próxima etapa será ligar isso no saldo real da wallet operator e da wallet do site.");
+  }
+
+  function undoSettlement(summary: EventWalletSummary) {
+    if (!summary.settlement) return;
+
+    if (!confirm("Desfazer este fechamento local da wallet?")) {
+      return;
+    }
+
+    const next = settlements.filter((item) => item.id !== summary.settlement?.id);
+
+    setSettlements(next);
+    saveJson(SETTLEMENT_STORAGE_KEY, next);
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-slate-100 text-slate-950">
+        <section className="mx-auto max-w-7xl px-4 py-8">
+          <div className="rounded-[30px] border border-slate-200 bg-white p-8 shadow-sm">
+            <p className="font-black text-slate-600">Carregando wallet admin...</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <main className="min-h-screen bg-slate-100 text-slate-950">
+        <section className="mx-auto max-w-7xl px-4 py-8">
+          <div className="rounded-[30px] border border-rose-200 bg-rose-50 p-8 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-rose-600">Erro</p>
+            <h1 className="mt-3 text-3xl font-black text-rose-950">{loadError}</h1>
+            <button
+              type="button"
+              onClick={load}
+              className="mt-6 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-100 text-slate-950">
+
+      <section className="mx-auto max-w-7xl space-y-6 px-4 py-8">
+        <section className="grid gap-5 rounded-[34px] bg-slate-950 p-8 text-white shadow-sm lg:grid-cols-[1.5fr_1fr]">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.34em] text-orange-300">
+              Wallet Admin
+            </p>
+            <h1 className="mt-4 text-5xl font-black leading-tight">
+              Receitas dos eventos, reservas e repasses.
+            </h1>
+            <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/75">
+              O valor dos ingressos fica primeiro na wallet do admin. Ao encerrar o evento, os operadores aceitos são pagos automaticamente e o restante fica disponível para o produtor.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <HeroMetric label={selectedEventId ? "Receita do evento" : "Receita na wallet"} value={money(totals.grossSales)} />
+            <HeroMetric label="Valor real produtor" value={money(totals.adminAvailableAfterClose)} />
+            <HeroMetric label={selectedEventId ? "Evento selecionado" : "Eventos filtrados"} value={String(selectedEventId ? 1 : totals.events)} />
+            <HeroMetric label="Eventos fechados" value={String(totals.closed)} />
+          </div>
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-4">
+          <Metric label="Vendas pagas" value={money(totals.grossSales)} />
+          <Metric label="Equipe no fechamento" value={money(totals.operatorReserve)} />
+<Metric label="Impulsionamento" value={money(totals.boostReserve)} />
+          <Metric label="Valor real produtor" value={money(totals.adminAvailableAfterClose)} />
+</section>
+
+        <section className="grid gap-6 lg:grid-cols-[360px_1fr]">
+          <aside className="space-y-4">
+            <section className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">
+                    Eventos
+                  </p>
+                  <h2 className="mt-1 text-2xl font-black">Escolher evento</h2>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={load}
+                  className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50"
+                >
+                  Atualizar
+                </button>
+              </div>
+
+              <select
+                value={selectedEventId}
+                onChange={(event) => setSelectedEventId(event.target.value)}
+                className="mt-4 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-orange-500"
+              >
+                <option value="">Todos os eventos</option>
+                {(selectedEventId && selectedSummary ? [selectedSummary] : filteredSummaries).map((summary) => (
+                  <option key={summary.event.id} value={summary.event.id}>
+                    {eventName(summary.event)}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Buscar evento..."
+                className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-orange-500"
+              />
+
+              <div className="mt-4 max-h-[560px] space-y-3 overflow-auto pr-1">
+                {filteredSummaries.length === 0 ? (
+                  <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">
+                    Nenhum evento com movimentação neste filtro.
+                  </div>
+                ) : (
+                  (selectedEventId && selectedSummary ? [selectedSummary] : filteredSummaries).map((summary) => (
+                    <button
+                      key={summary.event.id}
+                      type="button"
+                      onClick={() => setSelectedEventId(summary.event.id)}
+                      className={`w-full rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 ${
+                        selectedEventId === summary.event.id
+                          ? "border-orange-300 bg-orange-50"
+                          : "border-slate-200 bg-slate-50 hover:bg-white"
+                      }`}
+                    >
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                        {summary.settlement ? "Fechado" : "Em aberto"}
+                      </p>
+                      <h3 className="mt-1 text-lg font-black">{eventName(summary.event)}</h3>
+                      <p className="mt-1 text-xs font-bold text-slate-500">
+                        {formatDate(eventDate(summary.event))} • {eventLocation(summary.event)}
+                      </p>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-black">
+                        <span className="rounded-xl bg-white px-3 py-2">
+                          Vendas {money(summary.grossSales)}
+                        </span>
+                        <span className="rounded-xl bg-white px-3 py-2">
+                          Equipe {money(summary.operatorReserve)}
+                        </span>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </section>
+          </aside>
+
+          <section className="space-y-5">
+            {selectedEventId && selectedSummary ? (
+              <EventWalletDetails
+                summary={selectedSummary}
+                onBoostChange={updateBoost}
+                onCloseEvent={closeEvent}
+                onUndoSettlement={undoSettlement}
+              />
+            ) : (
+              <AllEventsWalletDetails summaries={visibleSummaries} totals={totals} />
+            )}
+          </section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function AllEventsWalletDetails({
+  summaries,
+  totals,
+}: {
+  summaries: EventWalletSummary[];
+  totals: {
+    grossSales: number;
+    operatorReserve: number;
+    boostReserve: number;
+    adminAvailableAfterClose: number;
+    open: number;
+    closed: number;
+    events: number;
+    operatorPending?: number;
+    siteFeeReserve?: number;
+  };
+}) {
+  return (
+    <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+        Todos os eventos
+      </p>
+      <h2 className="mt-2 text-3xl font-black">Resumo geral da wallet</h2>
+      <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+        Escolha um evento na lista ao lado para ver apenas os valores dele. Sem escolher evento,
+        esta área soma todos os eventos do produtor.
+      </p>
+
+      <div className="mt-6 grid gap-3 md:grid-cols-4">
+        <BigNumber label="Vendas pagas" value={money(totals.grossSales)} />
+        <BigNumber label="Equipe no fechamento" value={money(totals.operatorReserve)} />
+        <BigNumber label="Impulsionamento" value={money(totals.boostReserve)} />
+        <BigNumber label="Valor real produtor" value={money(totals.adminAvailableAfterClose)} />
+      </div>
+
+      <div className="mt-6 space-y-3">
+        {summaries.length === 0 ? (
+          <div className="rounded-2xl bg-slate-50 p-5 text-center text-sm font-bold text-slate-500">
+            Nenhum evento com venda paga encontrado.
+          </div>
+        ) : (
+          summaries.map((summary) => (
+            <article key={summary.event.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                    {summary.settlement ? "Fechado" : "Em aberto"}
+                  </p>
+                  <h3 className="mt-1 text-lg font-black">{eventName(summary.event)}</h3>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    {formatDate(eventDate(summary.event))} • {eventLocation(summary.event)}
+                  </p>
+                </div>
+
+                <div className="grid min-w-[360px] flex-1 gap-2 md:grid-cols-4">
+                  <MiniValue label="Vendas" value={money(summary.grossSales)} />
+                  <MiniValue label="Equipe" value={money(summary.operatorReserve)} />
+                  <MiniValue label="Impulso" value={money(summary.boostReserve)} />
+                  <MiniValue label="Produtor" value={money(summary.adminAvailableAfterClose)} />
+                </div>
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function EventWalletDetails({
+  summary,
+  onBoostChange,
+  onCloseEvent,
+  onUndoSettlement,
+}: {
+  summary: EventWalletSummary;
+  onBoostChange: (eventId: string, value: string) => void;
+  onCloseEvent: (summary: EventWalletSummary) => void;
+  onUndoSettlement: (summary: EventWalletSummary) => void;
+}) {
+  return (
+    <>
+      <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+              Wallet do evento
+            </p>
+            <h2 className="mt-2 text-3xl font-black">{eventName(summary.event)}</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">
+              {formatDate(eventDate(summary.event))} • {eventLocation(summary.event)}
+            </p>
+          </div>
+
+          <span
+            className={`rounded-full px-4 py-2 text-sm font-black ${
+              summary.settlement
+                ? "bg-emerald-100 text-emerald-800"
+                : "bg-amber-100 text-amber-800"
+            }`}
+          >
+            {summary.settlement ? "Fechado" : "Em aberto"}
+          </span>
+        </div>
+
+        <div className="mt-6 grid gap-3 md:grid-cols-3">
+          <BigNumber label="Entrou na wallet" value={money(summary.grossSales)} />
+          <BigNumber label="Reservado para operadores" value={money(summary.operatorReserve)} />
+          <BigNumber label="Livre para o produtor" value={money(summary.adminAvailableAfterClose)} />
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <label className="text-sm font-black">Valor de impulsionamento deste evento</label>
+            <input
+              disabled={Boolean(summary.settlement)}
+              value={String(summary.boostReserve)}
+              onChange={(event) => onBoostChange(summary.event.id, event.target.value)}
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-orange-500 disabled:opacity-60"
+              placeholder="Ex: 100,00"
+            />
+            <p className="mt-2 text-xs font-semibold text-slate-500">
+              Por enquanto fica manual. Depois ligamos no módulo real de impulsionamento.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600">
+              Destino no encerramento
+            </p>
+            <p className="mt-2 text-sm font-bold leading-6 text-orange-900">
+              Ao encerrar o evento, os operadores aceitos recebem automaticamente na wallet operator. O impulsionamento fica para a wallet do site. O restante fica disponível para o admin/produtor.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          {!summary.settlement ? (
+            <button
+              type="button"
+              onClick={() => onCloseEvent(summary)}
+              className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white"
+            >
+              Encerrar financeiro do evento
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onUndoSettlement(summary)}
+              className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-black text-rose-700"
+            >
+              Desfazer fechamento local
+            </button>
+          )}
+        </div>
+
+        {summary.settlement ? (
+          <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold leading-6 text-emerald-900">
+            Fechado em {formatDateTime(summary.settlement.createdAt)} por {summary.settlement.createdBy || "Admin"}.
+            Protocolo: {summary.settlement.id}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-4">
+        <Metric label="Pedidos pagos" value={String(summary.paidOrders.length)} />
+        <Metric label="Operadores vinculados" value={String(summary.operators.length)} />
+        <Metric label="Equipe automática" value={money(summary.operatorPending)} />
+        <Metric label="Impulsionamento" value={money(summary.boostReserve)} />
+</section>
+
+      <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">
+          Extrato do evento
+        </p>
+        <h3 className="mt-2 text-2xl font-black">Movimentações previstas</h3>
+
+        <div className="mt-5 space-y-3">
+          <LedgerRow title="Receita de ingressos pagos" description="Valor que entra primeiro na wallet admin." value={summary.grossSales} positive />
+          <LedgerRow title="Reserva para equipe operacional" description="Operadores aceitos no evento. Pago automático no fechamento no encerramento." value={summary.operatorReserve} />
+          <LedgerRow title="Impulsionamento" description="Valor previsto para promoção/impulsionamento. Vai para wallet do site." value={summary.boostReserve} />
+<LedgerRow title="Saldo livre do produtor/admin" description="Estimativa após repasses e reservas." value={summary.adminAvailableAfterClose} positive />
+        </div>
+      </section>
+
+      <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">
+          Equipe do evento
+        </p>
+        <h3 className="mt-2 text-2xl font-black">Repasses para operadores</h3>
+
+        <div className="mt-5 space-y-3">
+          {summary.operators.length === 0 ? (
+            <div className="rounded-2xl bg-slate-50 p-5 text-sm font-bold text-slate-500">
+              Nenhum operador vinculado a este evento.
+            </div>
+          ) : (
+            summary.operators.map((assignment) => {
+              const value = assignmentWorkValue(assignment);
+              const paid = assignmentPaymentPaid(assignment);
+
+              return (
+                <article key={assignment.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                        {assignment.protocol || assignment.id}
+                      </p>
+                      <h4 className="mt-1 text-lg font-black">{assignment.operatorName || "Operador"}</h4>
+                      <p className="mt-1 text-sm font-semibold text-slate-500">
+                        {assignment.operatorEmail || assignment.operatorCpf || "sem contato"}
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      <p className="text-xl font-black">{money(value)}</p>
+                      <span
+                        className={`mt-2 inline-flex rounded-full px-3 py-2 text-xs font-black ${
+                          paid ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {paid ? "Já pago" : "Pago automático no fechamento"}
+                      </span>
+                    </div>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function MiniValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-white px-3 py-2">
+      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      <p className="mt-1 text-sm font-black text-slate-950">{value}</p>
+    </div>
+  );
+}
+
+function HeroMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="rounded-[24px] border border-white/10 bg-white/10 p-5">
+      <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/55">{label}</p>
+      <p className="mt-2 text-2xl font-black text-white">{value}</p>
+    </article>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">{label}</p>
+      <p className="mt-2 text-2xl font-black text-slate-950">{value}</p>
+    </article>
+  );
+}
+
+function BigNumber({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+      <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">{label}</p>
+      <p className="mt-2 text-3xl font-black text-slate-950">{value}</p>
+    </article>
+  );
+}
+
+function LedgerRow({
+  title,
+  description,
+  value,
+  positive = false,
+}: {
+  title: string;
+  description: string;
+  value: number;
+  positive?: boolean;
+}) {
+  return (
+    <article className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div>
+        <h4 className="font-black text-slate-950">{title}</h4>
+        <p className="mt-1 text-sm font-semibold text-slate-500">{description}</p>
+      </div>
+
+      <p className={`text-xl font-black ${positive ? "text-emerald-700" : "text-slate-950"}`}>
+        {positive ? "+" : "-"} {money(value)}
+      </p>
+    </article>
+  );
+}

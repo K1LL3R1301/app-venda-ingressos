@@ -1,0 +1,158 @@
+import { expect, test } from "@playwright/test";
+import {
+  collectPageProblems,
+  saveVisualScreenshot,
+  seedSession,
+  seedSupportTicket,
+  VISUAL_TEST_EVENT_ID,
+  VISUAL_TEST_EVENT_NAME,
+  type VisualRole,
+} from "./_helpers/visual-auth";
+
+type RouteCase = {
+  name: string;
+  path: string;
+  role: VisualRole | "PUBLIC";
+  mustHave?: RegExp[];
+};
+
+const routes: RouteCase[] = [
+  {
+    name: "login",
+    path: "/login",
+    role: "PUBLIC",
+    mustHave: [/login|entrar|cpf|senha/i],
+  },
+  {
+    name: "customer-dashboard",
+    path: "/dashboard",
+    role: "CUSTOMER",
+    mustHave: [/dashboard|ingressos|eventos|login|entrar|astro/i],
+  },
+  {
+    name: "customer-orders",
+    path: "/orders",
+    role: "CUSTOMER",
+    mustHave: [/ingressos|pedidos|orders|login|entrar|astro/i],
+  },
+  {
+    name: "customer-wallet",
+    path: "/wallet",
+    role: "CUSTOMER",
+    mustHave: [/wallet|carteira|saldo|astro/i],
+  },
+  {
+    name: "customer-support",
+    path: "/support",
+    role: "CUSTOMER",
+    mustHave: [/suporte|atendimento|chamado|login|entrar|astro/i],
+  },
+  {
+    name: "admin-dashboard",
+    path: "/admin/dashboard",
+    role: "ADMIN",
+    mustHave: [/admin|dashboard|painel|astro/i],
+  },
+  {
+    name: "admin-events",
+    path: "/admin/events",
+    role: "ADMIN",
+    mustHave: [/eventos|evento|admin|login|entrar|astro/i],
+  },
+  {
+    name: "admin-events-new",
+    path: "/admin/events/new",
+    role: "ADMIN",
+    mustHave: [/criar|evento|novo|admin/i],
+  },
+  {
+    name: "admin-orders",
+    path: "/admin/orders",
+    role: "ADMIN",
+    mustHave: [/pedidos|orders|admin|astro/i],
+  },
+  {
+    name: "admin-operators",
+    path: "/admin/operators",
+    role: "ADMIN",
+    mustHave: [/operador|equipe|admin|astro/i],
+  },
+  {
+    name: "admin-wallet",
+    path: "/admin/wallet",
+    role: "ADMIN",
+    mustHave: [/wallet|valor real produtor|vendas pagas|astro/i],
+  },
+  {
+    name: "admin-support",
+    path: "/admin/support",
+    role: "ADMIN",
+    mustHave: [/suporte|chamados|super admin|produtor/i],
+  },
+  {
+    name: "admin-support-test-lab",
+    path: "/admin/support/test-lab",
+    role: "ADMIN",
+    mustHave: [/laboratório|teste do suporte|interligado/i],
+  },
+  {
+    name: "super-admin-support",
+    path: "/admin/super/support",
+    role: "SUPER_ADMIN",
+    mustHave: [/super admin|suporte técnico|chamados/i],
+  },
+  {
+    name: "operator-dashboard",
+    path: "/operator/dashboard",
+    role: "OPERATOR",
+    mustHave: [/operador|agenda|eventos|convites|atenção|atencao|wallet|astro/i],
+  },
+  {
+    name: "operator-wallet",
+    path: "/operator/wallet",
+    role: "OPERATOR",
+    mustHave: [/wallet|carteira|operador|saldo/i],
+  },
+  {
+    name: "operator-support",
+    path: `/operator/support?eventId=${VISUAL_TEST_EVENT_ID}&eventName=${encodeURIComponent(VISUAL_TEST_EVENT_NAME)}`,
+    role: "OPERATOR",
+    mustHave: [/suporte operacional|super admin|responder chamados/i],
+  },
+  {
+    name: "operator-checkin",
+    path: `/operator/checkin?eventId=${VISUAL_TEST_EVENT_ID}&eventName=${encodeURIComponent(VISUAL_TEST_EVENT_NAME)}`,
+    role: "OPERATOR",
+    mustHave: [/check|ingresso|validar|evento/i],
+  },
+];
+
+test.describe("visual: mapa geral de rotas principais", () => {
+  for (const route of routes) {
+    test(`${route.name} abre sem erro visual`, async ({ page }) => {
+      const problems = await collectPageProblems(page);
+
+      if (route.role !== "PUBLIC") {
+        await seedSession(page, route.role);
+        await seedSupportTicket(page);
+      }
+
+      await page.goto(route.path, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(900);
+
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+
+      await saveVisualScreenshot(page, `route-${route.name}`);
+
+      expect.soft(bodyText.trim().length, `${route.name}: body vazio`).toBeGreaterThan(20);
+      expect.soft(bodyText, `${route.name}: não deve ser 404`).not.toMatch(/404|This page could not be found|Página não encontrada/i);
+      expect.soft(bodyText, `${route.name}: não deve mostrar erro de aplicação`).not.toMatch(/Application error|Unhandled Runtime Error|Build error occurred|Hydration failed/i);
+
+      for (const pattern of route.mustHave || []) {
+        expect.soft(bodyText, `${route.name}: texto esperado ${pattern}`).toMatch(pattern);
+      }
+
+      expect.soft(problems, `${route.name}: console/page errors`).toEqual([]);
+    });
+  }
+});

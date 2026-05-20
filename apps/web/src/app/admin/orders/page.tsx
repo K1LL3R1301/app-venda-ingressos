@@ -237,7 +237,10 @@ export default function AdminOrdersPage() {
 
   useEffect(() => {
     async function loadOrders() {
-      const token = sessionStorage.getItem("astro_session_token");
+      const token =
+        sessionStorage.getItem("astro_session_token") ||
+        sessionStorage.getItem("token") ||
+        "";
 
       if (!token || token === "undefined") {
         window.location.href = "/login";
@@ -256,7 +259,9 @@ export default function AdminOrdersPage() {
         const result = await response.json().catch(() => null);
 
         if (!response.ok) {
-          alert(typeof result?.message === "string" ? result.message : "Erro ao carregar pedidos");
+          console.error("Erro ao carregar pedidos admin:", result);
+          setOrders([]);
+          setSelectedOrderId(null);
           return;
         }
 

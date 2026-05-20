@@ -292,6 +292,78 @@ function canUseHtmlTimeLimit(event?: EventItem | null) {
 
   return window.hasCompleteWindow && !window.crossesMidnight;
 }
+
+function getWorkIntervalForEvent(
+  startTime: string,
+  endTime: string,
+  event?: EventItem | null,
+) {
+  const window = getEventTimeWindow(event);
+  const eventStart = timeToMinutes(window.startTime);
+  let start = timeToMinutes(startTime);
+  let end = timeToMinutes(endTime);
+
+  if (start === null || end === null) return null;
+
+  if (window.crossesMidnight && eventStart !== null) {
+    if (start < eventStart) start += 24 * 60;
+    if (end <= start) end += 24 * 60;
+  }
+
+  if (!window.crossesMidnight && end <= start) {
+    return null;
+  }
+
+  return { start, end };
+}
+
+function hasOverlappingWorkPeriods(
+  periods: AssignForm["workDates"],
+  event?: EventItem | null,
+) {
+  const byDate = new Map<string, Array<{ index: number; start: number; end: number }>>();
+
+  periods.forEach((period, index) => {
+    if (!period.date || !period.startTime || !period.endTime) return;
+
+    const interval = getWorkIntervalForEvent(period.startTime, period.endTime, event);
+
+    if (!interval) return;
+
+    const current = byDate.get(period.date) || [];
+
+    current.push({
+      index,
+      start: interval.start,
+      end: interval.end,
+    });
+
+    byDate.set(period.date, current);
+  });
+
+  for (const [, items] of byDate) {
+    const sorted = [...items].sort((a, b) => a.start - b.start);
+
+    for (let index = 1; index < sorted.length; index += 1) {
+      const previous = sorted[index - 1];
+      const current = sorted[index];
+
+      if (current.start < previous.end) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function periodLabelByDate(workDates: AssignForm["workDates"], date: string, index: number) {
+  const sameDateBefore = workDates
+    .slice(0, index + 1)
+    .filter((item) => item.date === date).length;
+
+  return sameDateBefore > 1 ? `Período ${sameDateBefore}` : "Período 1";
+}
 function eventName(event: EventItem) {
   return event.name || event.title || "Evento sem nome";
 }
@@ -571,7 +643,7 @@ export default function OperatorPersonPage() {
 
   function addWorkDate() {
     if (!form.eventId) {
-      alert("Selecione um evento antes de adicionar datas.");
+      alert("Selecione um evento antes de adicionar horários.");
       return;
     }
 
@@ -580,13 +652,8 @@ export default function OperatorPersonPage() {
       return;
     }
 
-    const usedDates = form.workDates.map((item) => item.date);
-    const nextDate = selectedEventDates.find((date) => !usedDates.includes(date));
-
-    if (!nextDate) {
-      alert("Todas as datas cadastradas deste evento já foram adicionadas.");
-      return;
-    }
+    const lastDate = form.workDates[form.workDates.length - 1]?.date;
+    const nextDate = lastDate && selectedEventDates.includes(lastDate) ? lastDate : selectedEventDates[0];
 
     patchForm({
       workDates: [
@@ -601,7 +668,6 @@ export default function OperatorPersonPage() {
       ],
     });
   }
-
   function removeWorkDate(index: number) {
     patchForm({
       workDates: form.workDates.filter((_, itemIndex) => itemIndex !== index),
@@ -650,6 +716,11 @@ export default function OperatorPersonPage() {
 
     if (form.workDates.some((item) => !isWorkTimeInsideEvent(item.startTime, item.endTime, selectedEvent))) {
       alert(`Os horários precisam ficar dentro do horário do evento: ${selectedEventTimeWindow.startTime} às ${selectedEventTimeWindow.endTime}.`);
+      return;
+    }
+
+    if (hasOverlappingWorkPeriods(form.workDates, selectedEvent)) {
+      alert("Existem horários sobrepostos na mesma data. Separe os períodos sem cruzar horários, por exemplo: 20:00-21:00 e 22:00-23:59.");
       return;
     }
 
@@ -884,31 +955,40 @@ export default function OperatorPersonPage() {
             {form.eventId ? (
               <div className="mt-3 rounded-2xl border border-orange-200 bg-white px-4 py-3 text-xs font-bold text-slate-600">
                 {selectedEventDates.length > 0
-                  ? `Datas disponíveis deste evento: ${selectedEventDates.map((date) => formatDateOnly(date)).join(", ")} • ${formatEventTimeWindow(selectedEvent)}`
+                  ? `Datas disponíveis deste evento: ${selectedEventDates.map((date) => formatDateOnly(date)).join(", ")} • ${formatEventTimeWindow(selectedEvent)} • Você pode adicionar mais de um período na mesma data.`
                   : "Este evento não possui datas cadastradas."}
               </div>
             ) : null}
 
             <div className="mt-6 flex items-center justify-between">
-              <p className="text-sm font-black">Datas, valores e funções</p>
+              <p className="text-sm font-black">Datas, horários, valores e funções</p>
               <button
                 type="button"
                 onClick={addWorkDate}
                 className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white"
               >
-                + Data
+                + Horário
               </button>
             </div>
 
             <div className="mt-3 space-y-3">
               {form.workDates.length === 0 ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-700">
-                  Selecione um evento com datas cadastradas para montar a proposta.
+                  Selecione um evento com datas cadastradas para montar os períodos de trabalho.
                 </div>
               ) : null}
 
               {form.workDates.map((workDate, index) => (
                 <div key={index} className="rounded-2xl border border-orange-200 bg-white p-3">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600">
+                      {periodLabelByDate(form.workDates, workDate.date, index)}
+                    </p>
+                    <p className="text-[10px] font-bold text-slate-400">
+                      Cada linha é um turno/período separado.
+                    </p>
+                  </div>
+
                   <div className="grid gap-2 md:grid-cols-2">
                     <select
                       value={workDate.date}
@@ -922,9 +1002,6 @@ export default function OperatorPersonPage() {
                           <option
                             key={date}
                             value={date}
-                            disabled={
-                              form.workDates.some((item, itemIndex) => itemIndex !== index && item.date === date)
-                            }
                           >
                             {formatDateOnly(date)}
                           </option>
@@ -935,7 +1012,7 @@ export default function OperatorPersonPage() {
                     <input
                       value={workDate.amount}
                       onChange={(event) => patchWorkDate(index, { amount: event.target.value })}
-                      placeholder="Valor por data"
+                      placeholder="Valor por período"
                       className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
                     />
 
@@ -965,7 +1042,7 @@ export default function OperatorPersonPage() {
                   <textarea
                     value={workDate.functions}
                     onChange={(event) => patchWorkDate(index, { functions: event.target.value })}
-                    placeholder="Funções do operador nesse dia"
+                    placeholder="Funções do operador nesse período"
                     className="mt-2 min-h-[70px] w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold"
                   />
 
@@ -975,7 +1052,7 @@ export default function OperatorPersonPage() {
                       onClick={() => removeWorkDate(index)}
                       className="mt-2 text-xs font-black text-red-600"
                     >
-                      Remover data
+                      Remover período
                     </button>
                   ) : null}
                 </div>

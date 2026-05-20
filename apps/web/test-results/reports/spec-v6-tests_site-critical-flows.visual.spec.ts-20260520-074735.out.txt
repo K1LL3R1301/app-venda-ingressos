@@ -1,0 +1,28 @@
+
+Running 23 tests using 1 worker
+
+  ✓   1 [chromium] › tests\site-critical-flows.visual.spec.ts:24:7 › visual: fluxos criticos fora do suporte › admin wallet abre e mostra resumo financeiro sem crash (2.8s)
+  ✓   2 [chromium] › tests\site-critical-flows.visual.spec.ts:44:7 › visual: fluxos criticos fora do suporte › login aparece limpo sem sessão (1.2s)
+  ✓   3 [chromium] › tests\site-critical-flows.visual.spec.ts:66:7 › visual: fluxos criticos fora do suporte › menu principal do admin nao quebra (8.0s)
+  ✓   4 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › login abre sem erro visual (1.4s)
+  ✓   5 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › customer-dashboard abre sem erro visual (1.5s)
+  ✓   6 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › customer-orders abre sem erro visual (3.3s)
+  ✓   7 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › customer-wallet abre sem erro visual (1.5s)
+  ✓   8 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › customer-support abre sem erro visual (1.4s)
+  ✓   9 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-dashboard abre sem erro visual (1.6s)
+  ✓  10 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-events abre sem erro visual (1.4s)
+  ✓  11 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-events-new abre sem erro visual (1.5s)
+  ✓  12 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-orders abre sem erro visual (1.5s)
+  ✓  13 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-operators abre sem erro visual (1.5s)
+  ✓  14 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-wallet abre sem erro visual (6.9s)
+  ✓  15 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-support abre sem erro visual (2.4s)
+  ✓  16 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › admin-support-test-lab abre sem erro visual (1.5s)
+  ✓  17 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › super-admin-support abre sem erro visual (1.4s)
+  ✓  18 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › operator-dashboard abre sem erro visual (2.0s)
+  ✓  19 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › operator-wallet abre sem erro visual (1.7s)
+  ✓  20 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › operator-support abre sem erro visual (1.5s)
+  ✓  21 [chromium] › tests\site-wide-routes.visual.spec.ts:132:9 › visual: mapa geral de rotas principais › operator-checkin abre sem erro visual (1.7s)
+  ✓  22 [chromium] › tests\support-linked-flow.visual.spec.ts:57:5 › visual: laboratorio cria, encaminha, devolve e resolve o suporte interligado (2.4s)
+  ✓  23 [chromium] › tests\support-linked-flow.visual.spec.ts:123:5 › visual: paginas reais enxergam o mesmo chamado e o Super Admin devolve ao operador (2.3s)
+
+  23 passed (55.2s)
