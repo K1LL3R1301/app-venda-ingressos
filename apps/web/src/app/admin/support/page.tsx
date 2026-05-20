@@ -1,298 +1,839 @@
-// @ts-nocheck
 "use client";
+// @ts-nocheck
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getStoredAuthUser } from "../../../lib/auth-client";
 import {
-  addSupportMessage,
-  createSupportTicket,
-  forwardSupportToSuperAdmin,
-  getVisibleSupportTickets,
-  resolveSupportTicket,
-  supportOwnerLabel,
-  supportPriorityLabel,
-  supportStatusLabel,
-  type SupportTicket,
-} from "../../../lib/support-workflow";
+  addSupportMessageReal,
+  forwardSupportToSuperAdminReal,
+  getVisibleSupportTicketsReal,
+  resolveSupportTicketReal,
+} from "../../../lib/support-api-workflow";
 
 type StoredUser = { id?: string; name?: string; email?: string; role?: string };
+type Ticket = any;
+type EventItem = {
+  id: string;
+  name?: string | null;
+  eventDate?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  status?: string | null;
+  location?: any;
+  sessions?: any[] | null;
+  organizer?: any;
+};
 
-function currentUserFallback(): StoredUser {
-  return { name: "Admin", email: "admin@admin.com", role: "ADMIN" };
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  "http://localhost:3001/v1";
+
+function fallbackUser(): StoredUser {
+  return { id: "admin-local", name: "Produtor/Admin", email: "admin@local.test", role: "ADMIN" };
 }
 
-export default function AdminSupportPage() {
-  const [user, setUser] = useState<StoredUser | null>(null);
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [filter, setFilter] = useState<"MY" | "SUPER" | "RESOLVED" | "ALL">("MY");
-  const [selectedId, setSelectedId] = useState("");
-  const [reply, setReply] = useState("");
-  const [forwardReason, setForwardReason] = useState("");
-  const [resolution, setResolution] = useState("");
-  const [newTicket, setNewTicket] = useState({ eventName: "", customerName: "", title: "", message: "", priority: "NORMAL" });
-
-  function reload() {
-    const storedUser = getStoredAuthUser<StoredUser>() || currentUserFallback();
-    setUser(storedUser);
-    setTickets(getVisibleSupportTickets({ role: "PRODUCER", userEmail: storedUser.email }));
-  }
-
-  useEffect(() => {
-    reload();
-    const onUpdate = () => reload();
-    window.addEventListener("astro-support-updated", onUpdate);
-    return () => window.removeEventListener("astro-support-updated", onUpdate);
-  }, []);
-
-  const filteredTickets = useMemo(() => {
-    return tickets.filter((ticket) => {
-      if (filter === "SUPER") return ticket.currentOwnerType === "SUPER_ADMIN" || ticket.status === "FORWARDED_TO_SUPER_ADMIN";
-      if (filter === "RESOLVED") return ["RESOLVED", "CLOSED"].includes(ticket.status);
-      if (filter === "MY") return ticket.currentOwnerType === "PRODUCER" && !["RESOLVED", "CLOSED"].includes(ticket.status);
-      return true;
-    });
-  }, [tickets, filter]);
-
-  const selectedTicket = tickets.find((ticket) => ticket.id === selectedId) || filteredTickets[0] || null;
-
-  function actor() {
-    const current = user || currentUserFallback();
-    return { role: "PRODUCER" as const, name: current.name || "Admin", email: current.email };
-  }
-
-  function createTicket() {
-    try {
-      const current = user || currentUserFallback();
-      const ticket = createSupportTicket({
-        title: newTicket.title,
-        category: "Atendimento",
-        message: newTicket.message,
-        priority: newTicket.priority,
-        currentOwnerType: "PRODUCER",
-        eventName: newTicket.eventName || undefined,
-        customerName: newTicket.customerName || undefined,
-        producerName: current.name || "Admin",
-        producerEmail: current.email,
-        createdByRole: "PRODUCER",
-        createdByName: current.name || "Admin",
-        createdByEmail: current.email,
-      });
-      setSelectedId(ticket.id);
-      setNewTicket({ eventName: "", customerName: "", title: "", message: "", priority: "NORMAL" });
-      reload();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível criar o chamado.");
-    }
-  }
-
-  function answerSelected() {
-    if (!selectedTicket) return;
-    try {
-      addSupportMessage(selectedTicket.id, actor(), reply);
-      setReply("");
-      reload();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível responder.");
-    }
-  }
-
-  function forwardSelected() {
-    if (!selectedTicket) return;
-    try {
-      forwardSupportToSuperAdmin(selectedTicket.id, actor(), forwardReason);
-      setForwardReason("");
-      reload();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível encaminhar.");
-    }
-  }
-
-  function resolveSelected() {
-    if (!selectedTicket) return;
-    try {
-      resolveSupportTicket(selectedTicket.id, actor(), resolution);
-      setResolution("");
-      reload();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível resolver.");
-    }
-  }
-
+function authToken() {
+  if (typeof window === "undefined") return "";
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
-      <section className="mx-auto max-w-7xl space-y-6">
-        <section className="rounded-[34px] bg-slate-950 p-8 text-white shadow-sm">
-          <p className="text-[11px] font-black uppercase tracking-[0.34em] text-orange-300">Suporte do produtor</p>
-          <h1 className="mt-4 text-5xl font-black leading-tight">Chamados interligados com operador e Super Admin.</h1>
-          <p className="mt-4 max-w-4xl text-sm font-semibold leading-7 text-white/75">
-            O chamado fica único. Você pode responder, resolver ou encaminhar ao Super Admin quando parecer problema técnico do site.
-          </p>
-        </section>
-
-        <section className="grid gap-6 lg:grid-cols-[380px_1fr]">
-          <aside className="space-y-4">
-            <section className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Novo chamado</p>
-              <h2 className="mt-2 text-2xl font-black">Abrir suporte</h2>
-              <div className="mt-5 space-y-3">
-                <input value={newTicket.eventName} onChange={(event) => setNewTicket((current) => ({ ...current, eventName: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-orange-500" placeholder="Evento relacionado" />
-                <input value={newTicket.customerName} onChange={(event) => setNewTicket((current) => ({ ...current, customerName: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-orange-500" placeholder="Cliente relacionado" />
-                <input value={newTicket.title} onChange={(event) => setNewTicket((current) => ({ ...current, title: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-orange-500" placeholder="Título do chamado" />
-                <textarea value={newTicket.message} onChange={(event) => setNewTicket((current) => ({ ...current, message: event.target.value }))} className="min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:border-orange-500" placeholder="Descreva o atendimento..." />
-                <select value={newTicket.priority} onChange={(event) => setNewTicket((current) => ({ ...current, priority: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-orange-500">
-                  <option value="NORMAL">Normal</option>
-                  <option value="HIGH">Alta</option>
-                  <option value="URGENT">Urgente</option>
-                  <option value="LOW">Baixa</option>
-                </select>
-                <button type="button" onClick={createTicket} className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-black text-white">Criar chamado</button>
-              </div>
-            </section>
-
-            <section className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Filtros</p>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {[["MY", "Comigo"], ["SUPER", "Super Admin"], ["RESOLVED", "Resolvidos"], ["ALL", "Todos"]].map(([key, label]) => (
-                  <button key={key} type="button" onClick={() => setFilter(key)} className={`rounded-2xl px-3 py-3 text-xs font-black ${filter === key ? "bg-slate-950 text-white" : "bg-slate-50 text-slate-600 ring-1 ring-slate-200"}`}>{label}</button>
-                ))}
-              </div>
-              <TicketList tickets={filteredTickets} selectedId={selectedTicket?.id} onSelect={setSelectedId} />
-            </section>
-          </aside>
-
-          <section>
-            {selectedTicket ? (
-              <article className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
-                <TicketHeader ticket={selectedTicket} />
-                <div className="mt-6"><TicketMessages ticket={selectedTicket} /></div>
-                <section className="mt-6 grid gap-4 lg:grid-cols-3">
-                  <ActionBox title="Responder" value={reply} setValue={setReply} placeholder="Digite a resposta..." buttonLabel="Responder" onClick={answerSelected} />
-                  <ActionBox title="Encaminhar ao Super Admin" value={forwardReason} setValue={setForwardReason} placeholder="Explique o erro técnico do site..." buttonLabel="Enviar ao Super Admin" onClick={forwardSelected} tone="blue" />
-                  <ActionBox title="Resolver" value={resolution} setValue={setResolution} placeholder="Descreva a solução..." buttonLabel="Marcar como resolvido" onClick={resolveSelected} tone="green" />
-                </section>
-              </article>
-            ) : (
-              <EmptyState />
-            )}
-          </section>
-        </section>
-      </section>
-    </main>
+    sessionStorage.getItem("astro_session_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("astro_session_token") ||
+    ""
   );
 }
 
-function TicketList({ tickets, selectedId, onSelect }: { tickets: SupportTicket[]; selectedId?: string; onSelect: (id: string) => void }) {
-  return (
-    <div className="mt-4 space-y-3">
-      {tickets.length === 0 ? (
-        <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">Nenhum chamado neste filtro.</div>
-      ) : (
-        tickets.map((ticket) => (
-          <button key={ticket.id} type="button" onClick={() => onSelect(ticket.id)} className={`w-full rounded-2xl border p-4 text-left ${selectedId === ticket.id ? "border-orange-300 bg-orange-50" : "border-slate-200 bg-slate-50"}`}>
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">{ticket.protocol}</p>
-            <h3 className="mt-1 text-lg font-black">{ticket.title}</h3>
-            <p className="mt-1 text-xs font-bold text-slate-500">{supportStatusLabel(ticket.status)} • com {supportOwnerLabel(ticket.currentOwnerType)}</p>
-          </button>
-        ))
-      )}
-    </div>
-  );
+function label(value?: string) {
+  const labels: Record<string, string> = {
+    CUSTOMER: "Cliente",
+    PRODUCER: "Produtor/Admin",
+    ADMIN: "Produtor/Admin",
+    OPERATOR: "Operador",
+    SUPER_ADMIN: "Suporte Site",
+    ALL: "Todos",
+    OPEN: "Aberto",
+    IN_PROGRESS: "Em andamento",
+    CUSTOMER_REPLY: "Cliente respondeu",
+    PRODUCER_REPLY: "Produtor respondeu",
+    FORWARDED_TO_SUPER_ADMIN: "Com Suporte Site",
+    RETURNED_TO_PRODUCER: "Devolvido ao produtor",
+    RETURNED_TO_OPERATOR: "Devolvido ao operador",
+    RESOLVED: "Resolvido",
+    CLOSED: "Fechado",
+    ACTIVE: "Ativo",
+    PUBLISHED: "Publicado",
+    DRAFT: "Rascunho",
+    FINISHED: "Finalizado",
+    CANCELED: "Cancelado",
+    CANCELLED: "Cancelado",
+  };
+
+  return labels[String(value || "").toUpperCase()] || String(value || "Sistema");
 }
 
-function TicketHeader({ ticket }: { ticket: SupportTicket }) {
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">{ticket.protocol}</p>
-        <h2 className="mt-2 text-3xl font-black">{ticket.title}</h2>
-        <p className="mt-2 text-sm font-bold text-slate-500">{ticket.eventName || "Sem evento"} • {ticket.customerName || "Sem cliente"} • {supportPriorityLabel(ticket.priority)}</p>
-      </div>
-      <span className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white">{supportStatusLabel(ticket.status)}</span>
-    </div>
-  );
+function eventStart(event: EventItem) {
+  const firstSession = Array.isArray(event.sessions) ? event.sessions.find((session) => session?.startsAt) : null;
+  return firstSession?.startsAt || event.startDate || event.eventDate || "";
 }
 
-function EmptyState() {
-  return (
-    <section className="rounded-[30px] border border-slate-200 bg-white p-8 text-center shadow-sm">
-      <h2 className="text-3xl font-black">Nenhum chamado selecionado</h2>
-      <p className="mt-2 text-sm font-semibold text-slate-500">Crie ou selecione um chamado para ver a conversa.</p>
-    </section>
-  );
+function eventDateObj(event: EventItem) {
+  const date = new Date(eventStart(event));
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function timeLabel(value?: string) {
-  if (!value) return "-";
+function formatDate(value?: string | null) {
+  if (!value) return "Data não informada";
+
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return String(value);
+
   return date.toLocaleString("pt-BR", {
     day: "2-digit",
     month: "short",
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function TicketMessages({ ticket }: { ticket: SupportTicket }) {
+function formatTime(value?: string | null) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function sameDay(first: Date, second: Date) {
   return (
-    <section className="rounded-2xl bg-slate-50 p-4">
-      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Histórico completo</p>
-      <div className="mt-4 space-y-3">
-        {ticket.messages.map((message) => (
-          <div key={message.id} className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-            <div className="flex flex-wrap justify-between gap-2">
-              <p className="text-sm font-black">{message.authorName}</p>
-              <p className="text-xs font-bold text-slate-400">{timeLabel(message.createdAt)}</p>
-            </div>
-            <p className="mt-1 text-xs font-black uppercase tracking-[0.18em] text-orange-600">
-              {supportOwnerLabel(message.authorRole)} {message.internal ? "• nota interna" : ""}
-            </p>
-            <p className="mt-3 whitespace-pre-wrap text-sm font-semibold leading-6 text-slate-700">{message.text}</p>
-          </div>
-        ))}
+    first.getFullYear() === second.getFullYear() &&
+    first.getMonth() === second.getMonth() &&
+    first.getDate() === second.getDate()
+  );
+}
+
+function getDayGroup(event: EventItem) {
+  const date = eventDateObj(event);
+  if (!date) return "Sem data";
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  if (sameDay(date, now)) return "Hoje";
+  if (eventDay > today) return "Próximos";
+  return "Passados";
+}
+
+function getLocation(event: EventItem) {
+  const location = event.location;
+
+  if (!location) return "Local não informado";
+  if (typeof location === "string") return location;
+
+  const parts = [
+    location.venueName || location.name,
+    location.addressLine1,
+    [location.city, location.state].filter(Boolean).join(" - "),
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean);
+
+  return parts.length ? parts.join(" • ") : "Local não informado";
+}
+
+function when(value?: string) {
+  if (!value) return "";
+
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function ticketMessages(ticket?: Ticket) {
+  return Array.isArray(ticket?.messages) ? ticket.messages : [];
+}
+
+function isMine(message: any) {
+  return ["PRODUCER", "ADMIN"].includes(String(message?.authorRole || message?.senderType || "").toUpperCase());
+}
+
+function lastMessage(ticket: Ticket) {
+  const list = ticketMessages(ticket);
+  return list[list.length - 1]?.text || ticket?.title || "Sem mensagens";
+}
+
+function ticketStatus(ticket?: Ticket) {
+  return String(ticket?.status || "OPEN").toUpperCase();
+}
+
+function reopenedStorageKey(ticketId: string) {
+  return `astro_reopened_support_${ticketId}`;
+}
+
+function isLocallyReopened(ticketId?: string) {
+  if (!ticketId || typeof window === "undefined") return false;
+  return localStorage.getItem(reopenedStorageKey(ticketId)) === "1";
+}
+
+function isClosedTicket(ticket?: Ticket) {
+  if (!ticket) return false;
+  if (isLocallyReopened(ticket.id)) return false;
+  return ["RESOLVED", "CLOSED"].includes(ticketStatus(ticket));
+}
+
+function optimisticStorageKey(ticketId: string) {
+  return `astro_support_messages_${ticketId}`;
+}
+
+function readOptimisticMessages(ticketId?: string) {
+  if (!ticketId || typeof window === "undefined") return [];
+
+  try {
+    return JSON.parse(localStorage.getItem(optimisticStorageKey(ticketId)) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveOptimisticMessage(ticketId: string, message: any) {
+  if (!ticketId || typeof window === "undefined") return;
+
+  const current = readOptimisticMessages(ticketId);
+  localStorage.setItem(optimisticStorageKey(ticketId), JSON.stringify([...current, message].slice(-30)));
+}
+
+function mergedMessages(ticket?: Ticket) {
+  const server = ticketMessages(ticket);
+  const optimistic = readOptimisticMessages(ticket?.id).filter((localMessage: any) => {
+    const localTime = new Date(localMessage.createdAt).getTime();
+
+    return !server.some((serverMessage: any) => {
+      const serverTime = new Date(serverMessage.createdAt).getTime();
+      return (
+        String(serverMessage.text || "") === String(localMessage.text || "") &&
+        String(serverMessage.authorRole || "").toUpperCase() === String(localMessage.authorRole || "").toUpperCase() &&
+        Math.abs(serverTime - localTime) < 120000
+      );
+    });
+  });
+
+  return [...server, ...optimistic].sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+}
+
+function decorateTicket(ticket: Ticket) {
+  if (!ticket) return ticket;
+
+  return {
+    ...ticket,
+    messages: mergedMessages(ticket),
+    status: isLocallyReopened(ticket.id) ? "IN_PROGRESS" : ticket.status,
+  };
+}
+
+function Bubble({ message }: { message: any }) {
+  const mine = isMine(message);
+  const kind = String(message?.kind || "MESSAGE").toUpperCase();
+
+  return (
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[78%] rounded-3xl px-4 py-3 shadow-sm ${
+          mine
+            ? "rounded-br-md bg-orange-600 text-white"
+            : kind === "FORWARD"
+              ? "rounded-bl-md border border-amber-200 bg-amber-50 text-amber-950"
+              : kind === "SYSTEM"
+                ? "rounded-bl-md border border-slate-200 bg-slate-100 text-slate-700"
+                : "rounded-bl-md bg-white text-slate-900"
+        }`}
+      >
+        <p className={`mb-1 text-[10px] font-black uppercase tracking-[0.16em] ${mine ? "text-orange-100" : "text-slate-400"}`}>
+          Tipo de conta: {label(message.authorRole || message.senderType)}
+        </p>
+        <p className="whitespace-pre-wrap text-sm font-bold leading-relaxed">{message.text}</p>
+        <p className={`mt-2 text-right text-[10px] font-bold ${mine ? "text-orange-100" : "text-slate-400"}`}>{when(message.createdAt)}</p>
       </div>
+    </div>
+  );
+}
+
+function AgendaView({
+  events,
+  tickets,
+  onOpenEvent,
+}: {
+  events: EventItem[];
+  tickets: Ticket[];
+  onOpenEvent: (event: EventItem) => void;
+}) {
+  const sorted = [...events].sort((a, b) => {
+    const first = eventDateObj(a)?.getTime() || Number.MAX_SAFE_INTEGER;
+    const second = eventDateObj(b)?.getTime() || Number.MAX_SAFE_INTEGER;
+    return first - second;
+  });
+
+  const groups = ["Hoje", "Próximos", "Passados", "Sem data"];
+
+  return (
+    <section className="mt-6 grid gap-5 lg:grid-cols-[1fr_360px]">
+      <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-orange-600">Agenda de eventos</p>
+            <h2 className="mt-2 text-2xl font-black">Escolha um evento</h2>
+            <p className="mt-1 text-sm font-bold text-slate-500">
+              Ao clicar em um evento, a central abre os chamados daquele evento nesta mesma tela.
+            </p>
+          </div>
+          <a href="/admin/support/new" className="rounded-2xl bg-orange-600 px-5 py-3 text-sm font-black text-white">
+            Abrir chamado
+          </a>
+        </div>
+
+        <div className="mt-5 space-y-6">
+          {groups.map((group) => {
+            const items = sorted.filter((event) => getDayGroup(event) === group);
+
+            if (!items.length) return null;
+
+            return (
+              <section key={group}>
+                <p className="mb-3 text-xs font-black uppercase tracking-[0.22em] text-slate-400">{group}</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {items.map((event) => {
+                    const count = tickets.filter((ticket) => String(ticket.eventId || "") === String(event.id)).length;
+
+                    return (
+                      <button
+                        key={event.id}
+                        type="button"
+                        onClick={() => onOpenEvent(event)}
+                        className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:-translate-y-0.5 hover:border-orange-300 hover:bg-orange-50 hover:shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-lg font-black text-slate-950">{event.name || "Evento sem nome"}</p>
+                            <p className="mt-1 text-xs font-bold text-slate-500">{formatDate(eventStart(event))}</p>
+                          </div>
+                          <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase text-slate-500">
+                            {label(event.status)}
+                          </span>
+                        </div>
+
+                        <p className="mt-3 line-clamp-2 text-xs font-bold text-slate-500">{getLocation(event)}</p>
+
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-black text-orange-700">
+                            {count} chamado(s)
+                          </span>
+                          {formatTime(eventStart(event)) ? (
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">
+                              {formatTime(eventStart(event))}
+                            </span>
+                          ) : null}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+
+          {!events.length ? (
+            <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
+              <p className="text-lg font-black text-slate-700">Nenhum evento encontrado.</p>
+              <p className="mt-2 text-sm font-bold text-slate-500">Crie um evento primeiro para a agenda aparecer aqui.</p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <aside className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+        <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-400">Resumo</p>
+        <h3 className="mt-2 text-xl font-black">Central de suporte</h3>
+        <div className="mt-5 grid gap-3">
+          <div className="rounded-3xl bg-slate-950 p-4 text-white">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/50">Eventos</p>
+            <p className="mt-2 text-3xl font-black">{events.length}</p>
+          </div>
+          <div className="rounded-3xl border border-orange-100 bg-orange-50 p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-orange-700/60">Chamados</p>
+            <p className="mt-2 text-3xl font-black text-orange-700">{tickets.length}</p>
+          </div>
+          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-bold leading-6 text-slate-600">
+              O chamado fica bloqueado quando resolvido e registra quem encerrou. Se o cliente ainda tiver dúvida, ele pode ser reaberto.
+            </p>
+          </div>
+        </div>
+      </aside>
     </section>
   );
 }
 
-function ActionBox({
-  title,
-  value,
-  setValue,
-  placeholder,
-  buttonLabel,
-  onClick,
-  tone = "dark",
-}: {
-  title: string;
-  value: string;
-  setValue: (value: string) => void;
-  placeholder: string;
-  buttonLabel: string;
-  onClick: () => void;
-  tone?: "dark" | "blue" | "green" | "orange";
-}) {
-  const buttonClass =
-    tone === "blue"
-      ? "bg-blue-600 text-white"
-      : tone === "green"
-        ? "bg-emerald-600 text-white"
-        : tone === "orange"
-          ? "bg-orange-600 text-white"
-          : "bg-slate-950 text-white";
+function CardList({ tickets, selectedId, onSelect }: { tickets: Ticket[]; selectedId?: string; onSelect: (id: string) => void }) {
+  if (!tickets.length) {
+    return (
+      <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-8 text-center">
+        <p className="text-sm font-black text-slate-600">Nenhum chamado neste evento.</p>
+        <p className="mt-1 text-xs font-bold text-slate-400">Abra um chamado ou aguarde uma mensagem do cliente.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <h3 className="text-lg font-black">{title}</h3>
-      <textarea
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        className="mt-3 min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-orange-500"
-        placeholder={placeholder}
-      />
-      <button type="button" onClick={onClick} className={`mt-3 w-full rounded-2xl px-4 py-3 text-sm font-black ${buttonClass}`}>
-        {buttonLabel}
-      </button>
+    <div className="space-y-3">
+      {tickets.map((ticket) => {
+        const closed = isClosedTicket(ticket);
+
+        return (
+          <button
+            key={ticket.id}
+            type="button"
+            onClick={() => onSelect(ticket.id)}
+            className={`w-full rounded-3xl border p-4 text-left transition ${
+              selectedId === ticket.id
+                ? "border-orange-400 bg-orange-50 shadow-sm"
+                : "border-slate-200 bg-white hover:border-orange-200 hover:bg-orange-50/40"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black text-slate-950">{ticket.title || "Chamado"}</p>
+                <p className="mt-1 truncate text-xs font-bold text-slate-500">
+                  {ticket.customerName || ticket.operatorName || "Atendimento"}
+                </p>
+              </div>
+              <span className={`rounded-full bg-white px-2 py-1 text-[9px] font-black uppercase ${closed ? "text-slate-500" : "text-orange-700"}`}>
+                {closed ? "Bloqueado" : label(ticket.status)}
+              </span>
+            </div>
+            <p className="mt-3 line-clamp-2 text-xs font-bold leading-relaxed text-slate-500">{lastMessage(ticket)}</p>
+          </button>
+        );
+      })}
     </div>
+  );
+}
+
+export default function AdminSupportPage() {
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+  const [reply, setReply] = useState("");
+  const [forwardReason, setForwardReason] = useState("");
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+
+  const selectedEvent = useMemo(
+    () => events.find((event) => String(event.id) === String(selectedEventId)) || null,
+    [events, selectedEventId],
+  );
+
+  const eventTickets = useMemo(() => {
+    if (!selectedEventId) return [];
+    return tickets.filter((ticket) => String(ticket.eventId || "") === String(selectedEventId)).map(decorateTicket);
+  }, [tickets, selectedEventId]);
+
+  const selectedTicket = useMemo(
+    () => eventTickets.find((ticket) => ticket.id === selectedId) || eventTickets[0] || null,
+    [eventTickets, selectedId],
+  );
+
+  const selectedClosed = isClosedTicket(selectedTicket);
+
+  function actor() {
+    const current = user || fallbackUser();
+    return { role: "PRODUCER" as const, name: current.name || "Produtor/Admin", email: current.email };
+  }
+
+  function setUrl(next: { eventId?: string; ticketId?: string }) {
+    if (typeof window === "undefined") return;
+
+    const url = new URL(window.location.href);
+
+    if (next.eventId !== undefined) {
+      if (next.eventId) url.searchParams.set("eventId", next.eventId);
+      else url.searchParams.delete("eventId");
+    }
+
+    if (next.ticketId !== undefined) {
+      if (next.ticketId) url.searchParams.set("ticket", next.ticketId);
+      else url.searchParams.delete("ticket");
+    }
+
+    window.history.replaceState(null, "", url.toString());
+  }
+
+  function openEvent(event: EventItem) {
+    setSelectedEventId(event.id);
+    setSelectedId("");
+    setUrl({ eventId: event.id, ticketId: "" });
+  }
+
+  function backToAgenda() {
+    setSelectedEventId("");
+    setSelectedId("");
+    setUrl({ eventId: "", ticketId: "" });
+  }
+
+  function selectTicket(id: string) {
+    setSelectedId(id);
+    setUrl({ ticketId: id });
+  }
+
+  async function loadEvents() {
+    setLoadingEvents(true);
+
+    try {
+      const token = authToken();
+
+      if (!token) {
+        setEvents([]);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/events/admin-scope`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(typeof result?.message === "string" ? result.message : "Erro ao carregar eventos.");
+      }
+
+      setEvents(Array.isArray(result) ? result : []);
+    } catch (error) {
+      console.error(error);
+      setEvents([]);
+    } finally {
+      setLoadingEvents(false);
+    }
+  }
+
+  async function reload() {
+    const storedUser = getStoredAuthUser<StoredUser>() || fallbackUser();
+    setUser(storedUser);
+
+    const data = await getVisibleSupportTicketsReal({ role: "PRODUCER", userEmail: storedUser.email });
+    setTickets(data);
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const eventFromUrl = params.get("eventId") || "";
+      const ticketFromUrl = params.get("ticket") || "";
+
+      if (eventFromUrl) setSelectedEventId(eventFromUrl);
+      if (ticketFromUrl) setSelectedId(ticketFromUrl);
+    }
+  }
+
+  useEffect(() => {
+    void loadEvents();
+    void reload();
+
+    const onUpdate = () => void reload();
+    window.addEventListener("support-workflow:update", onUpdate);
+
+    return () => window.removeEventListener("support-workflow:update", onUpdate);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId && eventTickets[0]?.id) {
+      setSelectedId(eventTickets[0].id);
+    }
+  }, [eventTickets, selectedId]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [selectedTicket?.id, selectedTicket?.messages?.length]);
+
+  async function sendReply() {
+    const text = reply.trim();
+
+    if (!selectedTicket || !text || selectedClosed) return;
+
+    const optimistic = {
+      id: `local-${Date.now()}`,
+      authorRole: "PRODUCER",
+      authorName: actor().name,
+      targetType: "ALL",
+      text,
+      kind: "MESSAGE",
+      createdAt: new Date().toISOString(),
+    };
+
+    saveOptimisticMessage(selectedTicket.id, optimistic);
+    setTickets((current) =>
+      current.map((ticket) =>
+        ticket.id === selectedTicket.id
+          ? { ...ticket, messages: [...ticketMessages(ticket), optimistic], status: "IN_PROGRESS" }
+          : ticket,
+      ),
+    );
+
+    setReply("");
+
+    try {
+      await addSupportMessageReal(selectedTicket.id, actor(), text, { targetType: "ALL" as any });
+      await reload();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Não foi possível enviar a mensagem.");
+    }
+  }
+
+  async function forwardToSupportSite() {
+    if (!selectedTicket || selectedClosed) return;
+
+    const reason = forwardReason.trim();
+
+    if (!reason) {
+      alert("Informe a justificativa do encaminhamento.");
+      return;
+    }
+
+    const message = `Encaminhado ao Suporte Site por ${actor().name}.\n\nJustificativa: ${reason}`;
+
+    saveOptimisticMessage(selectedTicket.id, {
+      id: `local-forward-${Date.now()}`,
+      authorRole: "PRODUCER",
+      authorName: actor().name,
+      targetType: "ALL",
+      text: message,
+      kind: "FORWARD",
+      createdAt: new Date().toISOString(),
+    });
+
+    await forwardSupportToSuperAdminReal(selectedTicket.id, actor(), reason);
+    setForwardReason("");
+    setForwardOpen(false);
+    await reload();
+  }
+
+  async function closeTicket() {
+    if (!selectedTicket || selectedClosed) return;
+
+    const name = actor().name;
+    const message = `Chamado encerrado por ${name}.`;
+
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(reopenedStorageKey(selectedTicket.id));
+    }
+
+    saveOptimisticMessage(selectedTicket.id, {
+      id: `local-close-${Date.now()}`,
+      authorRole: "PRODUCER",
+      authorName: name,
+      targetType: "ALL",
+      text: message,
+      kind: "SYSTEM",
+      createdAt: new Date().toISOString(),
+    });
+
+    await resolveSupportTicketReal(selectedTicket.id, actor(), message, { targetType: "ALL" as any });
+    await reload();
+  }
+
+  async function reopenTicket() {
+    if (!selectedTicket) return;
+
+    const name = actor().name;
+    const message = `Chamado reaberto por ${name}. O cliente ainda tem dúvida ou o atendimento precisa continuar.`;
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem(reopenedStorageKey(selectedTicket.id), "1");
+    }
+
+    saveOptimisticMessage(selectedTicket.id, {
+      id: `local-reopen-${Date.now()}`,
+      authorRole: "PRODUCER",
+      authorName: name,
+      targetType: "ALL",
+      text: message,
+      kind: "SYSTEM",
+      createdAt: new Date().toISOString(),
+    });
+
+    setTickets((current) =>
+      current.map((ticket) =>
+        ticket.id === selectedTicket.id
+          ? { ...ticket, status: "IN_PROGRESS" }
+          : ticket,
+      ),
+    );
+
+    try {
+      await addSupportMessageReal(selectedTicket.id, actor(), message, { targetType: "ALL" as any });
+      await reload();
+    } catch {
+      await reload();
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
+      <div className="mx-auto max-w-7xl">
+        <header className="rounded-[2rem] bg-slate-950 p-6 text-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.24em] text-orange-300">Central de suporte</p>
+              <h1 className="mt-2 text-3xl font-black">Suporte por evento</h1>
+              <p className="mt-2 max-w-3xl text-sm font-bold text-slate-300">
+                Primeiro escolha o evento na agenda. Depois a tela abre as fichas e o chat daquele evento.
+              </p>
+            </div>
+
+            <a href={selectedEvent ? `/admin/support/new?eventId=${encodeURIComponent(selectedEvent.id)}&eventName=${encodeURIComponent(selectedEvent.name || "")}` : "/admin/support/new"} className="rounded-2xl bg-orange-600 px-5 py-3 text-sm font-black text-white">
+              Abrir chamado
+            </a>
+          </div>
+        </header>
+
+        {!selectedEventId ? (
+          loadingEvents ? (
+            <div className="mt-6 rounded-[2rem] border border-slate-200 bg-white p-8 text-sm font-bold text-slate-500">
+              Carregando agenda...
+            </div>
+          ) : (
+            <AgendaView events={events} tickets={tickets} onOpenEvent={openEvent} />
+          )
+        ) : (
+          <section className="mt-6 grid h-[calc(100vh-230px)] min-h-[660px] gap-5 lg:grid-cols-[360px_1fr]">
+            <aside className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
+              <button type="button" onClick={backToAgenda} className="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-600 hover:bg-slate-50">
+                ← Voltar para agenda
+              </button>
+
+              <div className="mb-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Evento selecionado</p>
+                <h2 className="mt-1 text-xl font-black">{selectedEvent?.name || "Evento"}</h2>
+                <p className="mt-1 text-xs font-bold text-slate-500">{formatDate(eventStart(selectedEvent || ({ id: selectedEventId } as EventItem)))}</p>
+              </div>
+
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Fichas</p>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-500">{eventTickets.length}</span>
+              </div>
+
+              <div className="h-[calc(100%-154px)] overflow-y-auto pr-1">
+                <CardList tickets={eventTickets} selectedId={selectedTicket?.id} onSelect={selectTicket} />
+              </div>
+            </aside>
+
+            <section className="flex min-h-0 flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-[#e9f3ee] shadow-sm">
+              {selectedTicket ? (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-black">{selectedTicket.title || "Chamado"}</h2>
+                      <p className="text-xs font-bold text-slate-500">
+                        {selectedTicket.protocol || selectedTicket.id} • {selectedEvent?.name || selectedTicket.eventName || "Evento"}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {selectedClosed ? (
+                        <button type="button" disabled className="rounded-2xl bg-emerald-600 px-4 py-2 text-xs font-black text-white">
+                          Histórico resolvido
+                        </button>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => setForwardOpen((current) => !current)} className="rounded-2xl bg-amber-500 px-4 py-2 text-xs font-black text-white">
+                            Encaminhar Suporte Site
+                          </button>
+                          <button type="button" onClick={closeTicket} className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white">
+                            Resolver chamado
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {selectedClosed ? (
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 text-sm font-black text-slate-600">
+                      Chamado resolvido. Fica somente como histórico. O cliente pode reabrir se ainda tiver dúvida.
+                    </div>
+                  ) : null}
+
+                  {forwardOpen && !selectedClosed ? (
+                    <div className="border-b border-amber-200 bg-amber-50 p-4">
+                      <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-700">Justificativa para o Suporte Site</p>
+                      <div className="mt-2 flex gap-2">
+                        <textarea
+                          value={forwardReason}
+                          onChange={(event) => setForwardReason(event.target.value)}
+                          className="min-h-20 flex-1 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-bold outline-none"
+                          placeholder="Explique brevemente por que este chamado precisa do Suporte Site..."
+                        />
+                        <button type="button" onClick={forwardToSupportSite} className="rounded-2xl bg-amber-600 px-5 py-3 text-sm font-black text-white">
+                          Enviar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="flex-1 space-y-3 overflow-y-auto p-5">
+                    {mergedMessages(selectedTicket).map((message: any) => (
+                      <Bubble key={message.id} message={message} />
+                    ))}
+                    <div ref={bottomRef} />
+                  </div>
+
+                  <div className="border-t border-slate-200 bg-white p-4">
+                    <div className="flex gap-2">
+                      <textarea
+                        value={reply}
+                        disabled={selectedClosed}
+                        onChange={(event) => setReply(event.target.value)}
+                        className="min-h-12 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                        placeholder={selectedClosed ? "Chamado resolvido. Somente histórico até o cliente reabrir." : "Digite uma mensagem..."}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            void sendReply();
+                          }
+                        }}
+                      />
+                      <button type="button" disabled={selectedClosed || !reply.trim()} onClick={sendReply} className="rounded-2xl bg-orange-600 px-6 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">
+                        Enviar
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="grid flex-1 place-items-center p-10 text-center">
+                  <div>
+                    <p className="text-2xl font-black text-slate-700">Selecione uma ficha</p>
+                    <p className="mt-2 text-sm font-bold text-slate-500">Ao clicar em uma ficha, o chat abre aqui.</p>
+                    <a href={`/admin/support/new?eventId=${encodeURIComponent(selectedEventId)}&eventName=${encodeURIComponent(selectedEvent?.name || "")}`} className="mt-5 inline-flex rounded-2xl bg-orange-600 px-5 py-3 text-sm font-black text-white">
+                      Abrir chamado deste evento
+                    </a>
+                  </div>
+                </div>
+              )}
+            </section>
+          </section>
+        )}
+      </div>
+    </main>
   );
 }

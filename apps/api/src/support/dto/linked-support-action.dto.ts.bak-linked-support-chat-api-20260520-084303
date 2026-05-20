@@ -1,0 +1,32 @@
+import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+
+export class LinkedSupportMessageDto {
+  @IsString()
+  @MinLength(1)
+  message: string;
+}
+
+export class LinkedSupportForwardDto {
+  @IsString()
+  @MinLength(3)
+  reason: string;
+}
+
+export class LinkedSupportReturnDto {
+  @IsIn(['PRODUCER', 'OPERATOR'])
+  target: 'PRODUCER' | 'OPERATOR';
+
+  @IsString()
+  @MinLength(3)
+  response: string;
+}
+
+export class LinkedSupportResolveDto {
+  @IsString()
+  @MinLength(3)
+  response: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+}

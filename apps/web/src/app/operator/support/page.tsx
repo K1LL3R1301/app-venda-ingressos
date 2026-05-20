@@ -1,308 +1,591 @@
-// @ts-nocheck
 "use client";
+// @ts-nocheck
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getStoredAuthUser } from "../../../lib/auth-client";
 import {
-  addSupportMessage,
-  forwardSupportToSuperAdmin,
-  getVisibleSupportTickets,
-  resolveSupportTicket,
-  seedSupportTicketForEvent,
-  supportOwnerLabel,
-  supportPriorityLabel,
-  supportStatusLabel,
-  type SupportTicket,
-} from "../../../lib/support-workflow";
+  addSupportMessageReal,
+  forwardSupportToSuperAdminReal,
+  getVisibleSupportTicketsReal,
+  resolveSupportTicketReal,
+} from "../../../lib/support-api-workflow";
 
+type Ticket = any;
 type StoredUser = { id?: string; name?: string; email?: string; role?: string };
+type EventContext = { eventId: string; eventName: string; assignmentId: string };
 
-function operatorFallback(): StoredUser {
-  return { name: "Operador", email: "operador@local", role: "OPERATOR" };
+function fallbackUser(): StoredUser {
+  return { id: "operator-local", name: "Operador", email: "operador@local.test", role: "OPERATOR" };
 }
 
-export default function OperatorSupportPage() {
-  const [user, setUser] = useState<StoredUser | null>(null);
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [reply, setReply] = useState("");
-  const [forwardReason, setForwardReason] = useState("");
-  const [resolution, setResolution] = useState("");
-
-  const [eventInfo, setEventInfo] = useState({
-    eventId: "",
-    eventName: "Evento não informado",
-  });
-
-  function readEventInfoFromUrl() {
-    if (typeof window === "undefined") {
-      return {
-        eventId: "",
-        eventName: "Evento não informado",
-      };
-    }
-
-    const params = new URLSearchParams(window.location.search);
-
-    return {
-      eventId: params.get("eventId") || "",
-      eventName: params.get("eventName") || params.get("event") || "Evento não informado",
-    };
+function readEventContext(): EventContext {
+  if (typeof window === "undefined") {
+    return { eventId: "", eventName: "", assignmentId: "" };
   }
 
-  function reload(nextEventInfo = eventInfo) {
-    const storedUser = getStoredAuthUser<StoredUser>() || operatorFallback();
-    setUser(storedUser);
-    seedSupportTicketForEvent({
-      eventId: nextEventInfo.eventId,
-      eventName: nextEventInfo.eventName,
-      operatorName: storedUser.name,
-      operatorEmail: storedUser.email,
-    });
+  const params = new URLSearchParams(window.location.search);
+  const eventId = params.get("eventId") || "";
+  const eventName =
+    params.get("eventName") ||
+    localStorage.getItem(`operator-event-name-${eventId}`) ||
+    localStorage.getItem("operator-selected-event-name") ||
+    "";
+  const assignmentId = params.get("assignmentId") || "";
 
-    setTickets(
-      getVisibleSupportTickets({
-        role: "OPERATOR",
-        userEmail: storedUser.email,
-        eventId: nextEventInfo.eventId,
-      }),
+  if (eventId && eventName) {
+    localStorage.setItem(`operator-event-name-${eventId}`, eventName);
+    localStorage.setItem("operator-selected-event-id", eventId);
+    localStorage.setItem("operator-selected-event-name", eventName);
+  }
+
+  return { eventId, eventName, assignmentId };
+}
+
+function label(value?: string) {
+  const labels: Record<string, string> = {
+    CUSTOMER: "Cliente",
+    PRODUCER: "Produtor/Admin",
+    ADMIN: "Produtor/Admin",
+    OPERATOR: "Operador",
+    SUPER_ADMIN: "Suporte Site",
+    ALL: "Todos",
+    OPEN: "Aberto",
+    IN_PROGRESS: "Em andamento",
+    FORWARDED_TO_SUPER_ADMIN: "Com Suporte Site",
+    RETURNED_TO_OPERATOR: "Devolvido ao operador",
+    RETURNED_TO_PRODUCER: "Devolvido ao produtor",
+    CUSTOMER_REPLY: "Cliente respondeu",
+    RESOLVED: "Resolvido",
+    CLOSED: "Fechado",
+  };
+
+  return labels[String(value || "").toUpperCase()] || String(value || "Sistema");
+}
+
+function when(value?: string) {
+  if (!value) return "";
+
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function ticketMessages(ticket?: Ticket) {
+  return Array.isArray(ticket?.messages) ? ticket.messages : [];
+}
+
+function ticketEventId(ticket?: Ticket) {
+  return String(ticket?.eventId || ticket?.event?.id || "");
+}
+
+function ticketBelongsToEvent(ticket: Ticket, eventId: string) {
+  return String(ticketEventId(ticket)) === String(eventId);
+}
+
+function ticketStatus(ticket?: Ticket) {
+  return String(ticket?.status || "OPEN").toUpperCase();
+}
+
+function isClosedTicket(ticket?: Ticket) {
+  return ["RESOLVED", "CLOSED"].includes(ticketStatus(ticket));
+}
+
+function optimisticMessagesKey(ticketId: string) {
+  return `astro_support_messages_${ticketId}`;
+}
+
+function readOptimisticMessages(ticketId?: string) {
+  if (!ticketId || typeof window === "undefined") return [];
+
+  try {
+    return JSON.parse(localStorage.getItem(optimisticMessagesKey(ticketId)) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveOptimisticMessage(ticketId: string, message: any) {
+  if (!ticketId || typeof window === "undefined") return;
+
+  const current = readOptimisticMessages(ticketId);
+  localStorage.setItem(optimisticMessagesKey(ticketId), JSON.stringify([...current, message].slice(-60)));
+}
+
+function mergedMessages(ticket?: Ticket) {
+  const server = ticketMessages(ticket);
+  const optimistic = readOptimisticMessages(ticket?.id).filter((localMessage: any) => {
+    const localTime = new Date(localMessage.createdAt || 0).getTime();
+
+    return !server.some((serverMessage: any) => {
+      const serverTime = new Date(serverMessage.createdAt || 0).getTime();
+
+      return (
+        String(serverMessage.text || "") === String(localMessage.text || "") &&
+        String(serverMessage.authorRole || serverMessage.senderType || "").toUpperCase() ===
+          String(localMessage.authorRole || localMessage.senderType || "").toUpperCase() &&
+        Math.abs(serverTime - localTime) < 120000
+      );
+    });
+  });
+
+  return [...server, ...optimistic].sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+}
+
+function decorateTicket(ticket: Ticket) {
+  if (!ticket) return ticket;
+
+  return {
+    ...ticket,
+    messages: mergedMessages(ticket),
+  };
+}
+
+function isMine(message: any) {
+  return String(message?.authorRole || message?.senderType || "").toUpperCase() === "OPERATOR";
+}
+
+function lastMessage(ticket: Ticket) {
+  const list = mergedMessages(ticket);
+  return list[list.length - 1]?.text || ticket?.title || "Sem mensagens";
+}
+
+function Bubble({ message }: { message: any }) {
+  const mine = isMine(message);
+  const kind = String(message?.kind || "MESSAGE").toUpperCase();
+
+  return (
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[78%] rounded-3xl px-4 py-3 shadow-sm ${
+          mine
+            ? "rounded-br-md bg-blue-600 text-white"
+            : kind === "FORWARD"
+              ? "rounded-bl-md border border-amber-200 bg-amber-50 text-amber-950"
+              : kind === "SYSTEM"
+                ? "rounded-bl-md border border-slate-200 bg-slate-100 text-slate-700"
+                : "rounded-bl-md bg-white text-slate-900"
+        }`}
+      >
+        <p className={`mb-1 text-[10px] font-black uppercase tracking-[0.16em] ${mine ? "text-blue-100" : "text-slate-400"}`}>
+          Tipo de conta: {label(message.authorRole || message.senderType)}
+        </p>
+        <p className="whitespace-pre-wrap text-sm font-bold leading-relaxed">{message.text}</p>
+        <p className={`mt-2 text-right text-[10px] font-bold ${mine ? "text-blue-100" : "text-slate-400"}`}>{when(message.createdAt)}</p>
+      </div>
+    </div>
+  );
+}
+
+function CardList({ tickets, selectedId, onSelect }: { tickets: Ticket[]; selectedId?: string; onSelect: (id: string) => void }) {
+  if (!tickets.length) {
+    return (
+      <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-8 text-center">
+        <p className="text-sm font-black text-slate-600">Nenhum chamado neste evento.</p>
+        <p className="mt-1 text-xs font-bold text-slate-400">Este suporte só mostra chamados do evento aberto.</p>
+      </div>
     );
   }
 
-  useEffect(() => {
-    const nextEventInfo = readEventInfoFromUrl();
+  return (
+    <div className="space-y-3">
+      {tickets.map((ticket) => {
+        const closed = isClosedTicket(ticket);
 
-    setEventInfo(nextEventInfo);
-    reload(nextEventInfo);
+        return (
+          <button
+            key={ticket.id}
+            type="button"
+            onClick={() => onSelect(ticket.id)}
+            className={`w-full rounded-3xl border p-4 text-left transition ${
+              selectedId === ticket.id
+                ? "border-blue-400 bg-blue-50 shadow-sm"
+                : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black text-slate-950">{ticket.title || "Chamado"}</p>
+                <p className="mt-1 truncate text-xs font-bold text-slate-500">
+                  {ticket.customerName || ticket.producerName || ticket.eventName || "Atendimento"}
+                </p>
+              </div>
+              <span className={`rounded-full bg-white px-2 py-1 text-[9px] font-black uppercase ${closed ? "text-slate-500" : "text-blue-700"}`}>
+                {closed ? "Histórico" : label(ticket.status)}
+              </span>
+            </div>
 
-    const onUpdate = () => reload(nextEventInfo);
+            <p className="mt-3 line-clamp-2 text-xs font-bold leading-relaxed text-slate-500">{lastMessage(ticket)}</p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
-    window.addEventListener("astro-support-updated", onUpdate);
+export default function OperatorSupportPage() {
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [context, setContext] = useState<EventContext>({ eventId: "", eventName: "", assignmentId: "" });
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [reply, setReply] = useState("");
+  const [forwardReason, setForwardReason] = useState("");
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
-    return () => window.removeEventListener("astro-support-updated", onUpdate);
-  }, []);
+  const scopedTickets = useMemo(() => {
+    if (!context.eventId) return [];
+    return tickets.filter((ticket) => ticketBelongsToEvent(ticket, context.eventId)).map(decorateTicket);
+  }, [tickets, context.eventId, selectedId]);
 
-  const selectedTicket = tickets.find((ticket) => ticket.id === selectedId) || tickets[0] || null;
-  const counts = useMemo(() => tickets.reduce((acc, ticket) => {
-    acc.total += 1;
-    acc.super += ticket.currentOwnerType === "SUPER_ADMIN" ? 1 : 0;
-    acc.resolved += ["RESOLVED", "CLOSED"].includes(ticket.status) ? 1 : 0;
-    return acc;
-  }, { total: 0, super: 0, resolved: 0 }), [tickets]);
+  const selectedTicket = useMemo(
+    () => scopedTickets.find((ticket) => ticket.id === selectedId) || scopedTickets[0] || null,
+    [scopedTickets, selectedId],
+  );
+
+  const selectedClosed = isClosedTicket(selectedTicket);
 
   function actor() {
-    const current = user || operatorFallback();
-    return { role: "OPERATOR" as const, name: current.name || "Operador", email: current.email };
+    const current = user || fallbackUser();
+
+    return {
+      role: "OPERATOR" as const,
+      name: current.name || "Operador",
+      email: current.email,
+    };
   }
 
-  function answerSelected() {
-    if (!selectedTicket) return;
-    try {
-      addSupportMessage(selectedTicket.id, actor(), reply);
-      setReply("");
-      reload();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível responder.");
+  function selectTicket(id: string) {
+    setSelectedId(id);
+
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("ticket", id);
+      window.history.replaceState(null, "", url.toString());
     }
   }
 
-  function forwardSelected() {
-    if (!selectedTicket) return;
+  async function reload(nextContext = context) {
+    const current = getStoredAuthUser<StoredUser>() || fallbackUser();
+    setUser(current);
+
+    if (!nextContext.eventId) {
+      setTickets([]);
+      setLoaded(true);
+      return;
+    }
+
+    const data = await getVisibleSupportTicketsReal({
+      role: "OPERATOR",
+      userEmail: current.email,
+      eventId: nextContext.eventId,
+    });
+
+    const scoped = Array.isArray(data)
+      ? data.filter((ticket) => ticketBelongsToEvent(ticket, nextContext.eventId))
+      : [];
+
+    setTickets(scoped);
+
+    const ticketFromUrl = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("ticket") : "";
+    const nextId = ticketFromUrl || selectedId || scoped?.[0]?.id || "";
+    if (nextId) setSelectedId(nextId);
+
+    setLoaded(true);
+  }
+
+  useEffect(() => {
+    const nextContext = readEventContext();
+    setContext(nextContext);
+    void reload(nextContext);
+
+    const onUpdate = () => void reload(nextContext);
+    window.addEventListener("support-workflow:update", onUpdate);
+
+    return () => window.removeEventListener("support-workflow:update", onUpdate);
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [selectedTicket?.id, selectedTicket?.messages?.length]);
+
+  async function sendReply() {
+    const text = reply.trim();
+
+    if (!selectedTicket || !text) return;
+
+    if (selectedClosed) {
+      alert("Este chamado está resolvido e fica somente como histórico. O cliente precisa reabrir para continuar.");
+      return;
+    }
+
+    const optimistic = {
+      id: `local-operator-${Date.now()}`,
+      authorRole: "OPERATOR",
+      authorName: actor().name,
+      targetType: "ALL",
+      text,
+      kind: "MESSAGE",
+      createdAt: new Date().toISOString(),
+    };
+
+    saveOptimisticMessage(selectedTicket.id, optimistic);
+
+    setTickets((current) =>
+      current.map((ticket) =>
+        ticket.id === selectedTicket.id
+          ? { ...ticket, status: "IN_PROGRESS", messages: [...ticketMessages(ticket), optimistic] }
+          : ticket,
+      ),
+    );
+
+    setReply("");
+
     try {
-      forwardSupportToSuperAdmin(selectedTicket.id, actor(), forwardReason);
+      await addSupportMessageReal(selectedTicket.id, actor(), text, { targetType: "ALL" as any });
+      await reload();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Não foi possível enviar a mensagem.");
+    }
+  }
+
+  async function forwardToSupportSite() {
+    if (!selectedTicket) return;
+
+    if (selectedClosed) {
+      alert("Este chamado está resolvido. O cliente precisa reabrir antes de encaminhar.");
+      return;
+    }
+
+    const reason = forwardReason.trim();
+
+    if (!reason) {
+      alert("Informe a justificativa do encaminhamento.");
+      return;
+    }
+
+    const text = `Encaminhado ao Suporte Site por ${actor().name}.\n\nJustificativa: ${reason}`;
+
+    const optimistic = {
+      id: `local-forward-${Date.now()}`,
+      authorRole: "OPERATOR",
+      authorName: actor().name,
+      targetType: "ALL",
+      text,
+      kind: "FORWARD",
+      createdAt: new Date().toISOString(),
+    };
+
+    saveOptimisticMessage(selectedTicket.id, optimistic);
+
+    setTickets((current) =>
+      current.map((ticket) =>
+        ticket.id === selectedTicket.id
+          ? {
+              ...ticket,
+              status: "FORWARDED_TO_SUPER_ADMIN",
+              currentOwnerType: "SUPER_ADMIN",
+              messages: [...ticketMessages(ticket), optimistic],
+            }
+          : ticket,
+      ),
+    );
+
+    try {
+      await forwardSupportToSuperAdminReal(selectedTicket.id, actor(), reason);
       setForwardReason("");
-      reload();
+      setForwardOpen(false);
+      await reload();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível encaminhar.");
+      alert(error instanceof Error ? error.message : "Não foi possível encaminhar para o Suporte Site.");
     }
   }
 
-  function resolveSelected() {
-    if (!selectedTicket) return;
+  async function closeTicket() {
+    if (!selectedTicket || selectedClosed) return;
+
+    const name = actor().name;
+    const text = `Chamado encerrado por ${name}.`;
+
+    const optimistic = {
+      id: `local-close-${Date.now()}`,
+      authorRole: "OPERATOR",
+      authorName: name,
+      targetType: "ALL",
+      text,
+      kind: "SYSTEM",
+      createdAt: new Date().toISOString(),
+    };
+
+    saveOptimisticMessage(selectedTicket.id, optimistic);
+
+    setTickets((current) =>
+      current.map((ticket) =>
+        ticket.id === selectedTicket.id
+          ? { ...ticket, status: "RESOLVED", messages: [...ticketMessages(ticket), optimistic] }
+          : ticket,
+      ),
+    );
+
     try {
-      resolveSupportTicket(selectedTicket.id, actor(), resolution);
-      setResolution("");
-      reload();
+      await resolveSupportTicketReal(selectedTicket.id, actor(), text, { targetType: "ALL" as any });
+      await reload();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Não foi possível resolver.");
+      alert(error instanceof Error ? error.message : "Não foi possível resolver o chamado.");
     }
+  }
+
+  if (loaded && !context.eventId) {
+    return (
+      <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
+        <section className="mx-auto max-w-3xl rounded-[2rem] border border-amber-200 bg-amber-50 p-8 shadow-sm">
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-700">Selecione um evento</p>
+          <h1 className="mt-2 text-3xl font-black text-amber-950">Entre pelo botão Suporte do evento</h1>
+          <p className="mt-3 text-sm font-bold leading-6 text-amber-900">
+            O suporte do operador é sempre limitado ao evento aberto. Volte para sua agenda, entre no evento desejado e clique em Suporte.
+          </p>
+          <a href="/operator/dashboard" className="mt-6 inline-flex rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white">
+            Voltar para agenda do operador
+          </a>
+        </section>
+      </main>
+    );
   }
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
-      <section className="mx-auto max-w-7xl space-y-6">
-        <section className="rounded-[34px] bg-slate-950 p-8 text-white shadow-sm">
-          <p className="text-[11px] font-black uppercase tracking-[0.34em] text-blue-300">Suporte operacional</p>
-          <h1 className="mt-4 text-5xl font-black leading-tight">Responder chamados ou acionar Super Admin.</h1>
-          <p className="mt-4 max-w-4xl text-sm font-semibold leading-7 text-white/75">
-            O operador responde atendimentos do evento ou encaminha o mesmo chamado para o Super Admin quando for problema interno do site.
-          </p>
-          <div className="mt-6 grid gap-3 md:grid-cols-3">
-            <Metric label="Chamados" value={String(counts.total)} />
-            <Metric label="Com Super Admin" value={String(counts.super)} />
-            <Metric label="Resolvidos" value={String(counts.resolved)} />
-          </div>
-        </section>
-
-        <section className="grid gap-6 lg:grid-cols-[360px_1fr]">
-          <aside className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Evento</p>
-                <h2 className="mt-2 text-2xl font-black">{eventInfo.eventName}</h2>
-              </div>
-              <a href="/operator/dashboard" className="rounded-2xl border border-slate-200 px-4 py-3 text-xs font-black">Voltar</a>
+      <div className="mx-auto max-w-7xl">
+        <header className="rounded-[2rem] bg-slate-950 p-6 text-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.24em] text-blue-300">Suporte operacional</p>
+              <h1 className="mt-2 text-3xl font-black">Chat de suporte do operador</h1>
+              <p className="mt-2 max-w-3xl text-sm font-bold text-slate-300">
+                Evento: {context.eventName || context.eventId || "carregando evento..."}
+              </p>
             </div>
-            <TicketList tickets={tickets} selectedId={selectedTicket?.id} onSelect={setSelectedId} />
+            <a
+              href={`/operator/support/new?eventId=${encodeURIComponent(context.eventId || "")}&eventName=${encodeURIComponent(context.eventName || "")}${context.assignmentId ? `&assignmentId=${encodeURIComponent(context.assignmentId)}` : ""}`}
+              className={`rounded-2xl px-5 py-3 text-sm font-black text-white ${context.eventId ? "bg-blue-600" : "pointer-events-none bg-slate-500 opacity-50"}`}
+            >
+              Abrir técnico
+            </a>
+          </div>
+        </header>
+
+        <section className="mt-6 grid h-[calc(100vh-230px)] min-h-[660px] gap-5 lg:grid-cols-[360px_1fr]">
+          <aside className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Fichas do evento</p>
+                <h2 className="text-xl font-black">Chamados</h2>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-500">{scopedTickets.length}</span>
+            </div>
+
+            <div className="h-[calc(100%-62px)] overflow-y-auto pr-1">
+              <CardList tickets={scopedTickets} selectedId={selectedTicket?.id} onSelect={selectTicket} />
+            </div>
           </aside>
 
-          <section>
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-[#e9f3ee] shadow-sm">
             {selectedTicket ? (
-              <article className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
-                <TicketHeader ticket={selectedTicket} />
-                <div className="mt-6"><TicketMessages ticket={selectedTicket} /></div>
-                {selectedTicket.currentOwnerType === "SUPER_ADMIN" || ["RESOLVED", "CLOSED"].includes(selectedTicket.status) ? (
-                  <div className="mt-6 rounded-2xl bg-amber-50 p-4 text-sm font-bold leading-6 text-amber-900">
-                    Este chamado está com {supportOwnerLabel(selectedTicket.currentOwnerType)} ou já foi resolvido. Aguarde a devolução para responder.
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
+                  <div>
+                    <h2 className="text-lg font-black">{selectedTicket.title || "Chamado"}</h2>
+                    <p className="text-xs font-bold text-slate-500">
+                      {selectedTicket.protocol || selectedTicket.id} • {context.eventName || context.eventId}
+                    </p>
                   </div>
-                ) : (
-                  <section className="mt-6 grid gap-4 lg:grid-cols-3">
-                    <ActionBox title="Responder" value={reply} setValue={setReply} placeholder="Resposta do atendimento..." buttonLabel="Responder" onClick={answerSelected} />
-                    <ActionBox title="Encaminhar ao Super Admin" value={forwardReason} setValue={setForwardReason} placeholder="Explique o problema técnico do site..." buttonLabel="Enviar ao Super Admin" onClick={forwardSelected} tone="blue" />
-                    <ActionBox title="Resolver" value={resolution} setValue={setResolution} placeholder="Descreva a solução..." buttonLabel="Resolver" onClick={resolveSelected} tone="green" />
-                  </section>
-                )}
-              </article>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedClosed ? (
+                      <span className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-black text-slate-600">Histórico resolvido</span>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => setForwardOpen((current) => !current)} className="rounded-2xl bg-amber-500 px-4 py-2 text-xs font-black text-white">
+                          Encaminhar Suporte Site
+                        </button>
+                        <button type="button" onClick={closeTicket} className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white">
+                          Resolver chamado
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {selectedClosed ? (
+                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 text-sm font-black text-slate-600">
+                    Chamado resolvido. Esta conversa fica somente como histórico até o cliente reabrir.
+                  </div>
+                ) : null}
+
+                {forwardOpen && !selectedClosed ? (
+                  <div className="border-b border-amber-200 bg-amber-50 p-4">
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-700">Justificativa para o Suporte Site</p>
+                    <div className="mt-2 flex gap-2">
+                      <textarea
+                        value={forwardReason}
+                        onChange={(event) => setForwardReason(event.target.value)}
+                        className="min-h-20 flex-1 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-bold outline-none"
+                        placeholder="Explique brevemente por que este chamado precisa do Suporte Site..."
+                      />
+                      <button type="button" onClick={forwardToSupportSite} className="rounded-2xl bg-amber-600 px-5 py-3 text-sm font-black text-white">
+                        Enviar
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex-1 space-y-3 overflow-y-auto p-5">
+                  {mergedMessages(selectedTicket).map((message: any) => (
+                    <Bubble key={message.id} message={message} />
+                  ))}
+                  <div ref={bottomRef} />
+                </div>
+
+                <div className="border-t border-slate-200 bg-white p-4">
+                  <div className="flex gap-2">
+                    <textarea
+                      value={reply}
+                      disabled={selectedClosed}
+                      onChange={(event) => setReply(event.target.value)}
+                      className="min-h-12 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                      placeholder={selectedClosed ? "Chamado resolvido. Somente histórico até o cliente reabrir." : "Digite uma mensagem..."}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          void sendReply();
+                        }
+                      }}
+                    />
+                    <button type="button" disabled={selectedClosed || !reply.trim()} onClick={sendReply} className="rounded-2xl bg-blue-600 px-6 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">
+                      Enviar
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs font-bold text-slate-400">
+                    Todas as mensagens ficam visíveis para todos os envolvidos no chamado deste evento.
+                  </p>
+                </div>
+              </>
             ) : (
-              <EmptyState />
+              <div className="grid flex-1 place-items-center p-10 text-center">
+                <div>
+                  <p className="text-2xl font-black text-slate-700">Nenhum chamado selecionado</p>
+                  <p className="mt-2 text-sm font-bold text-slate-500">Esta tela mostra apenas chamados do evento aberto.</p>
+                </div>
+              </div>
             )}
           </section>
         </section>
-      </section>
+      </div>
     </main>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[24px] border border-white/10 bg-white/10 p-5">
-      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/55">{label}</p>
-      <p className="mt-2 text-2xl font-black text-white">{value}</p>
-    </div>
-  );
-}
-
-function TicketList({ tickets, selectedId, onSelect }: { tickets: SupportTicket[]; selectedId?: string; onSelect: (id: string) => void }) {
-  return (
-    <div className="mt-5 space-y-3">
-      {tickets.length === 0 ? (
-        <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">Nenhum chamado deste evento.</div>
-      ) : (
-        tickets.map((ticket) => (
-          <button key={ticket.id} type="button" onClick={() => onSelect(ticket.id)} className={`w-full rounded-2xl border p-4 text-left ${selectedId === ticket.id ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-slate-50"}`}>
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">{ticket.protocol}</p>
-            <h3 className="mt-1 text-lg font-black">{ticket.title}</h3>
-            <p className="mt-1 text-xs font-bold text-slate-500">{supportStatusLabel(ticket.status)} • {supportPriorityLabel(ticket.priority)}</p>
-          </button>
-        ))
-      )}
-    </div>
-  );
-}
-
-function TicketHeader({ ticket }: { ticket: SupportTicket }) {
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-blue-600">{ticket.protocol}</p>
-        <h2 className="mt-2 text-3xl font-black">{ticket.title}</h2>
-        <p className="mt-2 text-sm font-bold text-slate-500">Responsável atual: {supportOwnerLabel(ticket.currentOwnerType)}</p>
-      </div>
-      <span className="rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white">{supportStatusLabel(ticket.status)}</span>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <section className="rounded-[30px] border border-slate-200 bg-white p-8 text-center shadow-sm">
-      <h2 className="text-3xl font-black">Nenhum chamado selecionado</h2>
-    </section>
-  );
-}
-
-function timeLabel(value?: string) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function TicketMessages({ ticket }: { ticket: SupportTicket }) {
-  return (
-    <section className="rounded-2xl bg-slate-50 p-4">
-      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Histórico completo</p>
-      <div className="mt-4 space-y-3">
-        {ticket.messages.map((message) => (
-          <div key={message.id} className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-            <div className="flex flex-wrap justify-between gap-2">
-              <p className="text-sm font-black">{message.authorName}</p>
-              <p className="text-xs font-bold text-slate-400">{timeLabel(message.createdAt)}</p>
-            </div>
-            <p className="mt-1 text-xs font-black uppercase tracking-[0.18em] text-orange-600">
-              {supportOwnerLabel(message.authorRole)} {message.internal ? "• nota interna" : ""}
-            </p>
-            <p className="mt-3 whitespace-pre-wrap text-sm font-semibold leading-6 text-slate-700">{message.text}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ActionBox({
-  title,
-  value,
-  setValue,
-  placeholder,
-  buttonLabel,
-  onClick,
-  tone = "dark",
-}: {
-  title: string;
-  value: string;
-  setValue: (value: string) => void;
-  placeholder: string;
-  buttonLabel: string;
-  onClick: () => void;
-  tone?: "dark" | "blue" | "green" | "orange";
-}) {
-  const buttonClass =
-    tone === "blue"
-      ? "bg-blue-600 text-white"
-      : tone === "green"
-        ? "bg-emerald-600 text-white"
-        : tone === "orange"
-          ? "bg-orange-600 text-white"
-          : "bg-slate-950 text-white";
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <h3 className="text-lg font-black">{title}</h3>
-      <textarea
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        className="mt-3 min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold outline-none focus:border-orange-500"
-        placeholder={placeholder}
-      />
-      <button type="button" onClick={onClick} className={`mt-3 w-full rounded-2xl px-4 py-3 text-sm font-black ${buttonClass}`}>
-        {buttonLabel}
-      </button>
-    </div>
   );
 }

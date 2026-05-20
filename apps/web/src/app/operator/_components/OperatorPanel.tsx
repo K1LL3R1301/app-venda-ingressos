@@ -43,11 +43,29 @@ type EventItem = {
   endTime?: string | null;
   organizerId?: string | null;
   organizer?: OrganizerInfo | null;
-  location?: {
+  city?: string | null;
+  state?: string | null;
+  venue?: string | {
     venueName?: string | null;
+    name?: string | null;
     city?: string | null;
     state?: string | null;
     address?: string | null;
+    addressLine1?: string | null;
+    neighborhood?: string | null;
+  } | null;
+  venueName?: string | null;
+  address?: string | null;
+  addressLine1?: string | null;
+  neighborhood?: string | null;
+  location?: string | {
+    venueName?: string | null;
+    name?: string | null;
+    city?: string | null;
+    state?: string | null;
+    address?: string | null;
+    addressLine1?: string | null;
+    neighborhood?: string | null;
   } | null;
 };
 
@@ -244,13 +262,19 @@ function getEventName(assignment: OperatorAssignment) {
 }
 
 function getEventLocation(assignment: OperatorAssignment) {
-  const location = assignment.event?.location;
+  const event = assignment.event;
 
-  return (
-    [location?.venueName, location?.city, location?.state].filter(Boolean).join(" • ") ||
-    location?.address ||
-    "Local não informado"
-  );
+  const value =
+    formatEventLocation(event?.location) ||
+    formatEventLocation(event?.venue) ||
+    formatEventLocation(event?.venueName) ||
+    formatEventLocation(event?.city) ||
+    formatEventLocation(event?.state) ||
+    formatEventLocation(event?.address) ||
+    formatEventLocation(event?.addressLine1) ||
+    formatEventLocation((assignment as any)?.location);
+
+  return value || "Local não informado";
 }
 
 function organizerFromAssignment(assignment: OperatorAssignment): OrganizerInfo | null {
@@ -327,6 +351,7 @@ function canUseSupport(assignment?: OperatorAssignment | null) {
 
 function operatorEventAccessUrl(kind: "checkin" | "support", assignment: OperatorAssignment) {
   const eventId = String(assignment.eventId || assignment.event?.id || "");
+  const eventName = getEventName(assignment);
   const params = new URLSearchParams();
 
   params.set("assignmentId", assignment.id);
@@ -982,15 +1007,52 @@ function assignmentCardEventName(assignment?: OperatorAssignment | null) {
 function assignmentCardEventDate(assignment?: OperatorAssignment | null) {
   return assignment?.eventDate || assignment?.event?.eventDate || "";
 }
+function formatEventLocation(value: unknown) {
+  if (!value) return "";
+
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value || "").trim();
+  }
+
+  if (typeof value === "object") {
+    const item = value as {
+      venueName?: string | null;
+      name?: string | null;
+      address?: string | null;
+      addressLine1?: string | null;
+      neighborhood?: string | null;
+      city?: string | null;
+      state?: string | null;
+    };
+
+    return [
+      item.venueName || item.name,
+      item.address || item.addressLine1,
+      item.neighborhood,
+      [item.city, item.state].filter(Boolean).join(" - "),
+    ]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(" • ");
+  }
+
+  return "";
+}
 
 function assignmentCardEventLocation(assignment?: OperatorAssignment | null) {
-  return (
-    assignment?.event?.location ||
-    assignment?.event?.city ||
-    assignment?.event?.venue ||
-    assignment?.location ||
-    "Local não informado"
-  );
+  const event = assignment?.event;
+
+  const value =
+    formatEventLocation(event?.location) ||
+    formatEventLocation(event?.venue) ||
+    formatEventLocation(event?.venueName) ||
+    formatEventLocation(event?.city) ||
+    formatEventLocation(event?.state) ||
+    formatEventLocation(event?.address) ||
+    formatEventLocation(event?.addressLine1) ||
+    formatEventLocation((assignment as any)?.location);
+
+  return value || "Local não informado";
 }
 
 function assignmentWasDeclined(assignment?: OperatorAssignment | null) {

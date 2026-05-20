@@ -1,0 +1,44 @@
+﻿**********************
+Início da transcrição do Windows PowerShell
+Hora de início: 20260520114943
+Nome de Usuário: GABRIEL\march
+Executar como Usuário: GABRIEL\march
+Nome da Configuração: 
+Computador: GABRIEL (Microsoft Windows NT 10.0.26200.0)
+Aplicativo Host: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File .\run-support-guided-walkthrough.ps1
+ID do Processo: 24820
+PSVersion: 5.1.26100.8457
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.8457
+BuildVersion: 10.0.26100.8457
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+[OK] Playwright ja instalado.
+[INFO] Conferindo Chromium...
+
+[OK] WEB ja esta respondendo em http://localhost:3000
+
+[INFO] Iniciando walkthrough com barra 0 a 100...
+
+[PROGRESSO] [#########################-----]  85%  17/20  regra resolvido bloqueado
+[PROGRESSO] [###########################---]  90%  18/20  finalizando...
+[PROGRESSO] [############################--]  95%  19/20  finalizando...
+[PROGRESSO] [##############################] 100%  20/20  finalizando...
+
+[RESUMO]
+Avisos: 0
+Falhas: 0
+[RESULTADO] Walkthrough concluido sem falhas criticas.
+
+[OK] Walkthrough visual concluido.
+[OK] Prints:
+  C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough
+[OK] Relatorios:
+  C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\reports
+**********************
+Fim da transcrição do Windows PowerShell
+Hora de término: 20260520115020
+**********************

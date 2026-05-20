@@ -48,9 +48,8 @@ model Organizer {
   phone     String?
   status    String  @default("ACTIVE")
 
-  
-  ownerUserId String?
-slug         String? @unique
+  ownerUserId  String?
+  slug         String? @unique
   bio          String?
   websiteUrl   String?
   instagramUrl String?
@@ -62,13 +61,13 @@ slug         String? @unique
   city         String?
   state        String?
 
-  
-  ownerUser User? @relation("OrganizerOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
-createdAt DateTime @default(now())
+  ownerUser User?    @relation("OrganizerOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   events         Event[]
   supportThreads SupportThread[]
+
   @@index([ownerUserId])
 }
 
@@ -410,8 +409,8 @@ model Order {
   customerCpf    String?
   status         String    @default("PENDING")
   totalAmount    Decimal   @db.Decimal(10, 2)
-  grossAmount    Decimal? @db.Decimal(10, 2)
-  discountAmount Decimal  @default(0) @db.Decimal(10, 2)
+  grossAmount    Decimal?  @db.Decimal(10, 2)
+  discountAmount Decimal   @default(0) @db.Decimal(10, 2)
   couponCode     String?
   promoterRef    String?
   promoterId     String?
@@ -437,7 +436,6 @@ model Order {
   @@index([customerCpf])
   @@index([status])
   @@index([expiresAt])
-
   @@index([couponCode])
   @@index([promoterId])
   @@index([couponId])
@@ -475,10 +473,10 @@ model Ticket {
   holderName                   String?
   holderEmail                  String?
   holderCpf                    String?
-    accessKind     String?
-  accessLabel    String?
-  accessMetadata Json?
-usedAt                       DateTime?
+  accessKind                   String?
+  accessLabel                  String?
+  accessMetadata               Json?
+  usedAt                       DateTime?
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
 
@@ -611,9 +609,9 @@ model User {
   sentMessages    SupportMessage[] @relation("SupportMessageSender")
   assignedThreads SupportThread[]  @relation("SupportThreadAssignedUser")
 
-  
   ownedOrganizers Organizer[] @relation("OrganizerOwner")
-@@index([role])
+
+  @@index([role])
   @@index([status])
   @@index([authProvider])
   @@index([cpf])
@@ -673,12 +671,32 @@ model SupportThread {
   updatedAt      DateTime @updatedAt
   assignedUserId String?
 
-  organizer    Organizer        @relation(fields: [organizerId], references: [id])
-  event        Event            @relation(fields: [eventId], references: [id])
-  order        Order?           @relation(fields: [orderId], references: [id])
-  customerUser User?            @relation("SupportThreadCustomerUser", fields: [customerUserId], references: [id])
-  assignedUser User?            @relation("SupportThreadAssignedUser", fields: [assignedUserId], references: [id])
-  messages     SupportMessage[]
+  protocol         String? @unique
+  priority         String  @default("NORMAL")
+  category         String  @default("EVENT_SUPPORT")
+  currentOwnerType String  @default("PRODUCER")
+
+  producerUserId String?
+  producerName   String?
+  producerEmail  String?
+
+  operatorUserId String?
+  operatorName   String?
+  operatorEmail  String?
+
+  forwardedAt DateTime?
+  returnedAt  DateTime?
+  resolvedAt  DateTime?
+
+  supportHistory Json?
+  participants   Json?
+  sourceType     String           @default("CUSTOMER")
+  organizer      Organizer        @relation(fields: [organizerId], references: [id])
+  event          Event            @relation(fields: [eventId], references: [id])
+  order          Order?           @relation(fields: [orderId], references: [id])
+  customerUser   User?            @relation("SupportThreadCustomerUser", fields: [customerUserId], references: [id])
+  assignedUser   User?            @relation("SupportThreadAssignedUser", fields: [assignedUserId], references: [id])
+  messages       SupportMessage[]
 
   @@index([organizerId])
   @@index([eventId])
@@ -689,6 +707,16 @@ model SupportThread {
   @@index([status])
   @@index([lastMessageAt])
   @@index([assignedUserId])
+  @@index([protocol])
+  @@index([priority])
+  @@index([category])
+  @@index([currentOwnerType])
+  @@index([producerUserId])
+  @@index([producerEmail])
+  @@index([operatorUserId])
+  @@index([operatorEmail])
+  @@index([resolvedAt])
+  @@index([sourceType])
 }
 
 model SupportMessage {
@@ -699,6 +727,10 @@ model SupportMessage {
   senderEmail  String?
   senderType   String
   message      String
+  kind         String   @default("MESSAGE")
+  internal     Boolean  @default(false)
+  targetType   String   @default("ALL")
+  metadata     Json?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -709,6 +741,9 @@ model SupportMessage {
   @@index([senderUserId])
   @@index([senderType])
   @@index([createdAt])
+  @@index([kind])
+  @@index([internal])
+  @@index([targetType])
 }
 
 model AdminAccessRequest {
@@ -868,17 +903,17 @@ model OperatorAssignment {
   eventTitle String?
   eventDate  DateTime?
 
-  status            String   @default("INVITED")
+  status            String  @default("INVITED")
   invitationMessage String?
   permissions       Json?
   notes             String?
 
   workDates           Json?
-  workPlanStatus      String   @default("NONE")
+  workPlanStatus      String    @default("NONE")
   workPlanSubmittedAt DateTime?
   workPlanRespondedAt DateTime?
 
-  paymentStatus       String   @default("PENDING")
+  paymentStatus       String    @default("PENDING")
   paymentNotes        String?
   paymentProofName    String?
   paymentProofDataUrl String?
@@ -887,7 +922,7 @@ model OperatorAssignment {
   paymentPaidByName   String?
   paymentCalculatedAt DateTime?
 
-  invitedAt   DateTime @default(now())
+  invitedAt   DateTime  @default(now())
   acceptedAt  DateTime?
   declinedAt  DateTime?
   assignedAt  DateTime?
@@ -910,8 +945,8 @@ model OperatorAssignment {
 }
 
 model AstroPromoter {
-  id                 String   @id @default(uuid())
-  protocol           String   @unique
+  id                  String    @id @default(uuid())
+  protocol            String    @unique
   adminUserId         String
   adminName           String?
   adminEmail          String?
@@ -925,20 +960,20 @@ model AstroPromoter {
   whatsapp            String?
   instagram           String?
   pixKey              String?
-  commissionType      String   @default("PERCENT")
-  commissionValue     Decimal  @default(0)
-  commissionBase      String   @default("NET_AMOUNT")
-  status              String   @default("ACTIVE")
+  commissionType      String    @default("PERCENT")
+  commissionValue     Decimal   @default(0)
+  commissionBase      String    @default("NET_AMOUNT")
+  status              String    @default("ACTIVE")
   notes               String?
-  paymentStatus       String   @default("PENDING")
+  paymentStatus       String    @default("PENDING")
   paymentNotes        String?
   paymentProofName    String?
   paymentProofDataUrl String?
   paymentPaidAt       DateTime?
   paymentPaidById     String?
   paymentPaidByName   String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   coupons AstroCoupon[]
   links   AstroPromoterLink[]
@@ -951,26 +986,26 @@ model AstroPromoter {
 }
 
 model AstroCoupon {
-  id              String   @id @default(uuid())
-  protocol        String   @unique
-  adminUserId      String
-  eventId          String?
-  eventTitle       String?
-  promoterId       String?
-  promoter         AstroPromoter? @relation(fields: [promoterId], references: [id])
-  code             String
-  discountType     String   @default("PERCENT")
-  discountValue    Decimal  @default(0)
-  usageLimit       Int?
-  usedCount        Int      @default(0)
-  perCpfLimit      Int?
-  startsAt         DateTime?
-  endsAt           DateTime?
-  validChannels    Json?
-  status           String   @default("ACTIVE")
-  notes            String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id            String         @id @default(uuid())
+  protocol      String         @unique
+  adminUserId   String
+  eventId       String?
+  eventTitle    String?
+  promoterId    String?
+  promoter      AstroPromoter? @relation(fields: [promoterId], references: [id])
+  code          String
+  discountType  String         @default("PERCENT")
+  discountValue Decimal        @default(0)
+  usageLimit    Int?
+  usedCount     Int            @default(0)
+  perCpfLimit   Int?
+  startsAt      DateTime?
+  endsAt        DateTime?
+  validChannels Json?
+  status        String         @default("ACTIVE")
+  notes         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   sales AstroPromoterSale[]
 
@@ -982,24 +1017,24 @@ model AstroCoupon {
 }
 
 model AstroPromoterLink {
-  id            String   @id @default(uuid())
-  protocol      String   @unique
-  adminUserId    String
-  eventId        String?
-  eventTitle     String?
-  promoterId     String
-  promoter       AstroPromoter @relation(fields: [promoterId], references: [id])
-  label          String?
-  slug           String   @unique
-  url            String?
-  clicks         Int      @default(0)
-  ordersPaid     Int      @default(0)
-  revenue        Decimal  @default(0)
-  commission     Decimal  @default(0)
-  status         String   @default("ACTIVE")
-  notes          String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id          String        @id @default(uuid())
+  protocol    String        @unique
+  adminUserId String
+  eventId     String?
+  eventTitle  String?
+  promoterId  String
+  promoter    AstroPromoter @relation(fields: [promoterId], references: [id])
+  label       String?
+  slug        String        @unique
+  url         String?
+  clicks      Int           @default(0)
+  ordersPaid  Int           @default(0)
+  revenue     Decimal       @default(0)
+  commission  Decimal       @default(0)
+  status      String        @default("ACTIVE")
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   sales AstroPromoterSale[]
 
@@ -1010,31 +1045,31 @@ model AstroPromoterLink {
 }
 
 model AstroPromoterSale {
-  id               String   @id @default(uuid())
-  protocol         String   @unique
-  adminUserId       String
-  eventId           String?
-  eventTitle        String?
-  promoterId        String?
-  promoter          AstroPromoter? @relation(fields: [promoterId], references: [id])
-  couponId          String?
-  coupon            AstroCoupon? @relation(fields: [couponId], references: [id])
-  linkId            String?
-  link              AstroPromoterLink? @relation(fields: [linkId], references: [id])
-  orderId           String?
-  customerName      String?
-  customerEmail     String?
-  customerCpf       String?
-  grossAmount       Decimal  @default(0)
-  discountAmount    Decimal  @default(0)
-  netAmount         Decimal  @default(0)
-  commissionAmount  Decimal  @default(0)
-  status            String   @default("PAID")
-  source            String   @default("MANUAL")
-  paidAt            DateTime?
-  notes             String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id               String             @id @default(uuid())
+  protocol         String             @unique
+  adminUserId      String
+  eventId          String?
+  eventTitle       String?
+  promoterId       String?
+  promoter         AstroPromoter?     @relation(fields: [promoterId], references: [id])
+  couponId         String?
+  coupon           AstroCoupon?       @relation(fields: [couponId], references: [id])
+  linkId           String?
+  link             AstroPromoterLink? @relation(fields: [linkId], references: [id])
+  orderId          String?
+  customerName     String?
+  customerEmail    String?
+  customerCpf      String?
+  grossAmount      Decimal            @default(0)
+  discountAmount   Decimal            @default(0)
+  netAmount        Decimal            @default(0)
+  commissionAmount Decimal            @default(0)
+  status           String             @default("PAID")
+  source           String             @default("MANUAL")
+  paidAt           DateTime?
+  notes            String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
   @@index([adminUserId])
   @@index([eventId])

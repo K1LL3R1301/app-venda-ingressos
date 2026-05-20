@@ -1,0 +1,2447 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  clearAuthSession,
+  getStoredAuthToken,
+  getStoredAuthUser,
+} from "../../../lib/auth-client";
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ||
+  "http://localhost:3001/v1";
+
+type StoredUser = {
+  id?: string;
+  sub?: string;
+  name?: string;
+  email?: string;
+  cpf?: string;
+  role?: string;
+};
+
+type OrganizerInfo = {
+  id?: string | null;
+  tradeName?: string | null;
+  legalName?: string | null;
+  name?: string | null;
+  email?: string | null;
+};
+
+type EventItem = {
+  id?: string | null;
+  name?: string | null;
+  title?: string | null;
+  slug?: string | null;
+  status?: string | null;
+  category?: string | null;
+  startDate?: string | null;
+  eventDate?: string | null;
+  endDate?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  organizerId?: string | null;
+  organizer?: OrganizerInfo | null;
+  city?: string | null;
+  state?: string | null;
+  venue?: string | {
+    venueName?: string | null;
+    name?: string | null;
+    city?: string | null;
+    state?: string | null;
+    address?: string | null;
+    addressLine1?: string | null;
+    neighborhood?: string | null;
+  } | null;
+  venueName?: string | null;
+  address?: string | null;
+  addressLine1?: string | null;
+  neighborhood?: string | null;
+  location?: string | {
+    venueName?: string | null;
+    name?: string | null;
+    city?: string | null;
+    state?: string | null;
+    address?: string | null;
+    addressLine1?: string | null;
+    neighborhood?: string | null;
+  } | null;
+};
+
+type WorkDate = {
+  id?: string | null;
+  date?: string | null;
+  amount?: string | number | null;
+  functions?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  status?: string | null;
+  available?: boolean | null;
+  responseNote?: string | null;
+  respondedAt?: string | null;
+};
+
+type OperatorAssignmentPermissions = {
+  canValidateTickets?: boolean | null;
+  canAnswerSupport?: boolean | null;
+};
+
+type OperatorAssignment = {
+  id: string;
+  protocol?: string | null;
+  status?: string | null;
+  workPlanStatus?: string | null;
+  paymentStatus?: string | null;
+  eventId?: string | null;
+  event?: EventItem | null;
+  eventTitle?: string | null;
+  eventName?: string | null;
+  eventDate?: string | null;
+  organizerId?: string | null;
+  organizer?: OrganizerInfo | null;
+  invitedByUserId?: string | null;
+  invitedByName?: string | null;
+  invitedByEmail?: string | null;
+  adminName?: string | null;
+  adminEmail?: string | null;
+  operatorUserId?: string | null;
+  customerUserId?: string | null;
+  userId?: string | null;
+  operatorName?: string | null;
+  operatorEmail?: string | null;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  userName?: string | null;
+  userEmail?: string | null;
+  cpf?: string | null;
+  operatorCpf?: string | null;
+  operatorCpfNormalized?: string | null;
+  notes?: string | null;
+  finalNotes?: string | null;
+  permissions?: OperatorAssignmentPermissions | null;
+  canValidateTickets?: boolean | null;
+  canAnswerSupport?: boolean | null;
+  invitationMessage?: string | null;
+  workDates?: WorkDate[] | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  invitedAt?: string | null;
+  assignedAt?: string | null;
+};
+
+type ProducerGroup = {
+  id: string;
+  name: string;
+  email: string;
+  assignments: OperatorAssignment[];
+};
+
+type AgendaItem = {
+  id: string;
+  assignment: OperatorAssignment;
+  workDate: WorkDate;
+  producer: ProducerGroup;
+  dateKey: string;
+};
+
+type ViewMode = "producers" | "producer" | "assignment" | "agenda";
+type AssignmentListFilter = "ALL" | "ACCEPTED" | "PENDING" | "DECLINED";
+
+function normalizeText(value?: string | number | null) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function onlyDigits(value?: string | null) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function currentUserId(user?: StoredUser | null) {
+  return String(user?.id || user?.sub || "");
+}
+
+function assignmentBelongsToUser(assignment: OperatorAssignment, user: StoredUser | null) {
+  const userId = currentUserId(user);
+  const userEmail = normalizeText(user?.email);
+  const userCpf = onlyDigits(user?.cpf);
+
+  const ids = [assignment.operatorUserId, assignment.customerUserId, assignment.userId].map((value) =>
+    String(value || ""),
+  );
+
+  const emails = [
+    assignment.operatorEmail,
+    assignment.customerEmail,
+    assignment.userEmail,
+  ].map(normalizeText);
+
+  const cpfs = [
+    assignment.cpf,
+    assignment.operatorCpf,
+    assignment.operatorCpfNormalized,
+  ].map(onlyDigits);
+
+  if (userId && ids.includes(userId)) return true;
+  if (userEmail && emails.includes(userEmail)) return true;
+  if (userCpf && cpfs.includes(userCpf)) return true;
+
+  return false;
+}
+
+function toNumber(value?: string | number | null) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  const parsed = Number(String(value).replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function money(value?: string | number | null) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(toNumber(value));
+}
+
+function safeDate(value?: string | null) {
+  if (!value) return null;
+
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateKey(value?: string | null) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
+  const date = safeDate(value);
+  return date ? date.toISOString().slice(0, 10) : String(value).slice(0, 10);
+}
+
+function formatDate(value?: string | null) {
+  const date = safeDate(value);
+  if (!date) return value || "-";
+
+  return date.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatDateTime(value?: string | null) {
+  const date = safeDate(value);
+  if (!date) return value || "-";
+
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function eventDate(assignment: OperatorAssignment) {
+  return assignment.event?.startDate || assignment.event?.eventDate || assignment.eventDate || assignment.event?.endDate || null;
+}
+
+function getEventName(assignment: OperatorAssignment) {
+  return (
+    assignment.event?.name ||
+    assignment.event?.title ||
+    assignment.eventTitle ||
+    assignment.eventName ||
+    assignment.event?.slug ||
+    "Evento sem nome"
+  );
+}
+
+function getEventLocation(assignment: OperatorAssignment) {
+  const location = assignment.event?.location;
+
+  return (
+    [location?.venueName, location?.city, location?.state].filter(Boolean).join(" • ") ||
+    location?.address ||
+    "Local não informado"
+  );
+}
+
+function organizerFromAssignment(assignment: OperatorAssignment): OrganizerInfo | null {
+  return assignment.organizer || assignment.event?.organizer || null;
+}
+
+function getProducerName(assignment: OperatorAssignment) {
+  const organizer = organizerFromAssignment(assignment);
+
+  return (
+    assignment.invitedByName ||
+    assignment.adminName ||
+    organizer?.tradeName ||
+    organizer?.legalName ||
+    organizer?.name ||
+    assignment.invitedByEmail ||
+    assignment.adminEmail ||
+    organizer?.email ||
+    "Produtor"
+  );
+}
+
+function getProducerEmail(assignment: OperatorAssignment) {
+  const organizer = organizerFromAssignment(assignment);
+
+  return assignment.invitedByEmail || assignment.adminEmail || organizer?.email || "";
+}
+
+function getProducerId(assignment: OperatorAssignment) {
+  const organizer = organizerFromAssignment(assignment);
+
+  return String(
+    assignment.invitedByUserId ||
+      assignment.organizerId ||
+      organizer?.id ||
+      assignment.invitedByEmail ||
+      assignment.adminEmail ||
+      organizer?.email ||
+      getProducerName(assignment),
+  );
+}
+
+function status(assignment: OperatorAssignment) {
+  return String(assignment.status || "").toUpperCase();
+}
+
+
+function assignmentPermissions(assignment?: OperatorAssignment | null) {
+  const raw = assignment?.permissions;
+
+  const canValidateTickets =
+    raw?.canValidateTickets ??
+    assignment?.canValidateTickets ??
+    true;
+
+  const canAnswerSupport =
+    raw?.canAnswerSupport ??
+    assignment?.canAnswerSupport ??
+    true;
+
+  return {
+    canValidateTickets: canValidateTickets !== false,
+    canAnswerSupport: canAnswerSupport !== false,
+  };
+}
+
+function canUseCheckin(assignment?: OperatorAssignment | null) {
+  return assignmentPermissions(assignment).canValidateTickets;
+}
+
+function canUseSupport(assignment?: OperatorAssignment | null) {
+  return assignmentPermissions(assignment).canAnswerSupport;
+}
+
+function operatorEventAccessUrl(kind: "checkin" | "support", assignment: OperatorAssignment) {
+  const eventId = String(assignment.eventId || assignment.event?.id || "");
+  const params = new URLSearchParams();
+
+  params.set("assignmentId", assignment.id);
+
+  if (eventId) {
+    params.set("eventId", eventId);
+  }
+
+  return `/operator/${kind}?${params.toString()}`;
+}
+
+function OperationPermissionCards({ assignment }: { assignment: OperatorAssignment }) {
+  if (!assignmentDetailsAvailable(assignment)) {
+    return null;
+  }
+
+  const permissions = assignmentPermissions(assignment);
+
+  if (!permissions.canValidateTickets && !permissions.canAnswerSupport) {
+    return (
+      <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+          Acessos do evento
+        </p>
+        <h3 className="mt-2 text-2xl font-black">Nenhuma operação liberada</h3>
+        <p className="mt-2 text-sm font-semibold text-slate-500">
+          O produtor não marcou check-in nem suporte para esta ficha.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+        Acessos do evento
+      </p>
+      <h3 className="mt-2 text-2xl font-black">Operações liberadas pelo produtor</h3>
+      <p className="mt-2 text-sm font-semibold text-slate-500">
+        Cada botão abre somente a operação deste evento e desta ficha.
+      </p>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        {permissions.canValidateTickets ? (
+          <a
+            href={operatorEventAccessUrl("checkin", assignment)}
+            className="group rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-left transition hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-100 hover:shadow-md"
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">
+              Check-in liberado
+            </p>
+            <h4 className="mt-2 text-xl font-black text-emerald-950">Abrir validação de ingressos</h4>
+            <p className="mt-2 text-sm font-semibold text-emerald-800">
+              Validar ingressos apenas deste evento.
+            </p>
+            <span className="mt-4 inline-flex rounded-xl bg-emerald-700 px-4 py-2 text-xs font-black text-white">
+              Entrar no check-in
+            </span>
+          </a>
+        ) : null}
+
+        {permissions.canAnswerSupport ? (
+          <a
+            href={operatorEventAccessUrl("support", assignment)}
+            className="group rounded-2xl border border-blue-200 bg-blue-50 p-5 text-left transition hover:-translate-y-0.5 hover:border-blue-400 hover:bg-blue-100 hover:shadow-md"
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-700">
+              Suporte liberado
+            </p>
+            <h4 className="mt-2 text-xl font-black text-blue-950">Abrir suporte do evento</h4>
+            <p className="mt-2 text-sm font-semibold text-blue-800">
+              Atender chamados apenas deste evento.
+            </p>
+            <span className="mt-4 inline-flex rounded-xl bg-blue-700 px-4 py-2 text-xs font-black text-white">
+              Entrar no suporte
+            </span>
+          </a>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+function workDates(assignment?: OperatorAssignment | null) {
+  return Array.isArray(assignment?.workDates) ? assignment.workDates : [];
+}
+
+function workDateKey(workDate: WorkDate, index: number) {
+  return String(workDate.id || workDate.date || index);
+}
+
+function workDateStatus(workDate: WorkDate) {
+  const explicit = String(workDate.status || "").toUpperCase();
+
+  if (explicit) return explicit;
+  if (workDate.available === true) return "AVAILABLE";
+  if (workDate.available === false) return "UNAVAILABLE";
+
+  return "PENDING";
+}
+
+function acceptedWorkDate(workDate: WorkDate) {
+  return workDate.available === true || ["AVAILABLE", "ACCEPTED", "CONFIRMED"].includes(workDateStatus(workDate));
+}
+
+function pendingWorkDate(workDate: WorkDate) {
+  return workDate.available === null || workDate.available === undefined || workDateStatus(workDate) === "PENDING";
+}
+
+
+function assignmentResponseLocked(assignment: OperatorAssignment) {
+  const dates = workDates(assignment);
+
+  if (dates.length === 0) {
+    return !["INVITED", "SCHEDULE_PENDING"].includes(status(assignment));
+  }
+
+  return dates.every((date) => !pendingWorkDate(date));
+}
+
+function assignmentResponseLabel(assignment: OperatorAssignment) {
+  const dates = workDates(assignment);
+
+  if (dates.length === 0) {
+    return "Sem datas para responder";
+  }
+
+  const accepted = dates.filter(acceptedWorkDate).length;
+  const declined = dates.filter((date) => ["UNAVAILABLE", "DECLINED", "REJECTED"].includes(workDateStatus(date))).length;
+
+  if (accepted > 0 && declined > 0) return "Resposta registrada: parcial";
+  if (accepted > 0) return "Resposta registrada: aceito";
+  if (declined > 0) return "Resposta registrada: recusado";
+
+  return "Aguardando resposta";
+}
+
+function declinedWorkDate(workDate: WorkDate) {
+  return ["UNAVAILABLE", "DECLINED", "REJECTED"].includes(workDateStatus(workDate));
+}
+
+function assignmentFilterBucket(assignment: OperatorAssignment): AssignmentListFilter {
+  if (operatorAssignmentHasPendingPeriod(assignment)) {
+    return "PENDING";
+  }
+
+  if (operatorAssignmentAllPeriodsDeclined(assignment)) {
+    return "DECLINED";
+  }
+
+  if (operatorAssignmentHasAcceptedPeriod(assignment)) {
+    return "ACCEPTED";
+  }
+
+  const currentStatus = status(assignment);
+
+  if (["DECLINED", "REJECTED"].includes(currentStatus)) {
+    return "DECLINED";
+  }
+
+  if (["ACTIVE", "CONFIRMED", "COMPLETED", "ACCEPTED"].includes(currentStatus)) {
+    return "ACCEPTED";
+  }
+
+  return "PENDING";
+}
+
+function assignmentMatchesFilter(assignment: OperatorAssignment, filter: AssignmentListFilter) {
+  if (filter === "ALL") return true;
+
+  return assignmentFilterBucket(assignment) === filter;
+}
+
+function assignmentFilterText(filter: AssignmentListFilter) {
+  const labels: Record<AssignmentListFilter, string> = {
+    ALL: "Todos",
+    ACCEPTED: "Aceitos",
+    PENDING: "Pendentes",
+    DECLINED: "Recusados",
+  };
+
+  return labels[filter];
+}
+function totalAmount(assignment: OperatorAssignment, onlyAccepted = false) {
+  return workDates(assignment).reduce((sum, date) => {
+    if (onlyAccepted && !acceptedWorkDate(date)) return sum;
+    if (["UNAVAILABLE", "DECLINED", "REJECTED"].includes(workDateStatus(date))) return sum;
+
+    return sum + toNumber(date.amount);
+  }, 0);
+}
+
+function acceptedDays(assignment: OperatorAssignment) {
+  return workDates(assignment).filter(acceptedWorkDate).length;
+}
+
+function pendingDays(assignment: OperatorAssignment) {
+  return workDates(assignment).filter(pendingWorkDate).length;
+}
+
+function buildProducerGroups(assignments: OperatorAssignment[]) {
+  const map = new Map<string, ProducerGroup>();
+
+  for (const assignment of assignments) {
+    const id = getProducerId(assignment);
+    const current = map.get(id);
+
+    if (current) {
+      current.assignments.push(assignment);
+    } else {
+      map.set(id, {
+        id,
+        name: getProducerName(assignment),
+        email: getProducerEmail(assignment),
+        assignments: [assignment],
+      });
+    }
+  }
+
+  return [...map.values()]
+    .map((group) => ({
+      ...group,
+      assignments: group.assignments.sort((a, b) => {
+        const aTime = safeDate(eventDate(a))?.getTime() || 0;
+        const bTime = safeDate(eventDate(b))?.getTime() || 0;
+        return bTime - aTime;
+      }),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+}
+
+function buildAgenda(groups: ProducerGroup[]) {
+  const items: AgendaItem[] = [];
+
+  for (const producer of groups) {
+    for (const assignment of producer.assignments) {
+      for (const date of workDates(assignment)) {
+        if (!acceptedWorkDate(date)) continue;
+
+        const key = dateKey(date.date || eventDate(assignment));
+
+        if (!key) continue;
+
+        items.push({
+          id: `${assignment.id}:${workDateKey(date, items.length)}`,
+          assignment,
+          workDate: date,
+          producer,
+          dateKey: key,
+        });
+      }
+    }
+  }
+
+  return items.sort((a, b) => {
+    const aTime = `${a.dateKey}T${a.workDate.startTime || "00:00"}`;
+    const bTime = `${b.dateKey}T${b.workDate.startTime || "00:00"}`;
+    return aTime.localeCompare(bTime);
+  });
+}
+
+
+type CalendarViewMode = "year" | "month" | "week";
+
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function addYears(date: Date, years: number) {
+  const next = new Date(date);
+  next.setFullYear(next.getFullYear() + years);
+  return next;
+}
+
+function startOfWeek(date: Date) {
+  const current = startOfDay(date);
+  const day = current.getDay();
+  current.setDate(current.getDate() - day);
+  return current;
+}
+
+function monthLabel(date: Date) {
+  return date.toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function yearLabel(date: Date) {
+  return String(date.getFullYear());
+}
+
+function dayKeyFromDate(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function monthGridDays(baseDate: Date) {
+  const first = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
+  const start = startOfWeek(first);
+
+  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
+}
+
+function weekGridDays(baseDate: Date) {
+  const start = startOfWeek(baseDate);
+
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+}
+
+function miniMonthDays(year: number, month: number) {
+  const first = new Date(year, month, 1);
+  const start = startOfWeek(first);
+
+  return Array.from({ length: 42 }, (_, index) => addDays(start, index));
+}
+
+function agendaItemsForDay(items: AgendaItem[], date: Date) {
+  const key = dayKeyFromDate(date);
+
+  return items.filter((item) => item.dateKey === key);
+}
+
+function hourToNumber(value?: string | null) {
+  if (!value) return 8;
+
+  const [hours, minutes] = String(value).split(":").map(Number);
+
+  if (Number.isNaN(hours)) return 8;
+
+  return Math.min(23, Math.max(0, hours + (Number.isNaN(minutes) ? 0 : minutes / 60)));
+}
+
+function agendaEventTimeLabel(item: AgendaItem) {
+  return `${item.workDate.startTime || "--:--"} às ${item.workDate.endTime || "--:--"}`;
+}
+
+function eventColorClass(index: number) {
+  const classes = [
+    "bg-emerald-500 text-white",
+    "bg-blue-500 text-white",
+    "bg-violet-500 text-white",
+    "bg-orange-500 text-white",
+    "bg-rose-500 text-white",
+    "bg-cyan-500 text-white",
+  ];
+
+  return classes[index % classes.length];
+}
+
+function findFirstAgendaDate(items: AgendaItem[]) {
+  const first = items[0];
+
+  if (!first) return new Date();
+
+  const date = safeDate(first.dateKey);
+  return date || new Date();
+}
+function groupAgendaByDate(items: AgendaItem[]) {
+  const map = new Map<string, AgendaItem[]>();
+
+  for (const item of items) {
+    const list = map.get(item.dateKey) || [];
+    list.push(item);
+    map.set(item.dateKey, list);
+  }
+
+  return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+async function fetchJson(path: string, token: string) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(typeof data?.message === "string" ? data.message : `Falha ao carregar ${path}`);
+  }
+
+  return data;
+}
+
+function arrayFromApi(data: unknown): OperatorAssignment[] {
+  if (Array.isArray(data)) return data as OperatorAssignment[];
+  if (Array.isArray((data as { items?: unknown[] })?.items)) return (data as { items: OperatorAssignment[] }).items;
+  if (Array.isArray((data as { assignments?: unknown[] })?.assignments)) {
+    return (data as { assignments: OperatorAssignment[] }).assignments;
+  }
+  if (Array.isArray((data as { data?: unknown[] })?.data)) return (data as { data: OperatorAssignment[] }).data;
+
+  return [];
+}
+
+async function respondWorkPlan(
+  assignment: OperatorAssignment,
+  available: boolean,
+  note = "",
+) {
+  const token = getStoredAuthToken();
+
+  if (!token) {
+    window.location.href = "/login";
+    return false;
+  }
+
+  const dates = workDates(assignment);
+
+  if (dates.length === 0) {
+    const path = available ? "accept" : "decline";
+
+    const response = await fetch(`${API_BASE_URL}/operator-assignments/${assignment.id}/${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    return response.ok;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/operator-assignments/${assignment.id}/work-plan/respond`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      responses: dates.map((date, index) => ({
+        id: String(date.id || dateKey(date.date) || index),
+        available,
+        note,
+      })),
+    }),
+  });
+
+  return response.ok;
+}
+
+function Topbar({ user }: { user: StoredUser | null }) {
+  const [open, setOpen] = useState(false);
+  const source = String(user?.name || user?.email || "O").trim();
+  const initials = source
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+
+  function logout() {
+    clearAuthSession();
+    window.location.assign("/login");
+  }
+
+  return (
+    <header className="sticky top-0 z-[9999] border-b border-[#ea5f00] bg-[#ff6900] shadow-sm">
+      <div className="mx-auto flex h-[82px] max-w-[1180px] items-center gap-5 px-4">
+        <a href="/dashboard" className="flex shrink-0 items-center" aria-label="Astro Ingressos">
+          <img
+            src="/astro-ingressos-logo.png"
+            alt="Astro Ingressos"
+            className="h-[56px] w-auto object-contain"
+          />
+        </a>
+
+        <div className="flex-1" />
+
+        <a
+          href="/operator/wallet"
+          className="operator-top-wallet-button hidden px-3 py-2 text-sm font-black text-[#19002f] transition hover:opacity-70 md:inline-flex"
+        >
+          Wallet
+        </a>
+
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            className="flex h-11 items-center gap-2 rounded-full bg-white px-3 text-[#19002f] shadow-sm ring-1 ring-black/10"
+          >
+            <span className="text-xl leading-none">☰</span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#19002f] text-sm font-black text-white">
+              {initials || "O"}
+            </span>
+          </button>
+
+          {open ? (
+            <div className="absolute right-0 z-[10000] mt-3 w-80 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl">
+              <div className="border-b border-neutral-100 px-4 py-4">
+                <p className="truncate text-sm font-black text-neutral-950">{user?.name || "Operador"}</p>
+                <p className="mt-1 break-all text-xs font-semibold text-neutral-500">
+                  {user?.email || "sem e-mail"}
+                </p>
+                <p className="mt-1 text-xs text-neutral-400">CPF: {user?.cpf || "não informado"}</p>
+              </div>
+
+              <div className="p-2">
+                <a
+                  href="/operator/dashboard"
+                  className="flex w-full rounded-xl bg-neutral-950 px-3 py-3 text-sm font-semibold text-white"
+                >
+                  Operadores
+                </a>
+
+                <a
+                  href="/operator/wallet"
+                  className="mt-1 flex w-full rounded-xl px-3 py-3 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
+                >
+                  Wallet do operador
+                </a>
+
+                <a
+                  href="/dashboard"
+                  className="mt-1 flex w-full rounded-xl px-3 py-3 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
+                >
+                  Tela principal
+                </a>
+
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="mt-1 flex w-full rounded-xl px-3 py-3 text-sm font-semibold text-red-600 hover:bg-red-50"
+                >
+                  Sair
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  helper,
+}: {
+  label: string;
+  value: string | number;
+  helper?: string;
+}) {
+  return (
+    <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">{label}</p>
+      <p className="mt-2 text-2xl font-black text-slate-950">{value}</p>
+      {helper ? <p className="mt-1 text-sm font-semibold text-slate-500">{helper}</p> : null}
+    </article>
+  );
+}
+
+function ProducerCard({
+  group,
+  onOpen,
+}: {
+  group: ProducerGroup;
+  onOpen: () => void;
+}) {
+  const pending = group.assignments.reduce((sum, assignment) => sum + pendingDays(assignment), 0);
+  const accepted = group.assignments.reduce((sum, assignment) => sum + acceptedDays(assignment), 0);
+  const total = group.assignments.reduce((sum, assignment) => sum + totalAmount(assignment), 0);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="w-full rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-orange-300 hover:shadow-md"
+    >
+      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">Produtor</p>
+      <h3 className="mt-2 text-2xl font-black text-slate-950">{group.name}</h3>
+      {group.email ? <p className="mt-1 text-sm font-semibold text-slate-500">{group.email}</p> : null}
+
+      <div className="mt-5 grid grid-cols-4 gap-2">
+        <div className="rounded-2xl bg-slate-50 p-3">
+          <p className="text-[10px] font-black uppercase text-slate-400">Fichas</p>
+          <p className="mt-1 font-black">{group.assignments.length}</p>
+        </div>
+        <div className="rounded-2xl bg-amber-50 p-3">
+          <p className="text-[10px] font-black uppercase text-amber-600">Pend.</p>
+          <p className="mt-1 font-black">{pending}</p>
+        </div>
+        <div className="rounded-2xl bg-emerald-50 p-3">
+          <p className="text-[10px] font-black uppercase text-emerald-600">Aceitos</p>
+          <p className="mt-1 font-black">{accepted}</p>
+        </div>
+        <div className="rounded-2xl bg-orange-50 p-3">
+          <p className="text-[10px] font-black uppercase text-orange-600">Valor</p>
+          <p className="mt-1 text-sm font-black">{money(total)}</p>
+        </div>
+      </div>
+
+      <span className="mt-5 inline-flex rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white">
+        Abrir fichas
+      </span>
+    </button>
+  );
+}
+
+
+function statusLabel(assignment?: OperatorAssignment | null) {
+  const normalized = String(assignment?.status || "").toUpperCase();
+
+  const labels: Record<string, string> = {
+    INVITED: "Convite recebido",
+    ACCEPTED: "Pessoa vinculada",
+    SCHEDULE_PENDING: "Aguardando sua resposta",
+    ACTIVE: "Aceito e ativo",
+    ASSIGNED: "Atribuído",
+    CONFIRMED: "Confirmado",
+    PENDING: "Pendente",
+    PROPOSAL_SENT: "Proposta enviada",
+    AVAILABLE: "Disponível",
+    UNAVAILABLE: "Indisponível",
+    DECLINED: "Recusado",
+    REJECTED: "Recusado",
+    COMPLETED: "Encerrado",
+  };
+
+  return labels[normalized] || assignment?.status || "Pendente";
+}
+
+function assignmentCardEventName(assignment?: OperatorAssignment | null) {
+  return (
+    assignment?.event?.name ||
+    assignment?.event?.title ||
+    assignment?.eventTitle ||
+    assignment?.eventName ||
+    "Evento sem nome"
+  );
+}
+
+function assignmentCardEventDate(assignment?: OperatorAssignment | null) {
+  return assignment?.eventDate || assignment?.event?.eventDate || "";
+}
+function formatEventLocation(value: unknown) {
+  if (!value) return "";
+
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value || "").trim();
+  }
+
+  if (typeof value === "object") {
+    const item = value as {
+      venueName?: string | null;
+      name?: string | null;
+      address?: string | null;
+      addressLine1?: string | null;
+      neighborhood?: string | null;
+      city?: string | null;
+      state?: string | null;
+    };
+
+    return [
+      item.venueName || item.name,
+      item.address || item.addressLine1,
+      item.neighborhood,
+      [item.city, item.state].filter(Boolean).join(" - "),
+    ]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(" • ");
+  }
+
+  return "";
+}
+
+function assignmentCardEventLocation(assignment?: OperatorAssignment | null) {
+  const event = assignment?.event;
+
+  const value =
+    formatEventLocation(event?.location) ||
+    formatEventLocation(event?.venue) ||
+    formatEventLocation(event?.venueName) ||
+    formatEventLocation(event?.city) ||
+    formatEventLocation(event?.state) ||
+    formatEventLocation(event?.address) ||
+    formatEventLocation(event?.addressLine1) ||
+    formatEventLocation((assignment as any)?.location);
+
+  return value || "Local não informado";
+}
+
+function assignmentWasDeclined(assignment?: OperatorAssignment | null) {
+  const currentStatus = String(assignment?.status || "").toUpperCase();
+
+  if (["DECLINED", "REJECTED"].includes(currentStatus)) {
+    return true;
+  }
+
+  const dates = workDates(assignment);
+
+  if (dates.length === 0) {
+    return false;
+  }
+
+  return dates.every((date) => {
+    const currentDateStatus = workDateStatus(date);
+
+    return (
+      date.available === false ||
+      ["UNAVAILABLE", "DECLINED", "REJECTED"].includes(currentDateStatus)
+    );
+  });
+}
+
+function assignmentWasAccepted(assignment?: OperatorAssignment | null) {
+  if (!assignment || assignmentWasDeclined(assignment)) {
+    return false;
+  }
+
+  const currentStatus = String(assignment.status || "").toUpperCase();
+  const dates = workDates(assignment);
+  const hasAcceptedDate = dates.some(acceptedWorkDate);
+
+  return (
+    hasAcceptedDate ||
+    ["ACCEPTED", "ACTIVE", "CONFIRMED", "COMPLETED"].includes(currentStatus)
+  );
+}
+
+function assignmentCanAnswerFromCard(assignment?: OperatorAssignment | null) {
+  if (!assignment || assignmentWasAccepted(assignment) || assignmentWasDeclined(assignment)) {
+    return false;
+  }
+
+  const currentStatus = String(assignment.status || "").toUpperCase();
+  const dates = workDates(assignment);
+  const hasPendingDate = dates.some((date) => {
+    const currentDateStatus = workDateStatus(date);
+
+    return (
+      date.available === null ||
+      date.available === undefined ||
+      ["PENDING", "SCHEDULE_PENDING", ""].includes(currentDateStatus)
+    );
+  });
+
+  return (
+    hasPendingDate ||
+    ["INVITED", "PENDING", "SCHEDULE_PENDING", "PROPOSAL_SENT", "ASSIGNED"].includes(currentStatus)
+  );
+}
+
+function assignmentDetailsAvailable(assignment?: OperatorAssignment | null) {
+  return assignmentWasAccepted(assignment);
+}
+
+function assignmentCardValue(assignment: OperatorAssignment) {
+  const dates = workDates(assignment);
+
+  return dates.reduce((sum, date) => sum + toNumber(date.amount), 0);
+}
+
+function assignmentCardCounts(assignment: OperatorAssignment) {
+  const dates = workDates(assignment);
+
+  return {
+    dates: dates.length,
+    pending: dates.filter((date) => {
+      const currentStatus = workDateStatus(date);
+      return date.available === null || date.available === undefined || ["PENDING", ""].includes(currentStatus);
+    }).length,
+    accepted: dates.filter(acceptedWorkDate).length,
+  };
+}
+
+async function sendAssignmentCardResponse(assignment: OperatorAssignment, available: boolean) {
+  const token = getStoredAuthToken();
+
+  if (!token || token === "undefined") {
+    throw new Error("Sessão expirada. Faça login novamente.");
+  }
+
+  const dates = workDates(assignment);
+  const datesWithId = dates.filter((date) => Boolean(date.id));
+
+  if (datesWithId.length > 0) {
+    const response = await fetch(`${API_BASE_URL}/operator-assignments/${assignment.id}/work-plan/respond`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        responses: datesWithId.map((date) => ({
+          id: String(date.id),
+          available,
+          note: "",
+        })),
+      }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new Error(data?.message || "Não foi possível registrar sua resposta.");
+    }
+
+    return;
+  }
+
+  const fallbackPath = available ? "accept" : "decline";
+
+  const response = await fetch(`${API_BASE_URL}/operator-assignments/${assignment.id}/${fallbackPath}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.message || "Não foi possível registrar sua resposta.");
+  }
+}
+
+function operatorPeriodStatus(workDate?: WorkDate | null) {
+  const currentStatus = workDateStatus(workDate || ({} as WorkDate));
+
+  if (workDate?.available === true || ["AVAILABLE", "ACCEPTED", "CONFIRMED"].includes(currentStatus)) {
+    return "ACCEPTED";
+  }
+
+  if (workDate?.available === false || ["UNAVAILABLE", "DECLINED", "REJECTED"].includes(currentStatus)) {
+    return "DECLINED";
+  }
+
+  return "PENDING";
+}
+
+function operatorPeriodPending(workDate?: WorkDate | null) {
+  return operatorPeriodStatus(workDate) === "PENDING";
+}
+
+function operatorPeriodAccepted(workDate?: WorkDate | null) {
+  return operatorPeriodStatus(workDate) === "ACCEPTED";
+}
+
+function operatorPeriodDeclined(workDate?: WorkDate | null) {
+  return operatorPeriodStatus(workDate) === "DECLINED";
+}
+
+function operatorAssignmentHasPendingPeriod(assignment?: OperatorAssignment | null) {
+  return workDates(assignment).some(operatorPeriodPending);
+}
+
+function operatorAssignmentHasAcceptedPeriod(assignment?: OperatorAssignment | null) {
+  return workDates(assignment).some(operatorPeriodAccepted);
+}
+
+function operatorAssignmentAllPeriodsDeclined(assignment?: OperatorAssignment | null) {
+  const periods = workDates(assignment);
+
+  return periods.length > 0 && periods.every(operatorPeriodDeclined);
+}
+
+function operatorPeriodNumber(value?: string | number | null) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  const parsed = Number(
+    String(value ?? "0")
+      .replace(/[^\d,.-]/g, "")
+      .replace(/\./g, "")
+      .replace(",", "."),
+  );
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function operatorPeriodMoney(value?: string | number | null) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(operatorPeriodNumber(value));
+}
+
+function operatorPeriodDateLabel(value?: string | null) {
+  if (!value) return "-";
+
+  const safeValue = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value;
+  const date = new Date(safeValue);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function operatorPeriodTimeLabel(workDate: WorkDate) {
+  return `${workDate.startTime || "--:--"} às ${workDate.endTime || "--:--"}`;
+}
+
+function operatorPeriodLabel(workDatesList: WorkDate[], workDate: WorkDate, index: number) {
+  const sameDateBefore = workDatesList
+    .slice(0, index + 1)
+    .filter((item) => item.date === workDate.date).length;
+
+  return sameDateBefore > 1 ? `Período ${sameDateBefore}` : "Período 1";
+}
+
+function operatorAssignmentStatusText(assignment: OperatorAssignment) {
+  const periods = workDates(assignment);
+  const pendingCount = periods.filter(operatorPeriodPending).length;
+  const acceptedCount = periods.filter(operatorPeriodAccepted).length;
+  const declinedCount = periods.filter(operatorPeriodDeclined).length;
+
+  if (pendingCount > 0) return "Aguardando resposta por período";
+  if (acceptedCount > 0 && declinedCount > 0) return "Aceito parcial";
+  if (acceptedCount > 0) return "Aceito";
+  if (declinedCount > 0) return "Recusado";
+
+  return statusLabel(assignment);
+}
+
+function operatorAssignmentCardValue(assignment: OperatorAssignment) {
+  return workDates(assignment).reduce((sum, workDate) => {
+    return sum + operatorPeriodNumber(workDate.amount);
+  }, 0);
+}
+
+function operatorAssignmentCounts(assignment: OperatorAssignment) {
+  const periods = workDates(assignment);
+
+  return {
+    total: periods.length,
+    pending: periods.filter(operatorPeriodPending).length,
+    accepted: periods.filter(operatorPeriodAccepted).length,
+    declined: periods.filter(operatorPeriodDeclined).length,
+  };
+}
+
+function operatorAssignmentCanOpenDetails(assignment?: OperatorAssignment | null) {
+  const periods = workDates(assignment);
+
+  if (periods.length === 0) return false;
+  if (periods.some(operatorPeriodPending)) return false;
+  if (periods.every(operatorPeriodDeclined)) return false;
+
+  return periods.some(operatorPeriodAccepted);
+}
+
+
+async function sendAssignmentSinglePeriodResponse(
+  assignment: OperatorAssignment,
+  workDate: WorkDate,
+  available: boolean,
+) {
+  const token = getStoredAuthToken();
+
+  if (!token || token === "undefined") {
+    throw new Error("Sessão expirada. Faça login novamente.");
+  }
+
+  const workDateId = String(workDate.id || "");
+
+  if (!workDateId) {
+    throw new Error("Este período não possui ID para responder individualmente. Recarregue a página e tente de novo.");
+  }
+
+  const response = await fetch(`${API_BASE_URL}/operator-assignments/${assignment.id}/work-plan/respond`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      responses: [
+        {
+          id: workDateId,
+          available,
+          note: "",
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.message || "Não foi possível registrar sua resposta.");
+  }
+}
+function AssignmentCard({
+  assignment,
+  onOpen,
+}: {
+  assignment: OperatorAssignment;
+  onOpen: () => void;
+}) {
+  const [savingKey, setSavingKey] = useState("");
+  const periods = workDates(assignment);
+  const counts = operatorAssignmentCounts(assignment);
+  const canOpenDetails = operatorAssignmentCanOpenDetails(assignment);
+  const allDeclined = operatorAssignmentAllPeriodsDeclined(assignment);
+  const hasPending = operatorAssignmentHasPendingPeriod(assignment);
+
+  async function answerPeriod(workDate: WorkDate, available: boolean) {
+    const label = available ? "aceitar" : "recusar";
+    const periodName = `${operatorPeriodDateLabel(workDate.date)} • ${operatorPeriodTimeLabel(workDate)}`;
+
+    if (!confirm(`Deseja ${label} este período?\n\n${periodName}`)) {
+      return;
+    }
+
+    try {
+      setSavingKey(`${workDate.id}-${available ? "accept" : "decline"}`);
+      await sendAssignmentSinglePeriodResponse(assignment, workDate, available);
+      window.location.reload();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Não consegui salvar sua resposta.");
+    } finally {
+      setSavingKey("");
+    }
+  }
+
+  return (
+    <article
+      className={`rounded-[26px] border bg-white p-5 shadow-sm ${
+        hasPending ? "border-amber-200" : canOpenDetails ? "border-emerald-200" : "border-orange-300"
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p
+            className={`text-[10px] font-black uppercase tracking-[0.22em] ${
+              hasPending ? "text-amber-700" : canOpenDetails ? "text-emerald-700" : "text-orange-600"
+            }`}
+          >
+            {operatorAssignmentStatusText(assignment)}
+          </p>
+
+          <h3 className="mt-2 text-2xl font-black text-slate-950">
+            {assignmentCardEventName(assignment)}
+          </h3>
+
+          <p className="mt-1 text-sm font-semibold text-slate-500">
+            {formatDate(assignmentCardEventDate(assignment))} • {assignmentCardEventLocation(assignment)}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {canOpenDetails ? (
+            <button
+              type="button"
+              onClick={onOpen}
+              className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white"
+            >
+              Abrir ficha
+            </button>
+          ) : (
+            <span className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-black text-slate-500">
+              Evento indisponível
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-4">
+        <div className="rounded-2xl bg-slate-50 p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Períodos</p>
+          <p className="mt-2 text-lg font-black">{counts.total}</p>
+        </div>
+
+        <div className="rounded-2xl bg-amber-50 p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-600">Pendentes</p>
+          <p className="mt-2 text-lg font-black">{counts.pending}</p>
+        </div>
+
+        <div className="rounded-2xl bg-emerald-50 p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">Aceitos</p>
+          <p className="mt-2 text-lg font-black">{counts.accepted}</p>
+        </div>
+
+        <div className="rounded-2xl bg-orange-50 p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600">Valor total</p>
+          <p className="mt-2 text-lg font-black">{operatorPeriodMoney(operatorAssignmentCardValue(assignment))}</p>
+        </div>
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {periods.length === 0 ? (
+          <div className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">
+            Esta proposta não possui períodos cadastrados.
+          </div>
+        ) : null}
+
+        {periods.map((workDate, index) => {
+          const periodStatus = operatorPeriodStatus(workDate);
+          const pending = periodStatus === "PENDING";
+          const accepted = periodStatus === "ACCEPTED";
+          const declineSavingKey = `${workDate.id}-decline`;
+          const acceptSavingKey = `${workDate.id}-accept`;
+
+          return (
+            <div
+              key={workDate.id || `${workDate.date}-${workDate.startTime}-${index}`}
+              className={`rounded-2xl border p-4 ${
+                pending
+                  ? "border-amber-200 bg-amber-50"
+                  : accepted
+                    ? "border-emerald-200 bg-emerald-50"
+                    : "border-rose-200 bg-rose-50"
+              }`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p
+                    className={`text-[10px] font-black uppercase tracking-[0.2em] ${
+                      pending ? "text-amber-700" : accepted ? "text-emerald-700" : "text-rose-700"
+                    }`}
+                  >
+                    {operatorPeriodLabel(periods, workDate, index)} •{" "}
+                    {pending ? "Aguardando resposta" : accepted ? "Aceito" : "Recusado"}
+                  </p>
+
+                  <h4 className="mt-1 text-lg font-black text-slate-950">
+                    {operatorPeriodDateLabel(workDate.date)} • {operatorPeriodTimeLabel(workDate)}
+                  </h4>
+
+                  <p className="mt-1 text-sm font-semibold text-slate-600">
+                    {operatorPeriodMoney(workDate.amount)} • {workDate.functions || "Função não informada"}
+                  </p>
+                </div>
+
+                {pending ? (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={Boolean(savingKey)}
+                      onClick={() => answerPeriod(workDate, false)}
+                      className="rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-black text-rose-700 disabled:opacity-50"
+                    >
+                      {savingKey === declineSavingKey ? "Salvando..." : "Recusar"}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={Boolean(savingKey)}
+                      onClick={() => answerPeriod(workDate, true)}
+                      className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white disabled:opacity-50"
+                    >
+                      {savingKey === acceptSavingKey ? "Salvando..." : "Aceitar"}
+                    </button>
+                  </div>
+                ) : (
+                  <span
+                    className={`rounded-xl px-4 py-2 text-xs font-black ${
+                      accepted ? "bg-emerald-700 text-white" : "bg-rose-700 text-white"
+                    }`}
+                  >
+                    {accepted ? "Aceito" : "Recusado"}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {allDeclined ? (
+        <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-sm font-bold text-orange-900">
+          Todos os períodos foram recusados. O card continua no histórico, mas a tela do evento fica indisponível.
+        </div>
+      ) : null}
+    </article>
+  );
+}
+function AssignmentDetail({
+  assignment,
+  producer,
+  onBack,
+  onReload,
+  onAgenda,
+}: {
+  assignment: OperatorAssignment;
+  producer: ProducerGroup;
+  onBack: () => void;
+  onReload: () => void;
+  onAgenda: () => void;
+}) {
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState<"accept" | "decline" | "">("");
+  const responseLocked = assignmentResponseLocked(assignment);
+
+  
+  const eventDetailsAvailable = assignmentDetailsAvailable(assignment);
+
+  if (!eventDetailsAvailable) {
+    const refused = assignmentWasDeclined(assignment);
+
+    return (
+      <section className="rounded-[30px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <p className={`text-[11px] font-black uppercase tracking-[0.22em] ${refused ? "text-rose-600" : "text-amber-600"}`}>
+          {refused ? "Ficha recusada" : "Aguardando resposta"}
+        </p>
+
+        <h2 className="mt-3 text-3xl font-black text-slate-950">
+          Tela do evento indisponível
+        </h2>
+
+        <p className="mx-auto mt-3 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
+          {refused
+            ? "Você recusou esta proposta. Por isso, as informações completas, check-in, suporte, datas e valores ficam ocultos para esta conta."
+            : "Aceite a proposta no card do evento para liberar as informações completas, check-in, suporte, datas e valores."}
+        </p>
+
+        <div className={`mx-auto mt-6 max-w-md rounded-2xl border p-4 text-sm font-black ${
+          refused
+            ? "border-rose-200 bg-rose-50 text-rose-800"
+            : "border-amber-200 bg-amber-50 text-amber-800"
+        }`}>
+          {refused
+            ? "Resposta registrada: recusado. Esta ficha está travada."
+            : "Esta proposta ainda não foi aceita."}
+        </div>
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-6 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white"
+        >
+          Voltar para fichas
+        </button>
+      </section>
+    );
+  }
+async function respond(available: boolean) {
+    if (responseLocked) {
+      alert("Esta ficha já foi respondida e está travada.");
+      return;
+    }
+
+    setSaving(available ? "accept" : "decline");
+
+    try {
+      const ok = await respondWorkPlan(assignment, available, note);
+
+      if (!ok) {
+        alert("Não consegui salvar sua resposta. Se essa ficha já foi respondida, ela fica travada e não pode ser alterada.");
+        return;
+      }
+
+      alert(available ? "Ficha aceita. O evento entrou na sua agenda." : "Ficha recusada.");
+      await onReload();
+
+      if (available) onAgenda();
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao responder ficha.");
+    } finally {
+      setSaving("");
+    }
+  }
+
+  return (
+    <section className="grid gap-6 xl:grid-cols-[420px_1fr]">
+      <aside className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50"
+        >
+          Voltar para fichas
+        </button>
+
+        <p className="mt-6 text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+          Ficha do produtor
+        </p>
+        <h2 className="mt-2 text-3xl font-black text-slate-950">{getEventName(assignment)}</h2>
+        <p className="mt-2 text-sm font-semibold text-slate-500">{producer.name}</p>
+        {producer.email ? <p className="mt-1 text-sm font-semibold text-slate-500">{producer.email}</p> : null}
+
+        <div className="mt-6 grid gap-3">
+          <MetricCard label="Status" value={responseLocked ? assignmentResponseLabel(assignment) : statusLabel(assignment)} />
+          <MetricCard label="Valor previsto" value={money(totalAmount(assignment))} helper="Soma das datas propostas" />
+          <MetricCard label="Local" value={getEventLocation(assignment)} />
+        </div>
+
+        <label className="mt-6 block text-xs font-black uppercase tracking-[0.2em] text-slate-500">
+          Observação da resposta
+        </label>
+        <textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          disabled={responseLocked}
+          placeholder={responseLocked ? "Resposta já registrada. Esta ficha está travada." : "Ex: confirmo presença, chego 30 min antes."}
+          className="mt-2 min-h-[110px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:border-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+        />
+
+        {responseLocked ? (
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-black text-emerald-800">
+            {assignmentResponseLabel(assignment)}. Esta ficha está travada e não pode mais ser alterada.
+          </div>
+        ) : (
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              disabled={Boolean(saving)}
+              onClick={() => respond(false)}
+              className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm font-black text-rose-700 disabled:opacity-50"
+            >
+              {saving === "decline" ? "Salvando..." : "Recusar"}
+            </button>
+            <button
+              type="button"
+              disabled={Boolean(saving)}
+              onClick={() => respond(true)}
+              className="rounded-2xl bg-slate-950 px-4 py-4 text-sm font-black text-white disabled:opacity-50"
+            >
+              {saving === "accept" ? "Salvando..." : "Aceitar"}
+            </button>
+          </div>
+        )}
+      </aside>
+
+      <section className="space-y-5">
+        <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+            Informações completas
+          </p>
+          <h3 className="mt-2 text-2xl font-black">O que você vai fazer</h3>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Evento</p>
+              <p className="mt-2 font-black text-slate-950">{getEventName(assignment)}</p>
+              <p className="mt-1 text-sm font-semibold text-slate-500">{formatDateTime(eventDate(assignment))}</p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Local</p>
+              <p className="mt-2 font-black text-slate-950">{getEventLocation(assignment)}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl bg-orange-50 p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-orange-600">Orientações do produtor</p>
+            <p className="mt-2 text-sm font-bold text-slate-700">
+              {assignment.finalNotes || assignment.notes || assignment.invitationMessage || "Nenhuma observação adicional."}
+            </p>
+          </div>
+        </section>
+
+        <OperationPermissionCards assignment={assignment} />
+
+        <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="text-2xl font-black">Datas, horários, funções e valores</h3>
+
+          {workDates(assignment).length === 0 ? (
+            <div className="mt-5 rounded-2xl bg-slate-50 p-5 text-sm font-bold text-slate-500">
+              Essa ficha ainda não possui datas detalhadas.
+            </div>
+          ) : (
+            <div className="mt-5 grid gap-3">
+              {workDates(assignment).map((workDate, index) => {
+                const currentStatus = workDateStatus(workDate);
+
+                return (
+                  <article key={workDateKey(workDate, index)} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="grid gap-4 md:grid-cols-[150px_150px_1fr_130px_130px] md:items-center">
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-slate-400">Data</p>
+                        <p className="mt-1 font-black">{formatDate(workDate.date)}</p>
+                      </div>
+
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-slate-400">Horário</p>
+                        <p className="mt-1 font-black">
+                          {workDate.startTime || "--:--"} às {workDate.endTime || "--:--"}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-slate-400">Funções</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-700">
+                          {workDate.functions || "Função não informada"}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-slate-400">Valor</p>
+                        <p className="mt-1 font-black">{money(workDate.amount)}</p>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="rounded-full bg-white px-3 py-2 text-xs font-black text-slate-700 ring-1 ring-slate-200">
+                          {currentStatus === "AVAILABLE"
+                            ? "Aceito"
+                            : currentStatus === "UNAVAILABLE"
+                              ? "Recusado"
+                              : "Aguardando"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {workDate.responseNote ? (
+                      <p className="mt-3 rounded-xl bg-white p-3 text-xs font-bold text-slate-500">
+                        Observação: {workDate.responseNote}
+                      </p>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </section>
+    </section>
+  );
+}
+function AgendaView({
+  items,
+  onOpenAssignment,
+}: {
+  items: AgendaItem[];
+  onOpenAssignment: (producer: ProducerGroup, assignment: OperatorAssignment) => void;
+}) {
+  const [calendarView, setCalendarView] = useState<CalendarViewMode>("month");
+  const [cursorDate, setCursorDate] = useState(() => findFirstAgendaDate(items));
+
+  useEffect(() => {
+    if (items.length > 0) {
+      setCursorDate(findFirstAgendaDate(items));
+    }
+  }, [items.length]);
+
+  function goToday() {
+    setCursorDate(new Date());
+  }
+
+  function goPrevious() {
+    if (calendarView === "year") setCursorDate((date) => addYears(date, -1));
+    if (calendarView === "month") setCursorDate((date) => addMonths(date, -1));
+    if (calendarView === "week") setCursorDate((date) => addDays(date, -7));
+  }
+
+  function goNext() {
+    if (calendarView === "year") setCursorDate((date) => addYears(date, 1));
+    if (calendarView === "month") setCursorDate((date) => addMonths(date, 1));
+    if (calendarView === "week") setCursorDate((date) => addDays(date, 7));
+  }
+
+  const title =
+    calendarView === "year"
+      ? yearLabel(cursorDate)
+      : calendarView === "month"
+        ? monthLabel(cursorDate)
+        : `${formatDate(dayKeyFromDate(startOfWeek(cursorDate)))} - ${formatDate(
+            dayKeyFromDate(addDays(startOfWeek(cursorDate), 6)),
+          )}`;
+
+  return (
+    <section className="space-y-5">
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+              Minha agenda
+            </p>
+            <h2 className="mt-2 text-3xl font-black capitalize text-slate-950">{title}</h2>
+            <p className="mt-2 text-sm font-semibold text-slate-500">
+              Eventos aceitos aparecem no calendário pelo dia e horário da ficha.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={goToday}
+              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50"
+            >
+              Hoje
+            </button>
+
+            <button
+              type="button"
+              onClick={goPrevious}
+              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50"
+            >
+              ‹
+            </button>
+
+            <button
+              type="button"
+              onClick={goNext}
+              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50"
+            >
+              ›
+            </button>
+
+            <select
+              value={calendarView}
+              onChange={(event) => setCalendarView(event.target.value as CalendarViewMode)}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black"
+            >
+              <option value="year">Ano</option>
+              <option value="month">Mês</option>
+              <option value="week">Semana</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <h3 className="text-2xl font-black text-slate-950">Agenda vazia</h3>
+          <p className="mt-2 text-sm font-semibold text-slate-500">
+            Aceite uma ficha de evento para ela aparecer aqui.
+          </p>
+        </div>
+      ) : null}
+
+      {calendarView === "year" ? (
+        <YearCalendar
+          cursorDate={cursorDate}
+          items={items}
+          onPickMonth={(month) => {
+            setCursorDate(new Date(cursorDate.getFullYear(), month, 1));
+            setCalendarView("month");
+          }}
+        />
+      ) : null}
+
+      {calendarView === "month" ? (
+        <MonthCalendar
+          cursorDate={cursorDate}
+          items={items}
+          onOpenAssignment={onOpenAssignment}
+          onPickDay={(date) => {
+            setCursorDate(date);
+            setCalendarView("week");
+          }}
+        />
+      ) : null}
+
+      {calendarView === "week" ? (
+        <WeekCalendar
+          cursorDate={cursorDate}
+          items={items}
+          onOpenAssignment={onOpenAssignment}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function YearCalendar({
+  cursorDate,
+  items,
+  onPickMonth,
+}: {
+  cursorDate: Date;
+  items: AgendaItem[];
+  onPickMonth: (month: number) => void;
+}) {
+  const year = cursorDate.getFullYear();
+  const months = Array.from({ length: 12 }, (_, month) => month);
+
+  return (
+    <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+        {months.map((month) => {
+          const days = miniMonthDays(year, month);
+          const monthItems = items.filter((item) => {
+            const date = safeDate(item.dateKey);
+            return date?.getFullYear() === year && date?.getMonth() === month;
+          });
+
+          return (
+            <button
+              key={month}
+              type="button"
+              onClick={() => onPickMonth(month)}
+              className="rounded-[24px] border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-orange-300 hover:bg-orange-50"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-black capitalize text-slate-950">
+                  {new Date(year, month, 1).toLocaleDateString("pt-BR", { month: "long" })}
+                </h3>
+                {monthItems.length > 0 ? (
+                  <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-black text-orange-700">
+                    {monthItems.length}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="mt-4 grid grid-cols-7 gap-1 text-center text-[11px] font-black text-slate-400">
+                {["D", "S", "T", "Q", "Q", "S", "S"].map((day, index) => (
+                  <span key={`${day}-${index}`}>{day}</span>
+                ))}
+              </div>
+
+              <div className="mt-2 grid grid-cols-7 gap-1 text-center text-xs font-bold">
+                {days.map((day) => {
+                  const inMonth = day.getMonth() === month;
+                  const dayItems = agendaItemsForDay(items, day);
+
+                  return (
+                    <span
+                      key={dayKeyFromDate(day)}
+                      className={`relative rounded-lg py-1 ${
+                        inMonth ? "text-slate-800" : "text-slate-300"
+                      } ${dayItems.length ? "bg-emerald-100 font-black text-emerald-800" : ""}`}
+                    >
+                      {day.getDate()}
+                    </span>
+                  );
+                })}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function MonthCalendar({
+  cursorDate,
+  items,
+  onOpenAssignment,
+  onPickDay,
+}: {
+  cursorDate: Date;
+  items: AgendaItem[];
+  onOpenAssignment: (producer: ProducerGroup, assignment: OperatorAssignment) => void;
+  onPickDay: (date: Date) => void;
+}) {
+  const days = monthGridDays(cursorDate);
+
+  return (
+    <section className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
+      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+        {["Dom.", "Seg.", "Ter.", "Qua.", "Qui.", "Sex.", "Sáb."].map((day) => (
+          <div key={day} className="px-3 py-3 text-center text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+            {day}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7">
+        {days.map((day) => {
+          const inMonth = day.getMonth() === cursorDate.getMonth();
+          const dayItems = agendaItemsForDay(items, day);
+
+          return (
+            <div
+              key={dayKeyFromDate(day)}
+              className={`min-h-[150px] border-b border-r border-slate-100 p-2 ${
+                inMonth ? "bg-white" : "bg-slate-50 text-slate-300"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onPickDay(day)}
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-black ${
+                  dayKeyFromDate(day) === dayKeyFromDate(new Date())
+                    ? "bg-blue-500 text-white"
+                    : "hover:bg-slate-100"
+                }`}
+              >
+                {day.getDate()}
+              </button>
+
+              <div className="mt-2 space-y-1">
+                {dayItems.slice(0, 4).map((item, index) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onOpenAssignment(item.producer, item.assignment)}
+                    className={`w-full truncate rounded-lg px-2 py-1 text-left text-[11px] font-black ${eventColorClass(index)}`}
+                    title={`${getEventName(item.assignment)} • ${agendaEventTimeLabel(item)}`}
+                  >
+                    {item.workDate.startTime || "--:--"} {getEventName(item.assignment)}
+                  </button>
+                ))}
+
+                {dayItems.length > 4 ? (
+                  <button
+                    type="button"
+                    onClick={() => onPickDay(day)}
+                    className="text-xs font-black text-slate-500"
+                  >
+                    +{dayItems.length - 4} evento(s)
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function WeekCalendar({
+  cursorDate,
+  items,
+  onOpenAssignment,
+}: {
+  cursorDate: Date;
+  items: AgendaItem[];
+  onOpenAssignment: (producer: ProducerGroup, assignment: OperatorAssignment) => void;
+}) {
+  const days = weekGridDays(cursorDate);
+  const hours = Array.from({ length: 18 }, (_, index) => index + 6);
+
+  return (
+    <section className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-sm">
+      <div className="grid grid-cols-[80px_repeat(7,minmax(120px,1fr))] border-b border-slate-200 bg-slate-50">
+        <div className="px-3 py-4 text-xs font-black uppercase text-slate-400">GMT-03</div>
+        {days.map((day) => (
+          <div key={dayKeyFromDate(day)} className="px-3 py-3 text-center">
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-400">
+              {day.toLocaleDateString("pt-BR", { weekday: "short" })}
+            </p>
+            <p
+              className={`mx-auto mt-1 flex h-9 w-9 items-center justify-center rounded-full text-lg font-black ${
+                dayKeyFromDate(day) === dayKeyFromDate(new Date())
+                  ? "bg-blue-500 text-white"
+                  : "text-slate-950"
+              }`}
+            >
+              {day.getDate()}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="max-h-[720px] overflow-auto">
+        <div className="grid grid-cols-[80px_repeat(7,minmax(120px,1fr))]">
+          {hours.map((hour) => (
+            <div key={`hour-${hour}`} className="contents">
+              <div className="h-[72px] border-b border-r border-slate-100 px-2 py-2 text-xs font-bold text-slate-400">
+                {String(hour).padStart(2, "0")}:00
+              </div>
+
+              {days.map((day) => {
+                const dayItems = agendaItemsForDay(items, day).filter((item) => {
+                  const start = Math.floor(hourToNumber(item.workDate.startTime));
+                  return start === hour;
+                });
+
+                return (
+                  <div key={`${dayKeyFromDate(day)}-${hour}`} className="relative min-h-[72px] border-b border-r border-slate-100 p-1">
+                    {dayItems.map((item, index) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => onOpenAssignment(item.producer, item.assignment)}
+                        className={`mb-1 w-full rounded-xl px-2 py-2 text-left text-[11px] font-black shadow-sm ${eventColorClass(index)}`}
+                        title={`${getEventName(item.assignment)} • ${agendaEventTimeLabel(item)}`}
+                      >
+                        <span className="block truncate">{getEventName(item.assignment)}</span>
+                        <span className="block truncate text-[10px] opacity-90">
+                          {agendaEventTimeLabel(item)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+export function OperatorHubPage() {
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [assignments, setAssignments] = useState<OperatorAssignment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [view, setView] = useState<ViewMode>("producers");
+  const [selectedProducerId, setSelectedProducerId] = useState("");
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentListFilter>("PENDING");
+  const [search, setSearch] = useState("");
+
+  async function load() {
+    const token = getStoredAuthToken();
+
+    if (!token || token === "undefined") {
+      window.location.href = "/login";
+      return;
+    }
+
+    const storedUser = getStoredAuthUser<StoredUser>();
+    setUser(storedUser);
+
+    const role = String(storedUser?.role || "").toUpperCase();
+
+    if (!["OPERATOR", "SUPER_ADMIN"].includes(role)) {
+      setErrorMessage("Esta área é exclusiva para operadores vinculados a eventos.");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setErrorMessage("");
+
+    try {
+      const data = await fetchJson("/operator-assignments/me/invitations", token);
+      const loaded = arrayFromApi(data);
+      const scoped = loaded.filter((assignment) => assignmentBelongsToUser(assignment, storedUser));
+
+      setAssignments(scoped);
+    } catch (error) {
+      console.error(error);
+      setErrorMessage("Não foi possível carregar seus convites. Confira se a API está ligada.");
+      setAssignments([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const groups = useMemo(() => buildProducerGroups(assignments), [assignments]);
+  const agendaItems = useMemo(() => buildAgenda(groups), [groups]);
+
+  const filteredGroups = useMemo(() => {
+    const term = normalizeText(search);
+
+    if (!term) return groups;
+
+    return groups.filter((group) => {
+      const haystack = [
+        group.name,
+        group.email,
+        ...group.assignments.map((assignment) => getEventName(assignment)),
+      ]
+        .map(normalizeText)
+        .join(" ");
+
+      return haystack.includes(term);
+    });
+  }, [groups, search]);
+
+  const selectedProducer = groups.find((group) => group.id === selectedProducerId) || null;
+  const selectedAssignment =
+    selectedProducer?.assignments.find((assignment) => assignment.id === selectedAssignmentId) || null;
+
+  const selectedProducerAssignments = useMemo(() => {
+    if (!selectedProducer) return [];
+
+    return selectedProducer.assignments.filter((assignment) =>
+      assignmentMatchesFilter(assignment, assignmentFilter),
+    );
+  }, [selectedProducer, assignmentFilter]);
+
+  const selectedProducerFilterCounts = useMemo(() => {
+    const list = selectedProducer?.assignments || [];
+
+    return {
+      ALL: list.length,
+      ACCEPTED: list.filter((assignment) => assignmentFilterBucket(assignment) === "ACCEPTED").length,
+      PENDING: list.filter((assignment) => assignmentFilterBucket(assignment) === "PENDING").length,
+      DECLINED: list.filter((assignment) => assignmentFilterBucket(assignment) === "DECLINED").length,
+    } as Record<AssignmentListFilter, number>;
+  }, [selectedProducer]);
+
+  function openProducer(group: ProducerGroup) {
+    setSelectedProducerId(group.id);
+    setSelectedAssignmentId("");
+    setAssignmentFilter("PENDING");
+    setView("producer");
+  }
+
+  function openAssignment(group: ProducerGroup, assignment: OperatorAssignment) {
+    setSelectedProducerId(group.id);
+    setSelectedAssignmentId(assignment.id);
+    setView("assignment");
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[#f4f4f5]">
+        <Topbar user={user} />
+        <section className="mx-auto max-w-7xl px-4 py-8">
+          <div className="rounded-[30px] border border-slate-200 bg-white p-8 shadow-sm">
+            <p className="font-black text-slate-600">Carregando fichas do operador...</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <main className="min-h-screen bg-[#f4f4f5]">
+        <Topbar user={user} />
+        <section className="mx-auto max-w-7xl px-4 py-8">
+          <div className="rounded-[30px] border border-rose-200 bg-rose-50 p-8 shadow-sm">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-rose-600">Atenção</p>
+            <h1 className="mt-3 text-3xl font-black text-rose-950">{errorMessage}</h1>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f4f4f5] text-slate-950">
+      <Topbar user={user} />
+
+      <section className="mx-auto max-w-7xl space-y-6 px-4 py-6">
+        <section className="overflow-hidden rounded-[34px] bg-slate-950 p-7 text-white shadow-sm">
+          <div className="grid gap-6 lg:grid-cols-[1fr_420px]">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.34em] text-orange-300">
+                Operador
+              </p>
+              <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight md:text-5xl">
+                Produtores, fichas de trabalho e agenda.
+              </h1>
+              <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-white/70">
+                Primeiro escolha o produtor. Dentro dele ficam os eventos/fichas que ele te enviou.
+                Quando você aceitar, o evento entra automaticamente na sua agenda.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <HeroMetric label="Produtores" value={groups.length} />
+              <HeroMetric label="Fichas" value={assignments.length} />
+              <HeroMetric label="Pendentes" value={assignments.reduce((sum, item) => sum + pendingDays(item), 0)} />
+              <HeroMetric label="Na agenda" value={agendaItems.length} />
+            </div>
+          </div>
+        </section>
+
+        <nav className="flex flex-wrap gap-2 rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setView("producers")}
+            className={`rounded-2xl px-4 py-3 text-sm font-black ${
+              view === "producers" || view === "producer" || view === "assignment"
+                ? "bg-slate-950 text-white"
+                : "text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            Produtores e fichas
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setView("agenda")}
+            className={`rounded-2xl px-4 py-3 text-sm font-black ${
+              view === "agenda" ? "bg-slate-950 text-white" : "text-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            Minha agenda
+          </button>
+
+          <button
+            type="button"
+            onClick={load}
+            className="ml-auto rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50"
+          >
+            Atualizar
+          </button>
+        </nav>
+
+        {view !== "agenda" ? (
+          <>
+            <section className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Buscar produtor ou evento..."
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-orange-500"
+              />
+            </section>
+
+            {assignments.length === 0 ? (
+              <section className="rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+                <h3 className="text-2xl font-black text-slate-950">Nenhuma ficha encontrada</h3>
+                <p className="mt-2 text-sm font-semibold text-slate-500">
+                  Quando um produtor te convidar para um evento, a ficha aparece aqui.
+                </p>
+              </section>
+            ) : null}
+
+            {view === "producers" ? (
+              <section className="grid gap-4 lg:grid-cols-2">
+                {filteredGroups.map((group) => (
+                  <ProducerCard key={group.id} group={group} onOpen={() => openProducer(group)} />
+                ))}
+              </section>
+            ) : null}
+
+            {view === "producer" && selectedProducer ? (
+              <section className="space-y-5">
+                <button
+                  type="button"
+                  onClick={() => setView("producers")}
+                  className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black shadow-sm hover:bg-slate-50"
+                >
+                  Voltar para produtores
+                </button>
+
+                <section className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-sm">
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-orange-600">
+                    Produtor selecionado
+                  </p>
+                  <h2 className="mt-2 text-3xl font-black">{selectedProducer.name}</h2>
+                  {selectedProducer.email ? (
+                    <p className="mt-1 text-sm font-semibold text-slate-500">{selectedProducer.email}</p>
+                  ) : null}
+
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    {(["PENDING", "ACCEPTED", "DECLINED"] as AssignmentListFilter[]).map((filter) => (
+                      <button
+                        key={filter}
+                        type="button"
+                        onClick={() => setAssignmentFilter(filter)}
+                        className={`rounded-2xl px-4 py-3 text-sm font-black transition ${
+                          assignmentFilter === filter
+                            ? "bg-slate-950 text-white"
+                            : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        {assignmentFilterText(filter)} ({selectedProducerFilterCounts[filter] || 0})
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-5 grid gap-3">
+                    {selectedProducerAssignments.length === 0 ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm font-bold text-slate-500">
+                        Nenhuma ficha encontrada neste filtro.
+                      </div>
+                    ) : (
+                      selectedProducerAssignments.map((assignment) => (
+                        <AssignmentCard
+                          key={assignment.id}
+                          assignment={assignment}
+                          onOpen={() => openAssignment(selectedProducer, assignment)}
+                        />
+                      ))
+                    )}
+                  </div>
+                </section>
+              </section>
+            ) : null}
+
+            {view === "assignment" && selectedProducer && selectedAssignment ? (
+              <AssignmentDetail
+                producer={selectedProducer}
+                assignment={selectedAssignment}
+                onBack={() => setView("producer")}
+                onReload={load}
+                onAgenda={() => setView("agenda")}
+              />
+            ) : null}
+          </>
+        ) : (
+          <AgendaView items={agendaItems} onOpenAssignment={openAssignment} />
+        )}
+      </section>
+    </main>
+  );
+}
+
+function HeroMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/10 p-5">
+      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/55">{label}</p>
+      <p className="mt-3 text-2xl font-black">{value}</p>
+    </div>
+  );
+}
+
+export default OperatorHubPage;

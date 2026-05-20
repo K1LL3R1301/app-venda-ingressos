@@ -1,0 +1,90 @@
+[INFO] Walkthrough visual do suporte iniciado.
+[INFO] Prints: C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough
+[INFO] Relatorio: C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\reports\support-guided-walkthrough-20260520-114945.txt
+[ABRINDO] http://localhost:3000/support - customer suporte
+[OK] Verificado: customer ve central
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\00-customer-central.png
+[PROGRESSO] [#-----------------------------]   5%  1/20  customer abriu suporte
+[OK] Clique: customer abrir suporte
+[OK] Preencheu: assunto customer
+[OK] Preencheu: mensagem customer
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\01-customer-formulario.png
+[PROGRESSO] [###---------------------------]  10%  2/20  customer preencheu suporte
+[OK] Botao: customer envia chamado
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\02-customer-enviado.png
+[PROGRESSO] [####--------------------------]  15%  3/20  customer criou chamado
+[ABRINDO] http://localhost:3000/admin/support - produtor agenda suporte
+[OK] Verificado: produtor ve agenda
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\03-producer-agenda.png
+[PROGRESSO] [######------------------------]  20%  4/20  produtor abriu agenda
+[OK] Clique: produtor seleciona evento
+[OK] Verificado: produtor ve fichas
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\04-producer-evento-fichas.png
+[PROGRESSO] [#######-----------------------]  25%  5/20  produtor entrou no evento
+[OK] Clique: produtor seleciona chamado
+[OK] Preencheu: resposta produtor
+[OK] Botao: produtor envia resposta
+[OK] Verificado: mensagem do produtor apareceu
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\05-producer-respondeu.png
+[PROGRESSO] [#########---------------------]  30%  6/20  produtor respondeu no chat
+[OK] Botao: produtor abre encaminhar
+[OK] Preencheu: justificativa produtor
+[OK] Botao: produtor envia justificativa
+[OK] Verificado: justificativa apareceu
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\06-producer-encaminhou.png
+[PROGRESSO] [##########--------------------]  35%  7/20  produtor encaminhou suporte
+[OK] Botao: produtor resolve
+[OK] Verificado: resolvido virou historico
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\07-producer-resolvido.png
+[PROGRESSO] [############------------------]  40%  8/20  produtor resolveu chamado
+[ABRINDO] http://localhost:3000/operator/support?eventId=evt-suporte-visual-001&eventName=Infantil%20Seed%20487&assignmentId=assign-suporte-visual-001 - operador suporte do evento
+[OK] Verificado: operador ve evento atual
+[OK] Verificado: operador ve chamados do evento
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\08-operator-evento.png
+[PROGRESSO] [#############-----------------]  45%  9/20  operador entrou pelo evento
+[OK] Clique: operador abre chamado tecnico
+[OK] Verificado: novo tecnico mostra evento atual
+[OK] Verificado: novo tecnico mostra id do evento
+[OK] Preencheu: titulo tecnico
+[OK] Preencheu: descricao tecnica
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\09-operator-novo-tecnico.png
+[PROGRESSO] [###############---------------]  50%  10/20  operador preencheu tecnico
+[OK] Botao: operador cria tecnico
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\10-operator-tecnico-criado.png
+[PROGRESSO] [################--------------]  55%  11/20  operador criou chamado tecnico
+[ABRINDO] http://localhost:3000/admin/super/support - suporte site agenda
+[OK] Verificado: suporte site ve agenda
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\11-super-agenda.png
+[PROGRESSO] [##################------------]  60%  12/20  suporte site abriu agenda
+[OK] Clique: suporte site seleciona evento
+[OK] Verificado: suporte site ve fichas
+[OK] Nao existe: Devolver cliente
+[OK] Nao existe: Devolver produtor
+[OK] Nao existe: Devolver operador
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\12-super-evento-sem-botoes-devolver.png
+[PROGRESSO] [###################-----------]  65%  13/20  suporte site validou botoes removidos
+[OK] Preencheu: resposta suporte site
+[OK] Botao: suporte site envia resposta
+[OK] Verificado: mensagem suporte site apareceu
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\13-super-respondeu.png
+[PROGRESSO] [#####################---------]  70%  14/20  suporte site respondeu
+[OK] Botao: suporte site resolve tecnico
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\14-super-resolveu.png
+[PROGRESSO] [######################--------]  75%  15/20  suporte site resolveu tecnico
+[ABRINDO] http://localhost:3000/operator/support - operador sem evento
+[OK] Verificado: operador sem eventId bloqueado
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\15-rules-operador-sem-evento.png
+[PROGRESSO] [########################------]  80%  16/20  regra operador sem evento
+[ABRINDO] http://localhost:3000/operator/support?eventId=evt-suporte-visual-001&eventName=Infantil%20Seed%20487&assignmentId=assign-suporte-visual-001&ticket=sup-visual-closed - operador chamado resolvido
+[OK] Verificado: resolvido aparece como historico
+[OK] Campo bloqueado: campo bloqueado em resolvido
+[PRINT] C:\Users\march\OneDrive\Área de Trabalho\plataforma-ingressos\apps\web\test-results\support-guided-walkthrough\16-rules-resolvido-bloqueado.png
+[PROGRESSO] [#########################-----]  85%  17/20  regra resolvido bloqueado
+[PROGRESSO] [###########################---]  90%  18/20  finalizando...
+[PROGRESSO] [############################--]  95%  19/20  finalizando...
+[PROGRESSO] [##############################] 100%  20/20  finalizando...
+
+[RESUMO]
+Avisos: 0
+Falhas: 0
+[RESULTADO] Walkthrough concluido sem falhas criticas.

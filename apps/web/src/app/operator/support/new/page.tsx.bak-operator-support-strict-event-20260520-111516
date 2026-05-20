@@ -1,0 +1,501 @@
+"use client";
+// @ts-nocheck
+
+import { useEffect, useMemo, useState } from "react";
+import { getStoredAuthUser } from "../../../../lib/auth-client";
+import { createSupportTicketReal } from "../../../../lib/support-api-workflow";
+
+type StoredUser = {
+  id?: string;
+  sub?: string;
+  name?: string;
+  email?: string;
+  cpf?: string;
+  role?: string;
+};
+
+type OperatorAssignment = {
+  id?: string | null;
+  status?: string | null;
+  eventId?: string | null;
+  eventName?: string | null;
+  eventTitle?: string | null;
+  eventDate?: string | null;
+  startDate?: string | null;
+  operatorUserId?: string | null;
+  customerUserId?: string | null;
+  userId?: string | null;
+  operatorName?: string | null;
+  operatorEmail?: string | null;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  userName?: string | null;
+  userEmail?: string | null;
+  cpf?: string | null;
+  event?: {
+    id?: string | null;
+    name?: string | null;
+    title?: string | null;
+    eventDate?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+  } | null;
+};
+
+type OperatorEventOption = {
+  id: string;
+  name: string;
+  date?: string | null;
+  assignmentId?: string | null;
+  status?: string | null;
+};
+
+const API_BASE_URL =
+  (process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "http://localhost:3001/v1").replace(/\/$/, "");
+
+function fallbackUser(): StoredUser {
+  return { id: "operator-local", name: "Operador", email: "operador@local.test", role: "OPERATOR" };
+}
+
+function getToken() {
+  if (typeof window === "undefined") return "";
+
+  return (
+    sessionStorage.getItem("astro_session_token") ||
+    localStorage.getItem("astro_session_token") ||
+    localStorage.getItem("token") ||
+    ""
+  );
+}
+
+function normalizeText(value?: string | number | null) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function currentUserId(user?: StoredUser | null) {
+  return String(user?.id || user?.sub || "");
+}
+
+function assignmentBelongsToUser(assignment: OperatorAssignment, user: StoredUser | null) {
+  const userId = currentUserId(user);
+  const userEmail = normalizeText(user?.email);
+  const userCpf = String(user?.cpf || "").replace(/\D/g, "");
+
+  const assignmentIds = [
+    assignment.operatorUserId,
+    assignment.customerUserId,
+    assignment.userId,
+  ].map((value) => String(value || ""));
+
+  const assignmentEmails = [
+    assignment.operatorEmail,
+    assignment.customerEmail,
+    assignment.userEmail,
+  ].map(normalizeText);
+
+  const assignmentCpf = String(assignment.cpf || "").replace(/\D/g, "");
+
+  if (userId && assignmentIds.includes(userId)) return true;
+  if (userEmail && assignmentEmails.includes(userEmail)) return true;
+  if (userCpf && assignmentCpf === userCpf) return true;
+
+  return false;
+}
+
+function isUsableAssignment(assignment: OperatorAssignment) {
+  const status = String(assignment.status || "").toUpperCase();
+
+  if (!status) return true;
+
+  return [
+    "ACCEPTED",
+    "ASSIGNED",
+    "CONFIRMED",
+    "PROPOSAL_ACCEPTED",
+    "ACTIVE",
+    "SCHEDULE_PENDING",
+    "AVAILABLE",
+  ].includes(status);
+}
+
+function arrayFromApi(data: unknown): OperatorAssignment[] {
+  if (Array.isArray(data)) return data as OperatorAssignment[];
+  if (Array.isArray((data as { items?: unknown[] })?.items)) return (data as { items: OperatorAssignment[] }).items;
+  if (Array.isArray((data as { assignments?: unknown[] })?.assignments)) return (data as { assignments: OperatorAssignment[] }).assignments;
+  if (Array.isArray((data as { data?: unknown[] })?.data)) return (data as { data: OperatorAssignment[] }).data;
+  return [];
+}
+
+async function fetchAssignments(token: string) {
+  const paths = [
+    "/operator-assignments/me",
+    "/operator-assignments/my",
+    "/operator-assignments/operator/me",
+    "/operator-assignments",
+  ];
+
+  let lastError = "";
+
+  for (const path of paths) {
+    try {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        lastError = typeof data?.message === "string" ? data.message : `Erro ao carregar ${path}`;
+        continue;
+      }
+
+      const items = arrayFromApi(data);
+
+      if (items.length > 0 || path === "/operator-assignments") {
+        return items;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  if (lastError) {
+    console.warn(lastError);
+  }
+
+  return [];
+}
+
+function assignmentToEvent(assignment: OperatorAssignment): OperatorEventOption | null {
+  const id = String(assignment.event?.id || assignment.eventId || "").trim();
+
+  if (!id) return null;
+
+  const name =
+    assignment.event?.name ||
+    assignment.event?.title ||
+    assignment.eventName ||
+    assignment.eventTitle ||
+    id;
+
+  return {
+    id,
+    name,
+    date: assignment.event?.startDate || assignment.event?.eventDate || assignment.startDate || assignment.eventDate || null,
+    assignmentId: assignment.id || null,
+    status: assignment.status || null,
+  };
+}
+
+function uniqueEvents(assignments: OperatorAssignment[], user: StoredUser | null) {
+  const scoped = assignments.filter((assignment) => assignmentBelongsToUser(assignment, user));
+  const usable = (scoped.length ? scoped : assignments).filter(isUsableAssignment);
+
+  const map = new Map<string, OperatorEventOption>();
+
+  usable.forEach((assignment) => {
+    const event = assignmentToEvent(assignment);
+    if (!event) return;
+
+    if (!map.has(event.id)) {
+      map.set(event.id, event);
+      return;
+    }
+
+    const current = map.get(event.id)!;
+
+    map.set(event.id, {
+      ...current,
+      name: current.name || event.name,
+      date: current.date || event.date,
+      assignmentId: current.assignmentId || event.assignmentId,
+      status: current.status || event.status,
+    });
+  });
+
+  return Array.from(map.values()).sort((a, b) => {
+    const first = a.date ? new Date(a.date).getTime() : Number.MAX_SAFE_INTEGER;
+    const second = b.date ? new Date(b.date).getTime() : Number.MAX_SAFE_INTEGER;
+    return first - second;
+  });
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "sem data";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function readInitialParams() {
+  if (typeof window === "undefined") {
+    return { eventId: "", eventName: "" };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+
+  return {
+    eventId: params.get("eventId") || "",
+    eventName: params.get("eventName") || "",
+  };
+}
+
+export default function NewOperatorSupportPage() {
+  const [user, setUser] = useState<StoredUser | null>(null);
+  const [events, setEvents] = useState<OperatorEventOption[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [selectedEventName, setSelectedEventName] = useState("");
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
+
+  const selectedEvent = useMemo(
+    () => events.find((event) => String(event.id) === String(selectedEventId)) || null,
+    [events, selectedEventId],
+  );
+
+  const canSubmit = Boolean(selectedEventId.trim() && title.trim() && message.trim() && !saving);
+
+  useEffect(() => {
+    async function load() {
+      const storedUser = getStoredAuthUser<StoredUser>() || fallbackUser();
+      setUser(storedUser);
+      setLoadingEvents(true);
+      setLoadError("");
+
+      const token = getToken();
+
+      if (!token || token === "undefined") {
+        setLoadError("Faça login novamente para carregar os eventos do operador.");
+        setLoadingEvents(false);
+        return;
+      }
+
+      try {
+        const assignments = await fetchAssignments(token);
+        const nextEvents = uniqueEvents(assignments, storedUser);
+        const params = readInitialParams();
+
+        if (params.eventId && !nextEvents.some((event) => event.id === params.eventId)) {
+          nextEvents.unshift({
+            id: params.eventId,
+            name: params.eventName || params.eventId,
+            date: null,
+            assignmentId: null,
+            status: "URL",
+          });
+        }
+
+        setEvents(nextEvents);
+
+        const preferred =
+          nextEvents.find((event) => event.id === params.eventId) ||
+          nextEvents.find((event) => event.id === selectedEventId) ||
+          nextEvents[0] ||
+          null;
+
+        if (preferred) {
+          setSelectedEventId(preferred.id);
+          setSelectedEventName(preferred.name);
+        }
+      } catch (error) {
+        console.error(error);
+        setLoadError(error instanceof Error ? error.message : "Não foi possível carregar os eventos do operador.");
+      } finally {
+        setLoadingEvents(false);
+      }
+    }
+
+    void load();
+  }, []);
+
+  useEffect(() => {
+    if (selectedEvent) {
+      setSelectedEventName(selectedEvent.name);
+    }
+  }, [selectedEvent]);
+
+  function handleSelectEvent(eventId: string) {
+    setSelectedEventId(eventId);
+
+    const event = events.find((item) => item.id === eventId);
+
+    if (event) {
+      setSelectedEventName(event.name);
+
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("eventId", event.id);
+        url.searchParams.set("eventName", event.name);
+        window.history.replaceState(null, "", url.toString());
+      }
+    } else {
+      setSelectedEventName("");
+    }
+  }
+
+  async function submit() {
+    if (!selectedEventId.trim()) {
+      alert("Selecione o evento.");
+      return;
+    }
+
+    if (!title.trim()) {
+      alert("Informe o título do problema.");
+      return;
+    }
+
+    if (!message.trim()) {
+      alert("Descreva o problema técnico.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const currentUser = user || getStoredAuthUser<StoredUser>() || fallbackUser();
+      const eventName = selectedEventName || selectedEvent?.name || selectedEventId;
+
+      const ticket = await createSupportTicketReal({
+        title: title.trim(),
+        category: "Suporte técnico",
+        message: message.trim(),
+        priority: "NORMAL" as any,
+        sourceType: "OPERATOR",
+        targetType: "ALL" as any,
+        currentOwnerType: "SUPER_ADMIN",
+        eventId: selectedEventId,
+        eventName,
+        operatorName: currentUser.name || "Operador",
+        operatorEmail: currentUser.email,
+        createdByRole: "OPERATOR",
+        createdByName: currentUser.name || "Operador",
+        createdByEmail: currentUser.email,
+      } as any);
+
+      const params = new URLSearchParams();
+      params.set("eventId", selectedEventId);
+      params.set("eventName", eventName);
+
+      if (ticket?.id) {
+        params.set("ticket", ticket.id);
+      }
+
+      window.location.href = `/operator/support?${params.toString()}`;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Não foi possível abrir chamado técnico.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
+      <div className="mx-auto max-w-3xl">
+        <a
+          href={selectedEventId ? `/operator/support?eventId=${encodeURIComponent(selectedEventId)}&eventName=${encodeURIComponent(selectedEventName || "")}` : "/operator/support"}
+          className="text-sm font-black text-blue-600"
+        >
+          ← Voltar para suporte
+        </a>
+
+        <section className="mt-4 rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-blue-600">Chamado técnico</p>
+          <h1 className="mt-2 text-3xl font-black">Abrir chamado com Suporte Site</h1>
+          <p className="mt-2 text-sm font-bold text-slate-500">
+            Escolha um dos eventos vinculados ao seu operador. Ao selecionar o ID, o nome do evento é preenchido automaticamente.
+          </p>
+
+          <div className="mt-6 grid gap-3">
+            <label className="block">
+              <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                Evento vinculado ao operador
+              </span>
+              <select
+                value={selectedEventId}
+                onChange={(event) => handleSelectEvent(event.target.value)}
+                disabled={loadingEvents}
+                className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black outline-none focus:border-blue-500 disabled:cursor-wait disabled:opacity-70"
+              >
+                <option value="">
+                  {loadingEvents ? "Carregando eventos..." : "Selecione o ID do evento"}
+                </option>
+
+                {events.map((event) => (
+                  <option key={event.id} value={event.id}>
+                    {event.id} • {event.name} • {formatDate(event.date)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {loadError ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">
+                {loadError}
+              </div>
+            ) : null}
+
+            {selectedEventId ? (
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-700/70">
+                  Evento selecionado
+                </p>
+                <p className="mt-2 break-all text-sm font-black text-slate-950">ID: {selectedEventId}</p>
+                <p className="mt-1 text-sm font-bold text-slate-600">Nome: {selectedEventName || "Buscando nome do evento..."}</p>
+                {selectedEvent?.date ? (
+                  <p className="mt-1 text-xs font-bold text-slate-500">Data: {formatDate(selectedEvent.date)}</p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              className="h-12 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-blue-500"
+              placeholder="Título do problema *"
+            />
+
+            <textarea
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              className="min-h-36 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold outline-none focus:border-blue-500"
+              placeholder="Descrição do problema técnico *"
+            />
+
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canSubmit}
+              className="rounded-2xl bg-blue-600 px-5 py-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving ? "Abrindo..." : "Abrir chamado técnico"}
+            </button>
+
+            <p className="text-xs font-bold text-slate-400">
+              Campos obrigatórios: evento, título do problema e descrição.
+            </p>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
