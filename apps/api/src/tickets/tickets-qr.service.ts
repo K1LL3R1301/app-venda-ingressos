@@ -189,12 +189,9 @@ export class TicketsQrService {
       return true;
     }
 
-    const orderCustomerUserId = params.ticket.orderItem.order.customerUserId;
     const currentOwnerUserId = params.ticket.currentOwnerUserId;
 
-    return (
-      currentOwnerUserId === params.userId || orderCustomerUserId === params.userId
-    );
+    return currentOwnerUserId === params.userId;
   }
 
   async generateTicketQrToken(params: GenerateTicketQrTokenParams) {
