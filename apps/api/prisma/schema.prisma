@@ -1078,3 +1078,32 @@ model AstroPromoterSale {
   @@index([linkId])
   @@index([status])
 }
+
+model PlaceReservation {
+  id              String    @id @default(uuid())
+  eventId         String
+  eventSessionId  String?
+  venueSectorId   String?
+  seatMapObjectId String?
+  ticketTypeId    String?
+  orderId         String?
+  userId          String?
+  placeKey        String
+  physicalKey     String
+  kind            String
+  label           String?
+  quantity        Int       @default(1)
+  chairCount      Int?
+  subTickets      Json?
+  amount          Decimal?  @db.Decimal(10, 2)
+  status          String    @default("HELD")
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([eventId], name: "PlaceReservation_event_idx")
+  @@index([eventSessionId, venueSectorId], name: "PlaceReservation_session_sector_idx")
+  @@index([eventId, eventSessionId, venueSectorId, physicalKey], name: "PlaceReservation_physical_idx")
+  @@index([orderId], name: "PlaceReservation_order_idx")
+  @@index([status, expiresAt], name: "PlaceReservation_status_expires_idx")
+}
