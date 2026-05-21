@@ -1,5 +1,6 @@
 "use client";
 
+import SuperAdminNav from "../_components/SuperAdminNav";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -123,16 +124,6 @@ type LoadState = {
 };
 
 type Period = "TODAY" | "WEEK" | "MONTH" | "YEAR" | "ALL" | "CUSTOM";
-
-const nav = [
-  ["Visão geral", "/admin/super"],
-  ["Organizadores", "/admin/super/organizers"],
-  ["Eventos", "/admin/super/events"],
-  ["Pedidos", "/admin/super/orders"],
-  ["Receita", "/admin/super/finance"],
-  ["Operadores", "/admin/super/operators"],
-  ["Taxas", "/admin/super/fees"],
-];
 
 function num(value?: string | number | null) {
   if (value == null) return 0;
@@ -304,6 +295,7 @@ function Bar({
   );
 }
 
+
 function Empty({ children }: { children: React.ReactNode }) {
   return (
     <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm font-bold text-slate-500">
@@ -451,7 +443,6 @@ export default function FinancialDashboardPage() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   function applyFilters() {
     loadData();
   }
@@ -549,23 +540,7 @@ export default function FinancialDashboardPage() {
         </div>
       </section>
 
-      <nav className="flex flex-wrap gap-2 rounded-[28px] border border-slate-200 bg-white p-3 shadow-sm">
-        {nav.map(([label, href]) => (
-          <Link
-            key={href}
-            href={href}
-            className="rounded-2xl px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-950 hover:text-white"
-          >
-            {label}
-          </Link>
-        ))}
-        <Link
-          href="/admin/dashboard"
-          className="ml-auto rounded-2xl bg-orange-50 px-4 py-3 text-sm font-black text-orange-700 ring-1 ring-orange-200"
-        >
-          Meu painel admin
-        </Link>
-      </nav>
+      <SuperAdminNav />
 
       <section className="flex flex-wrap gap-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
         <select
@@ -632,8 +607,7 @@ export default function FinancialDashboardPage() {
           Atualizar
         </button>
       </section>
-
-      <section className="grid gap-4 md:grid-cols-4">
+<section className="grid gap-4 md:grid-cols-4">
         <Metric
           label="Pagamentos pagos"
           value={money(totals.paidPaymentsGrossTotal)}
