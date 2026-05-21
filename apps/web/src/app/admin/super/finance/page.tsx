@@ -1,3 +1,3 @@
-import { SuperFinancePage } from "../_components/SuperAdminPanel";
+import FinancialDashboardPage from "./FinancialDashboardPage";
 
-export default SuperFinancePage;
+export default FinancialDashboardPage;
