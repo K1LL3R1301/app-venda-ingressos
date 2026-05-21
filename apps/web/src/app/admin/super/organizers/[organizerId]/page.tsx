@@ -65,11 +65,16 @@ type Assignment = {
 };
 
 type FeeConfig = {
+  id?: string | null;
   organizerId: string;
   percent: number;
   fixedCents: number;
+  fixedAmount?: number;
   notes: string;
-  updatedAt: string;
+  status?: string;
+  isDefault?: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 type LoadState = {
@@ -284,32 +289,6 @@ function eventPillClass(index: number) {
   return classes[index % classes.length];
 }
 
-function readFees(): FeeConfig[] {
-  try {
-    const raw = localStorage.getItem("astro_super_admin_fee_configs");
-    const parsed = raw ? JSON.parse(raw) : [];
-
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveFees(configs: FeeConfig[]) {
-  localStorage.setItem("astro_super_admin_fee_configs", JSON.stringify(configs));
-}
-
-function feeOf(configs: FeeConfig[], organizerId: string): FeeConfig {
-  return (
-    configs.find((config) => config.organizerId === organizerId) || {
-      organizerId,
-      percent: 10,
-      fixedCents: 0,
-      notes: "",
-      updatedAt: "",
-    }
-  );
-}
 
 function Metric({ label, value, helper }: { label: string; value: string | number; helper?: string }) {
   return (
@@ -523,8 +502,13 @@ export default function SuperOrganizerDetailPage() {
     percent: 10,
     fixedCents: 0,
     notes: "",
-    updatedAt: "",
+    status: "DEFAULT",
+    isDefault: true,
+    updatedAt: null,
   });
+  const [feeLoading, setFeeLoading] = useState(false);
+  const [feeSaving, setFeeSaving] = useState(false);
+  const [feeMessage, setFeeMessage] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -611,8 +595,66 @@ export default function SuperOrganizerDetailPage() {
   }, []);
 
   useEffect(() => {
-    const configs = readFees();
-    setFee(feeOf(configs, organizerId));
+    async function loadFeeConfig() {
+      const token = sessionStorage.getItem("astro_session_token") || "";
+
+      if (!organizerId || !token || token === "undefined") return;
+
+      setFeeLoading(true);
+      setFeeMessage("");
+
+      try {
+        const response = await fetch(`${API}/organizers/${organizerId}/fee-config`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        const json = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          throw new Error(
+            typeof json?.message === "string"
+              ? json.message
+              : "Erro ao carregar taxa do organizador.",
+          );
+        }
+
+        setFee({
+          organizerId,
+          id: json?.id ?? null,
+          percent: Number(json?.percent ?? 10),
+          fixedCents: Number(json?.fixedCents ?? 0),
+          fixedAmount: Number(json?.fixedAmount ?? Number(json?.fixedCents ?? 0) / 100),
+          notes: String(json?.notes ?? ""),
+          status: String(json?.status ?? "DEFAULT"),
+          isDefault: Boolean(json?.isDefault),
+          createdAt: json?.createdAt ?? null,
+          updatedAt: json?.updatedAt ?? null,
+        });
+      } catch (error) {
+        setFee({
+          organizerId,
+          percent: 10,
+          fixedCents: 0,
+          fixedAmount: 0,
+          notes: "",
+          status: "DEFAULT",
+          isDefault: true,
+          updatedAt: null,
+        });
+        setFeeMessage(
+          error instanceof Error
+            ? error.message
+            : "Nao foi possivel carregar a taxa real do organizador.",
+        );
+      } finally {
+        setFeeLoading(false);
+      }
+    }
+
+    loadFeeConfig();
   }, [organizerId]);
 
   const organizer = useMemo(
@@ -661,23 +703,64 @@ export default function SuperOrganizerDetailPage() {
     router.push(`/admin/super/organizers/${organizerId}?tab=${nextTab}`);
   }
 
-  function saveFee() {
-    const configs = readFees();
-    const nextFee = {
-      ...fee,
-      organizerId,
-      percent: Number(fee.percent || 0),
-      fixedCents: Number(fee.fixedCents || 0),
-      updatedAt: new Date().toISOString(),
-    };
-    const nextConfigs = [
-      ...configs.filter((config) => config.organizerId !== organizerId),
-      nextFee,
-    ];
+  async function saveFee() {
+    const token = sessionStorage.getItem("astro_session_token") || "";
 
-    saveFees(nextConfigs);
-    setFee(nextFee);
-    alert("Taxa do organizador salva localmente. Depois podemos ligar isso no backend.");
+    if (!token || token === "undefined") {
+      alert("Sessao expirada. Faca login novamente.");
+      return;
+    }
+
+    setFeeSaving(true);
+    setFeeMessage("");
+
+    try {
+      const response = await fetch(`${API}/organizers/${organizerId}/fee-config`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          percent: Number(fee.percent || 0),
+          fixedCents: Number(fee.fixedCents || 0),
+          notes: fee.notes || "",
+          status: fee.status === "INACTIVE" ? "INACTIVE" : "ACTIVE",
+        }),
+      });
+
+      const json = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          typeof json?.message === "string"
+            ? json.message
+            : "Erro ao salvar taxa do organizador.",
+        );
+      }
+
+      setFee({
+        organizerId,
+        id: json?.id ?? null,
+        percent: Number(json?.percent ?? 10),
+        fixedCents: Number(json?.fixedCents ?? 0),
+        fixedAmount: Number(json?.fixedAmount ?? Number(json?.fixedCents ?? 0) / 100),
+        notes: String(json?.notes ?? ""),
+        status: String(json?.status ?? "ACTIVE"),
+        isDefault: Boolean(json?.isDefault),
+        createdAt: json?.createdAt ?? null,
+        updatedAt: json?.updatedAt ?? null,
+      });
+      setFeeMessage("Taxa real do organizador salva com sucesso.");
+    } catch (error) {
+      setFeeMessage(
+        error instanceof Error
+          ? error.message
+          : "Nao foi possivel salvar a taxa real do organizador.",
+      );
+    } finally {
+      setFeeSaving(false);
+    }
   }
 
   if (state.loading) {
@@ -844,9 +927,41 @@ export default function SuperOrganizerDetailPage() {
             Configurar taxa cobrada nos eventos desse organizador
           </h2>
           <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
-            Por enquanto essa taxa fica salva localmente para validar a experiência da tela.
-            Depois conectamos no backend para virar regra real de cobrança por organizador/evento.
+            Essa taxa agora é salva no backend e fica vinculada ao organizador. Os próximos passos são usar essa regra nos cálculos financeiros e relatórios.
           </p>
+
+          <div className="mt-6 grid gap-3 md:grid-cols-4">
+            <Metric
+              label="Percentual"
+              value={`${Number(fee.percent || 0).toFixed(2)}%`}
+            />
+            <Metric
+              label="Taxa fixa"
+              value={money(Number(fee.fixedCents || 0) / 100)}
+              helper={`${Number(fee.fixedCents || 0)} centavos`}
+            />
+            <Metric
+              label="Status"
+              value={fee.status === "DEFAULT" ? "Padrão" : String(fee.status || "ACTIVE")}
+              helper={fee.isDefault ? "Usando regra padrão" : "Regra salva no banco"}
+            />
+            <Metric
+              label="Atualizado"
+              value={fee.updatedAt ? dateTime(fee.updatedAt) : "-"}
+            />
+          </div>
+
+          {feeLoading ? (
+            <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-500">
+              Carregando taxa real do organizador...
+            </p>
+          ) : null}
+
+          {feeMessage ? (
+            <p className="mt-4 rounded-2xl bg-orange-50 px-4 py-3 text-sm font-black text-orange-700 ring-1 ring-orange-200">
+              {feeMessage}
+            </p>
+          ) : null}
 
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <label className="space-y-2">
@@ -878,6 +993,20 @@ export default function SuperOrganizerDetailPage() {
             </label>
           </div>
 
+          <label className="mt-4 block max-w-sm space-y-2">
+            <span className="text-sm font-black text-slate-700">Status da regra</span>
+            <select
+              value={fee.status === "INACTIVE" ? "INACTIVE" : "ACTIVE"}
+              onChange={(event) =>
+                setFee((current) => ({ ...current, status: event.target.value }))
+              }
+              className="h-12 w-full rounded-2xl border border-slate-200 px-4 text-sm font-bold outline-none"
+            >
+              <option value="ACTIVE">Ativa</option>
+              <option value="INACTIVE">Inativa</option>
+            </select>
+          </label>
+
           <label className="mt-4 block space-y-2">
             <span className="text-sm font-black text-slate-700">Observações</span>
             <textarea
@@ -895,9 +1024,10 @@ export default function SuperOrganizerDetailPage() {
             <button
               type="button"
               onClick={saveFee}
-              className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white"
+              disabled={feeSaving || feeLoading}
+              className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Salvar taxa
+              {feeSaving ? "Salvando..." : "Salvar taxa real"}
             </button>
             <Link
               href="/admin/super/finance"

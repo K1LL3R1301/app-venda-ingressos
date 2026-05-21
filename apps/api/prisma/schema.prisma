@@ -67,10 +67,29 @@ model Organizer {
 
   events         Event[]
   supportThreads SupportThread[]
+  feeConfig      OrganizerFeeConfig?
 
   @@index([ownerUserId])
 }
 
+
+model OrganizerFeeConfig {
+  id          String   @id @default(uuid())
+  organizerId String   @unique
+
+  percent    Decimal  @default(10.00) @db.Decimal(10, 2)
+  fixedCents Int      @default(0)
+  notes      String?
+  status     String   @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+
+  @@index([organizerId])
+  @@index([status])
+}
 model Event {
   id          String @id @default(uuid())
   organizerId String
