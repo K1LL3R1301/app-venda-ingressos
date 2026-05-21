@@ -43,6 +43,15 @@ export class UsersController {
   }
 
   @ApiBearerAuth('bearer')
+  @UseGuards(JwtAuthGuard)
+  @Post('me/wallet/withdraw-bank')
+  requestWalletBankWithdrawal(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { amount?: string | number; bankPixKey?: string; bankAccountLabel?: string },
+  ) {
+    return this.usersService.requestWalletBankWithdrawal(req.user.sub, body);
+  }
+  @ApiBearerAuth('bearer')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get()
   @Roles('ADMIN')
