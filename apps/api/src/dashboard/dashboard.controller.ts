@@ -1,4 +1,4 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -22,6 +22,16 @@ type AuthenticatedRequest = Request & {
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
+
+
+  @Get('financial')
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  getFinancialSummary(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: Record<string, string>,
+  ) {
+    return this.dashboardService.getFinancialSummary(req.user, query);
+  }
 
   @Get('summary/admin-scope')
   @Roles('ADMIN', 'SUPER_ADMIN')
