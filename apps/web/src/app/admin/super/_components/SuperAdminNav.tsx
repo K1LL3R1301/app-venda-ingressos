@@ -6,13 +6,7 @@ import { usePathname } from "next/navigation";
 const items = [
   { label: "Visão geral", href: "/admin/super" },
   { label: "Organizadores", href: "/admin/super/organizers" },
-  { label: "Eventos", href: "/admin/super/events" },
-  { label: "Pedidos", href: "/admin/super/orders" },
-  { label: "Receita", href: "/admin/super/finance" },
-  { label: "Relatórios", href: "/admin/super/reports" },
-  { label: "Operadores", href: "/admin/super/operators" },
-  { label: "Taxas", href: "/admin/super/fees" },
-  { label: "Suporte", href: "/admin/super/support" },
+  { label: "Receita geral", href: "/admin/super/finance" },
 ];
 
 function isActive(pathname: string, href: string) {

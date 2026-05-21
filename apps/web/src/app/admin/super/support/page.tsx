@@ -353,7 +353,8 @@ export default function SuperSupportPage() {
   const [user, setUser] = useState<StoredUser | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedEventId, setSelectedEventId] = useState("");
-  const [selectedId, setSelectedId] = useState("");
+    const [eventContextId, setEventContextId] = useState("");
+const [selectedId, setSelectedId] = useState("");
   const [reply, setReply] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -407,6 +408,11 @@ export default function SuperSupportPage() {
   }
 
   function backToAgenda() {
+    if (eventContextId && typeof window !== "undefined") {
+      window.location.href = `/admin/super/events/${eventContextId}`;
+      return;
+    }
+
     setSelectedEventId("");
     setSelectedId("");
     setUrl({ eventId: "", ticketId: "" });
@@ -430,6 +436,8 @@ export default function SuperSupportPage() {
       const params = new URLSearchParams(window.location.search);
       const eventFromUrl = params.get("eventId") || "";
       const ticketFromUrl = params.get("ticket") || "";
+
+      setEventContextId(eventFromUrl);
 
       if (eventFromUrl) setSelectedEventId(eventFromUrl);
       if (ticketFromUrl) setSelectedId(ticketFromUrl);
@@ -560,7 +568,9 @@ export default function SuperSupportPage() {
               <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">Suporte Site</p>
               <h1 className="mt-2 text-3xl font-black">Suporte técnico por evento</h1>
               <p className="mt-2 max-w-3xl text-sm font-bold text-slate-300">
-                Mesma central do produtor, mas com todos os chamados encaminhados ao Suporte Site em todos os eventos.
+                {eventContextId
+                  ? "Chat técnico estilo WhatsApp filtrado para este evento."
+                  : "Mesma central do produtor, mas com todos os chamados encaminhados ao Suporte Site em todos os eventos."}
               </p>
             </div>
           </div>
@@ -578,12 +588,12 @@ export default function SuperSupportPage() {
           <section className="mt-6 grid h-[calc(100vh-230px)] min-h-[660px] gap-5 lg:grid-cols-[360px_1fr]">
             <aside className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
               <button type="button" onClick={backToAgenda} className="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-600 hover:bg-slate-50">
-                ← Voltar para eventos
+                {eventContextId ? "← Voltar para o evento" : "← Voltar para eventos"}
               </button>
 
               <div className="mb-4">
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Evento selecionado</p>
-                <h2 className="mt-1 text-xl font-black">{selectedGroup?.name || "Evento"}</h2>
+                <h2 className="mt-1 text-xl font-black">{selectedGroup?.name || (eventContextId ? "Evento selecionado" : "Evento")}</h2>
                 <p className="mt-1 text-xs font-bold text-slate-500">
                   {selectedGroup?.openCount || 0} aberto(s) • {selectedGroup?.closedCount || 0} resolvido(s)
                 </p>
